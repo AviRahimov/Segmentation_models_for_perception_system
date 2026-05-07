@@ -1,0 +1,52 @@
+# Core deep-learning runtime.
+#
+# RTX 5090 is Blackwell (compute capability sm_120). Stock PyTorch wheels
+# on PyPI only target up to sm_90, so any GPU op fails with
+#   "CUDA error: no kernel image is available for execution on the device"
+# on a 5090. The CUDA-12.8 wheels published by PyTorch include sm_120
+# (and still cover sm_60 ... sm_90, so the same pin runs on the
+# Jetson AGX Orin's sm_87 too once you install the JetPack-native
+# torch wheel - see README for the Jetson note).
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+numpy==1.26.4
+
+# Vision / IO
+opencv-python==4.10.0.84
+Pillow==11.0.0
+
+# Models
+# 8.4.47 ships YOLOESegModel / YOLOESegment26 / Proto26 / SAVPE /
+# SwiGLUFFN, all of which are pickled inside the YOLOE-26L checkpoint
+# (https://github.com/ultralytics/assets/releases/tag/v8.4.0). Older
+# ultralytics releases will fail to unpickle the file with
+# AttributeError: Can't get attribute 'YOLOESegModel' on
+# <module 'ultralytics.nn.tasks'>.
+ultralytics==8.4.47
+transformers==4.46.3
+supervision==0.25.1
+
+# UI
+PyQt6==6.7.1
+
+# Config / utilities
+PyYAML==6.0.2
+requests==2.32.3
+tqdm==4.67.1
+gdown==5.2.0
+
+# Testing
+pytest==8.3.4
+
+# OPTIONAL — install separately, not pinned because the upstream
+# package is published from git rather than PyPI:
+#   pip install "git+https://github.com/facebookresearch/sam2.git@main"
+# When installed, `perception.temporal.sam2_tracker` lights up
+# automatically; otherwise the IoU fallback tracker is used.
+#
+# OPTIONAL — for TensorRT acceleration on Jetson AGX Orin:
+#   tensorrt is shipped with JetPack; on x86 install via NVIDIA's wheel.
+#   See src/perception/models/backends/tensorrt.py for the four
+#   integration steps once the package is available.

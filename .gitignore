@@ -1,0 +1,81 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Type-checking / linting caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Logs
+*.log
+logs/
+
+# PyTorch / model weights
+*.pt
+*.pth
+# TorchScript serialized models (e.g. distilled YOLOE text encoders)
+*.ts
+*.onnx
+*.engine
+*.trt
+*.plan
+weights/
+checkpoints/
+
+# Datasets (heavy)
+datasets/
+data/
+*.zip
+*.tar
+*.tar.gz
+
+# Outputs
+output/
+outputs/
+runs/
+*.mp4.part
+
+# Hugging Face cache override (project-local)
+.hf_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Project-local samples / media (heavy)
+/samples
+
+# Environment / secrets
+.env
+.env.*

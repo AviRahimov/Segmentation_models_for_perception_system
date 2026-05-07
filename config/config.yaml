@@ -1,0 +1,145 @@
+# Off-Road Robotics Perception - default configuration.
+#
+# Adding a new class is a single YAML edit (see the "How to add a class"
+# section in README.md). Nothing meaningful is hardcoded in source.
+
+models:
+  instance:
+    name: "yoloe26l"
+    weights: "yoloe-26l-seg.pt"          # Ultralytics YOLOE-26L seg checkpoint
+    confidence_threshold: 0.35
+  semantic:
+    name: "segformer-b2"
+    weights: "nvidia/segformer-b2-finetuned-ade-512-512"
+
+# ---------------------------------------------------------------------------
+# Class definitions. Two kinds of classes:
+#   * Instance (`is_semantic: false`): driven by YOLOE text prompts.
+#   * Semantic (`is_semantic: true` ): closed-vocab on ADE20K. The
+#     `ade20k_indices` field tells the SegFormer wrapper which native ADE20K
+#     channels to merge into this user class. See the full ADE20K class
+#     list at: https://github.com/CSAILVision/sceneparsing
+#
+# Optional per-class fields (instance classes only):
+#   * `confidence_threshold`: overrides `models.instance.confidence_threshold`
+#     for THIS class only. Lower it for a class the model misses (e.g. small
+#     or partially occluded cars); raise it for a class with frequent false
+#     positives. Range [0, 1]. Omit to inherit the global value.
+# ---------------------------------------------------------------------------
+classes:
+  # ----- Instance classes (YOLOE) ----------------------------------------
+  - name: "person"
+    text_prompt: "person walking or standing"
+    display_mode: "both"
+    color_rgb: [0, 255, 128]
+    is_semantic: false
+
+  - name: "vehicle"
+    text_prompt: "cars trucks pickup trucks SUVs vans off-road vehicles"
+    display_mode: "both"
+    color_rgb: [255, 200, 0]
+    is_semantic: false
+    confidence_threshold: 0.25            # cars are missed at the global 0.35
+
+  - name: "obstacle"
+    text_prompt: "rock log or debris on the ground"
+    display_mode: "bbox_only"
+    color_rgb: [255, 64, 64]
+    is_semantic: false
+
+  # ----- Semantic classes (SegFormer / ADE20K merged) --------------------
+  # ADE20K channel cheat-sheet used below:
+  #   road=6, sidewalk=11, earth=13, grass=9, plant=16, sand=46,
+  #   field=29 (note: ADE20K's "field" lumps cultivated + grassy expanses),
+  #   path=52, runway=53, dirt-track=91, land=94, hill=68, tree=4,
+  #   water=21, sky=2
+  #
+  # Mapping rationale (off-road biased):
+  #   * road_ground includes #91 (dirt-track) and #52 (path) because in
+  #     off-road imagery those ARE the drivable surface, not paved road.
+  #   * sand_gravel keeps #46 (sand) only; #91 moved to road_ground.
+  #   * grass stays as #9 only - if you want general "low vegetation",
+  #     add a separate `vegetation` class with #16 (plant) and #4 (tree).
+  #   * sky is included as a semantic class with display_mode "none" so
+  #     sky pixels are absorbed (and rendered transparent) instead of
+  #     leaking into terrain classes via argmax.
+  #   Adjust the lists below for your domain, e.g. paved-road robotics
+  #   would drop #91 from road_ground.
+  # - name: "road_ground"
+  #   text_prompt: "road or drivable ground surface"
+  #   display_mode: "mask_only"
+  #   color_rgb: [100, 100, 255]
+  #   is_semantic: true
+  #   ade20k_indices: [6, 11, 13, 52, 91]   # road, sidewalk, earth, path, dirt-track
+
+  - name: "grass"
+    text_prompt: "grass"
+    display_mode: "mask_only"
+    color_rgb: [0, 200, 80]
+    is_semantic: true
+    ade20k_indices: [9]                   # grass only
+
+  - name: "sand_gravel"
+    text_prompt: "sand or gravel surface"
+    display_mode: "mask_only"
+    color_rgb: [194, 178, 128]
+    is_semantic: true
+    ade20k_indices: [46]                  # sand only (dirt-track lives in road_ground)
+
+  - name: "sky"
+    text_prompt: "sky"
+    display_mode: "none"                  # absorbed but not drawn
+    color_rgb: [200, 200, 200]
+    is_semantic: true
+    ade20k_indices: [2]                   # sky
+
+  # - name: "vegetation"
+  #   text_prompt: "trees and tall vegetation"
+  #   display_mode: "mask_only"
+  #   color_rgb: [40, 140, 30]
+  #   is_semantic: true
+  #   ade20k_indices: [4, 16]       # tree + plant
+
+  # - name: "water"
+  #   text_prompt: "water or wet surface"
+  #   display_mode: "mask_only"
+  #   color_rgb: [0, 120, 255]
+  #   is_semantic: true
+  #   ade20k_indices: [21]          # water
+
+# ---------------------------------------------------------------------------
+temporal:
+  semantic_ema:
+    alpha: 0.35
+    reset_on_scene_cut: true
+    scene_cut_threshold: 0.45     # Bhattacharyya distance, in [0, 1]
+  instance_sam2:
+    enabled: true
+    reprompt_every_n_frames: 30
+    min_track_score: 0.4
+    checkpoint: ""                # path to sam2.1 .pt; empty -> IoU fallback
+    model_config: ""              # path to sam2.1 yaml config
+
+# ---------------------------------------------------------------------------
+hardware:
+  device: "cuda"
+  fp16: true
+  use_tensorrt: false             # see backends/tensorrt.py for integration
+  text_embed_cache: true
+
+player:
+  mask_alpha: 0.45
+  show_fps: true
+  show_class_legend: true
+  default_speed: 1.0
+
+# ---------------------------------------------------------------------------
+source:
+  type: "video"                   # video | camera | image_dir
+  path: "samples/recording.mp4"
+  camera_index: 0
+  image_dir_glob: "*.png"
+  fps_hint: 30.0
+
+datasets:
+  download_dir: "./datasets"
