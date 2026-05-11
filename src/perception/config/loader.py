@@ -432,6 +432,9 @@ def _build_player(raw: dict[str, Any]) -> PlayerCfg:
         show_fps=bool(raw.get("show_fps", True)),
         show_class_legend=bool(raw.get("show_class_legend", True)),
         default_speed=float(raw.get("default_speed", 1.0)),
+        draw_road_ground_semantic_last=bool(
+            raw.get("draw_road_ground_semantic_last", True),
+        ),
     )
     if not 0.0 <= cfg.mask_alpha <= 1.0:
         raise ConfigError(f"player.mask_alpha must be in [0, 1], got {cfg.mask_alpha}")

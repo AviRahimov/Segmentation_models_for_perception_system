@@ -124,6 +124,14 @@ fullscreen, `Esc` exit fullscreen, `Q` quit.
 Seeking automatically resets temporal buffers (EMA + tracker) because
 temporal context is broken.
 
+**Video player vs ORFD freespace strips:** The Qt player and
+`scripts/orfd_semantic_comparison.py` use the same SegFormer (and the same
+`config.yaml` weights / class merge rules). The comparison script’s strips
+show **binary traversable** predictions (road_ground vs GT path) for IoU;
+the player draws the full **argmax** terrain overlay, with each class’s
+visibility controlled by `display_mode` and `player.draw_road_ground_semantic_last`
+(z-order). There is no second SegFormer—only different visualization.
+
 ### Headless inference
 
 ```bash

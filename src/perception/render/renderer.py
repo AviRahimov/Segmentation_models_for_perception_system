@@ -56,12 +56,26 @@ class Renderer:
         if sem.logits.numel() == 0 or len(sem.class_names) == 0:
             return img
         idx = sem.logits.argmax(dim=0).detach().cpu().numpy().astype(np.int32)
-        for c_idx, name in enumerate(sem.class_names):
+
+        rg = "road_ground"
+        road_idx = sem.class_names.index(rg) if rg in sem.class_names else None
+        order = list(range(len(sem.class_names)))
+        cls_rg = self._classes.get(rg)
+        draw_rg_last = (
+            road_idx is not None
+            and self._cfg.draw_road_ground_semantic_last
+            and cls_rg is not None
+            and cls_rg.display_mode in ("mask_only", "both")
+        )
+        if draw_rg_last:
+            order = [i for i in order if i != road_idx]
+            order.append(int(road_idx))
+
+        for c_idx in order:
+            name = sem.class_names[c_idx]
             cls = self._classes.get(name)
             if cls is None or cls.display_mode == "none":
                 continue
-            # Semantic regions have no instance bbox; drawing modes that
-            # include a mask still apply.
             if cls.display_mode in ("mask_only", "both"):
                 mask = (idx == c_idx).astype(np.uint8)
                 if mask.any():

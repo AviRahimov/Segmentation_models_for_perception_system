@@ -16,6 +16,9 @@ Writes (default):
 * ``<output-dir>/strips/orfd_<stem>.png`` and ``goose_<scenario>_<stem>.png``
   — one horizontal strip per frame with traversable-binary IoU in the band.
 * ``<output-dir>/README.txt`` — run summary.
+* ``<output-dir>/performance_summary.json`` and ``performance_summary.md`` —
+  per-dataset (ORFD vs GOOSE) binary-traversable metrics (mean/std/median IoU,
+  micro precision/recall/F1), unless ``--no-performance-summary`` is set.
 
 Optional ``--single-mosaic`` concatenates strips into ``orfd_mosaic.png``.
 Extra GOOSE val sampling, ORFD gray value, and optional YOLOE mask subtraction
@@ -33,10 +36,12 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import logging
 import random
 import re
 import sys
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -140,6 +145,109 @@ class FreespaceFrame:
     img_bgr: np.ndarray
     gt_trav: np.ndarray  # bool
     valid: np.ndarray  # bool — exclude sky/ambiguous from IoU/scoring
+
+
+def freespace_strip_dataset_tag(fr: FreespaceFrame) -> str:
+    """``goose`` vs ``orfd`` from strip filename prefix (see ``_fs_name_key``)."""
+    return "goose" if fr.strip_name.startswith("goose_") else "orfd"
+
+
+def _micro_precision_recall_f1(
+    tp: int,
+    fp: int,
+    fn: int,
+) -> tuple[float | None, float | None, float | None]:
+    denom_p = tp + fp
+    denom_r = tp + fn
+    p = float(tp) / float(denom_p) if denom_p > 0 else None
+    r = float(tp) / float(denom_r) if denom_r > 0 else None
+    if p is None or r is None:
+        f1: float | None = None
+    elif p + r == 0.0:
+        f1 = 0.0
+    else:
+        f1 = 2.0 * p * r / (p + r)
+    return p, r, f1
+
+
+def _write_freespace_performance_artifacts(
+    out_dir: Path,
+    *,
+    models: list[str],
+    iou_by: defaultdict[tuple[str, str], list[float]],
+    micro_by: defaultdict[tuple[str, str], dict[str, int]],
+    n_frames: defaultdict[tuple[str, str], int],
+    config_snapshot: dict[str, object],
+) -> None:
+    def row_metrics(dataset: str, model: str) -> dict[str, object]:
+        key = (dataset, model)
+        ious = iou_by.get(key, [])
+        n_tot = int(n_frames.get(key, 0))
+        n_iou = len(ious)
+        mic = micro_by.get(key, {"tp": 0, "fp": 0, "fn": 0})
+        tp, fp, fn = int(mic["tp"]), int(mic["fp"]), int(mic["fn"])
+        p, r, f1 = _micro_precision_recall_f1(tp, fp, fn)
+        frac = (float(n_iou) / float(n_tot)) if n_tot > 0 else None
+        return {
+            "n_frames": n_tot,
+            "n_frames_iou_defined": n_iou,
+            "fraction_frames_iou_defined": frac,
+            "mean_iou": float(np.mean(ious)) if ious else None,
+            "std_iou": float(np.std(ious, ddof=1)) if len(ious) > 1 else None,
+            "median_iou": float(np.median(ious)) if ious else None,
+            "micro_precision": p,
+            "micro_recall": r,
+            "micro_f1": f1,
+            "micro_tp": tp,
+            "micro_fp": fp,
+            "micro_fn": fn,
+        }
+
+    orfd_metrics = {m: row_metrics("orfd", m) for m in models}
+    goose_metrics = {m: row_metrics("goose", m) for m in models}
+    payload = {
+        "config_snapshot": config_snapshot,
+        "orfd": orfd_metrics,
+        "goose": goose_metrics,
+    }
+    jp = out_dir / "performance_summary.json"
+    jp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    logger.info("wrote %s", jp)
+
+    def _cell(x: float | None, nd: int = 3) -> str:
+        return "—" if x is None else f"{x:.{nd}f}"
+
+    md_lines = [
+        "# Freespace performance summary",
+        "",
+        "Binary traversable (road_ground) vs GT on valid pixels. "
+        "Micro P/R/F1 pool TP/FP/FN across all labelled pixels in the split.",
+        "",
+    ]
+    for ds_title, block in (("ORFD", orfd_metrics), ("GOOSE", goose_metrics)):
+        md_lines.append(f"## {ds_title}")
+        md_lines.append("")
+        md_lines.append(
+            "| model | mean IoU | std IoU | median IoU | n IoU | n frames | "
+            "frac IoU | micro P | micro R | micro F1 |",
+        )
+        md_lines.append(
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        )
+        for m in models:
+            br = block[m]
+            md_lines.append(
+                f"| {m} | {_cell(br.get('mean_iou'))} | {_cell(br.get('std_iou'))} | "
+                f"{_cell(br.get('median_iou'))} | {br.get('n_frames_iou_defined')} | "
+                f"{br.get('n_frames')} | {_cell(br.get('fraction_frames_iou_defined'))} | "
+                f"{_cell(br.get('micro_precision'))} | {_cell(br.get('micro_recall'))} | "
+                f"{_cell(br.get('micro_f1'))} |",
+            )
+        md_lines.append("")
+
+    mp = out_dir / "performance_summary.md"
+    mp.write_text("\n".join(md_lines), encoding="utf-8")
+    logger.info("wrote %s", mp)
 
 
 def gather_goose_scenario_pairs(
@@ -476,6 +584,11 @@ def main() -> int:
         action="store_true",
         help="Dump up to 2 GT sanity composites (gray | colour legend).",
     )
+    p.add_argument(
+        "--no-performance-summary",
+        action="store_true",
+        help="Skip performance_summary.json / .md (default-on in freespace-binary mode).",
+    )
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args()
 
@@ -715,6 +828,12 @@ def main() -> int:
     pred_store: dict[str, dict[str, np.ndarray]] = {}
     sums: dict[str, list[float]] = {}
 
+    perf_iou_by: defaultdict[tuple[str, str], list[float]] = defaultdict(list)
+    perf_micro_by: defaultdict[tuple[str, str], dict[str, int]] = defaultdict(
+        lambda: {"tp": 0, "fp": 0, "fn": 0},
+    )
+    perf_n_frames: defaultdict[tuple[str, str], int] = defaultdict(int)
+
     for sem_key in model_candidates:
         w_str = _weights_for_key(sem_key)
         try:
@@ -750,11 +869,25 @@ def main() -> int:
                     )
                 pred_vis = np.where(pred_bool, np.int8(0), np.int8(-1))
 
+                tag_ds = freespace_strip_dataset_tag(fr)
+                pk = (tag_ds, sem_key)
+                perf_n_frames[pk] += 1
+                # Copy: np.logical_and(x, y, z) treats z as `out=` and would
+                # clobber fr.valid (often the same buffer as asarray(..., bool)).
+                vb = np.array(fr.valid, dtype=bool, copy=True)
+                gt_b = np.asarray(fr.gt_trav, dtype=bool)
+                pb = np.asarray(pred_bool, dtype=bool)
+                mic = perf_micro_by[pk]
+                mic["tp"] += int((pb & gt_b & vb).sum())
+                mic["fp"] += int((pb & ~gt_b & vb).sum())
+                mic["fn"] += int((~pb & gt_b & vb).sum())
+
                 iou_bin = binary_traversable_iou(
                     pred_bool, fr.gt_trav, fr.valid,
                 )
                 if iou_bin is not None:
                     sums[sem_key].append(iou_bin)
+                    perf_iou_by[pk].append(iou_bin)
 
                 pred_store.setdefault(fk, {})[sem_key] = pred_vis
                 ran_frames = True
@@ -922,11 +1055,35 @@ def main() -> int:
         ),
         f"freespace_binary={freespace_binary} traversable_prob_floor={trav_tau}",
         f"mean metrics: {'; '.join(mean_bits)}",
+    ]
+    if freespace_binary:
+        readme_lines.append(
+            "performance_summary.json/md: ORFD vs GOOSE binary metrics "
+            "(omit with --no-performance-summary).",
+        )
+    readme_lines += [
         "",
         "ORFD fillcolor: https://github.com/chaytonmin/Off-Road-Freespace-Detection",
         "Individual PNG strips under: strips/",
     ]
     (out_dir / "README.txt").write_text("\n".join(readme_lines) + "\n", encoding="utf-8")
+
+    if freespace_binary and (not args.no_performance_summary) and models_ran:
+        _write_freespace_performance_artifacts(
+            out_dir,
+            models=models_ran,
+            iou_by=perf_iou_by,
+            micro_by=perf_micro_by,
+            n_frames=perf_n_frames,
+            config_snapshot={
+                "freespace_merged_prob_floor": trav_tau,
+                "subtract_from_traversable": im_sub.subtract_from_traversable,
+                "orfd_trav_gray": int(occ.orfd_trav_gray),
+                "instance_subtract_dilate_px": (
+                    dilate_px if im_sub.subtract_from_traversable else 0
+                ),
+            },
+        )
 
     if args.single_mosaic:
         core = assemble_mosaic_vertical(mosaic_rows)

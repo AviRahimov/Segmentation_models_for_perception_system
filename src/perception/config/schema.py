@@ -150,6 +150,7 @@ class PlayerCfg:
     show_fps: bool = True
     show_class_legend: bool = True
     default_speed: float = 1.0
+    draw_road_ground_semantic_last: bool = True
 
 
 @dataclass(frozen=True)

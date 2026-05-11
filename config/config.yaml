@@ -63,7 +63,8 @@ classes:
   #   * sand_gravel keeps #46 (sand) only; #91 lives in road_ground.
   #   * vegetation (tree + plant) competes with road_ground on forest frames;
   #     keeps argmax from painting whole canopies as path/dirt-track.
-  #   * grass stays as #9 only (low grass / lawn), separate from tall vegetation.
+  #   * grass (#9): use ``display_mode: none`` below so Qt player shows only path
+  #     + sand; argmax unchanged (set ``mask_only`` to show grass again).
   #   * sky is included as a semantic class with display_mode "none" so
   #     sky pixels are absorbed (and rendered transparent) instead of
   #     leaking into terrain classes via argmax.
@@ -80,7 +81,7 @@ classes:
 
   - name: "grass"
     text_prompt: "grass"
-    display_mode: "mask_only"
+    display_mode: "none"                 # no overlay / legend — still in argmax
     color: "#00c850"
     is_semantic: true
     ade20k_indices: [9]                   # grass only
@@ -89,8 +90,7 @@ classes:
 
   - name: "vegetation"
     text_prompt: "trees and tall vegetation"
-    display_mode: "mask_only"
-    color: "#288c28"
+    display_mode: "none"                 # inference only — keeps trees off player UI
     is_semantic: true
     ade20k_indices: [4, 16]             # tree, plant
     native_indices:
@@ -146,6 +146,8 @@ player:
   show_fps: true
   show_class_legend: true
   default_speed: 1.0
+  # Blend road_ground semantic overlay after sand_gravel etc. so purple path stays on top.
+  draw_road_ground_semantic_last: true
 
 # ---------------------------------------------------------------------------
 source:
@@ -165,7 +167,7 @@ datasets:
 orfd_semantic_comparison:
   orfd_trav_gray: 255          # fillcolor traversable stripe (override 128 if mirrors differ)
   # Optional: traversable iff merged P(road_ground) >= this (omit or null → pure argmax).
-  freespace_merged_prob_floor: 0.42
+  freespace_merged_prob_floor: 0.25
   goose:
     ex_root: "datasets/goose/gooseEx_2d_val/gooseEx_2d_val"
     label_csv: "datasets/goose/gooseEx_2d_val/gooseEx_2d_val/goose_label_mapping.csv"
