@@ -1,16 +1,31 @@
 """Typed configuration dataclasses.
 
-These dataclasses are *frozen* so they can be hashed and shared between
-threads safely. To override a field at runtime use :func:`dataclasses.replace`
+These dataclasses are *frozen* so they can be shared between threads
+safely. To override a field at runtime use :func:`dataclasses.replace`
 or the helper :func:`perception.config.loader.override_source`.
 
-The schema deliberately introduces a small but important extension to the
-example config provided in the project brief: every ``is_semantic: true``
-class carries an ``ade20k_indices`` tuple. SegFormer-B2 is closed-vocabulary
-on ADE20K (150 classes), so a free-form text prompt cannot itself create a
-new semantic class. The ``ade20k_indices`` field tells the wrapper which
-ADE20K classes to merge into a single user class (e.g. road + sidewalk +
-earth -> ``road_ground``).
+Native catalogues
+-----------------
+
+Each ``is_semantic: true`` class carries a ``native_indices`` mapping
+keyed by *catalogue name* (``"ade20k"`` or ``"goose_12"``) → tuple of
+native channel indices to merge into that user class. Different model
+wrappers consume different catalogues:
+
+* :class:`SegFormerSemanticModel` (B2/B4) consumes ``"ade20k"`` (150 ch).
+* :class:`DDRNetSemanticModel`   consumes ``"goose_12"`` (12 ch).
+* :class:`PPLiteSegSemanticModel` consumes ``"goose_12"`` (12 ch).
+
+A semantic user class must define **at least one** non-empty entry in
+``native_indices`` for the loader to accept it. Whether a given wrapper
+can actually serve that class is enforced at ``warmup()`` time per
+model.
+
+For backward compatibility with older configs the loader still accepts
+the top-level ``ade20k_indices: [...]`` shorthand and routes it into
+``native_indices["ade20k"]``. The :attr:`ClassDef.ade20k_indices`
+property below preserves the old read API so existing tests keep
+passing.
 """
 from __future__ import annotations
 
@@ -23,6 +38,11 @@ SourceType = Literal["video", "camera", "image_dir"]
 VALID_DISPLAY_MODES: frozenset[str] = frozenset({"both", "bbox_only", "mask_only", "none"})
 VALID_SOURCE_TYPES: frozenset[str] = frozenset({"video", "camera", "image_dir"})
 
+#: Allowlisted ``native_indices`` keys. ``"goose_64"`` is intentionally
+#: omitted in this round (no 64-class checkpoint is wired up yet); add
+#: it here when a future round needs it.
+VALID_NATIVE_CATALOGUES: frozenset[str] = frozenset({"ade20k", "goose_12"})
+
 
 @dataclass(frozen=True)
 class ClassDef:
@@ -33,19 +53,25 @@ class ClassDef:
         text_prompt:    Open-vocabulary prompt for the instance model and the
                         legend label for semantic classes.
         display_mode:   One of ``both | bbox_only | mask_only | none``.
-        color_rgb:      Display color, RGB 0-255 tuple.
+        color_rgb:      Display color as ``(R, G, B)`` 0-255. Set internally
+                        by the loader from the YAML ``color: <name-or-hex>``
+                        field; do NOT set this directly when constructing
+                        configs by hand outside the loader.
         is_semantic:    ``True`` if this class is produced by the semantic
                         model, ``False`` if produced by the instance model.
-        ade20k_indices: For semantic classes only - tuple of ADE20K logit
-                        channels to merge into this user class. Ignored for
-                        instance classes.
+        native_indices: For semantic classes only - mapping from native
+                        catalogue name (``"ade20k"`` / ``"goose_12"``) to
+                        the tuple of native channel indices to merge into
+                        this user class. Must have at least one non-empty
+                        entry for semantic classes. Ignored (and forbidden)
+                        on instance classes.
         confidence_threshold:
                         Optional per-class confidence override for instance
                         classes. ``None`` means "fall back to
                         ``models.instance.confidence_threshold``". Must lie in
                         ``[0, 1]`` when set. Rejected for semantic classes
-                        (SegFormer has no per-class score - the merged
-                        argmax is unconditional).
+                        (closed-vocab models have no per-class score - the
+                        merged argmax is unconditional).
     """
 
     name: str
@@ -53,8 +79,17 @@ class ClassDef:
     display_mode: DisplayMode
     color_rgb: tuple[int, int, int]
     is_semantic: bool
-    ade20k_indices: tuple[int, ...] = ()
+    native_indices: dict[str, tuple[int, ...]] = field(default_factory=dict)
     confidence_threshold: float | None = None
+
+    @property
+    def ade20k_indices(self) -> tuple[int, ...]:
+        """Backward-compat shim: return ``native_indices["ade20k"]`` or ``()``.
+
+        Kept so that pre-migration call sites and existing tests continue
+        to read ``cls.ade20k_indices`` without modification.
+        """
+        return self.native_indices.get("ade20k", ())
 
 
 @dataclass(frozen=True)
@@ -67,7 +102,10 @@ class InstanceModelCfg:
 @dataclass(frozen=True)
 class SemanticModelCfg:
     name: str = "segformer-b2"
-    weights: str = "nvidia/segformer-b2-finetuned-ade-512-512"
+    #: Empty string ``""`` means "use the per-name default from
+    #: :data:`perception.models.factory.SEMANTIC_DEFAULT_WEIGHTS`". Set
+    #: this in YAML only when you want to override the standard checkpoint.
+    weights: str = ""
 
 
 @dataclass(frozen=True)
@@ -129,6 +167,38 @@ class DatasetsCfg:
 
 
 @dataclass(frozen=True)
+class OrfdSemanticComparisonGooseCfg:
+    """GOOSE-Ex val extras for ``scripts/orfd_semantic_comparison.py``."""
+
+    ex_root: str = "datasets/goose/gooseEx_2d_val/gooseEx_2d_val"
+    label_csv: str = (
+        "datasets/goose/gooseEx_2d_val/gooseEx_2d_val/goose_label_mapping.csv"
+    )
+    scenario_dir: str = "spot_scenario03"
+    samples: int = 0
+    traversable_categories: tuple[str, ...] = ("terrain", "road")
+
+
+@dataclass(frozen=True)
+class OrfdSemanticComparisonInstanceMaskCfg:
+    subtract_from_traversable: bool = False
+    dilate_px: int = 5
+
+
+@dataclass(frozen=True)
+class OrfdSemanticComparisonCfg:
+    """Strip comparison harness (ORFD + optional GOOSE val frames)."""
+
+    orfd_trav_gray: int = 255
+    #: If set, traversable iff merged P(road_ground) >= this (otherwise argmax).
+    freespace_merged_prob_floor: float | None = None
+    goose: OrfdSemanticComparisonGooseCfg = field(default_factory=OrfdSemanticComparisonGooseCfg)
+    instance_mask_subtraction: OrfdSemanticComparisonInstanceMaskCfg = field(
+        default_factory=OrfdSemanticComparisonInstanceMaskCfg,
+    )
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Root configuration object."""
 
@@ -139,6 +209,9 @@ class AppConfig:
     player: PlayerCfg
     source: SourceCfg
     datasets: DatasetsCfg
+    orfd_semantic_comparison: OrfdSemanticComparisonCfg = field(
+        default_factory=OrfdSemanticComparisonCfg,
+    )
 
     @property
     def instance_classes(self) -> tuple[ClassDef, ...]:

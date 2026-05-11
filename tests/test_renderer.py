@@ -33,7 +33,7 @@ def test_bbox_only_draws_no_mask_pixels():
 
 
 def test_mask_only_draws_no_bbox():
-    cls = ClassDef("road", "road", "mask_only", (0, 0, 255), True, ade20k_indices=(6,))
+    cls = ClassDef("road", "road", "mask_only", (0, 0, 255), True, native_indices={"ade20k": (6,)})
     # Note: instance Detection with mask_only is allowed; no bbox should appear.
     rdr = Renderer([cls], _player())
     mask = np.zeros((32, 32), dtype=np.uint8)
@@ -68,8 +68,8 @@ def test_both_draws_mask_and_bbox():
 
 
 def test_semantic_argmax_taken_on_smoothed_logits():
-    cls_a = ClassDef("a", "a", "mask_only", (255, 0, 0), True, ade20k_indices=(0,))
-    cls_b = ClassDef("b", "b", "mask_only", (0, 255, 0), True, ade20k_indices=(1,))
+    cls_a = ClassDef("a", "a", "mask_only", (255, 0, 0), True, native_indices={"ade20k": (0,)})
+    cls_b = ClassDef("b", "b", "mask_only", (0, 255, 0), True, native_indices={"ade20k": (1,)})
     rdr = Renderer([cls_a, cls_b], _player())
 
     # Build logits where the left half wins for class a, right half for b.

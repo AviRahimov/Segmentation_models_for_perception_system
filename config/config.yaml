@@ -31,20 +31,20 @@ classes:
   - name: "person"
     text_prompt: "person walking or standing"
     display_mode: "both"
-    color_rgb: [0, 255, 128]
+    color: "#00ff80"
     is_semantic: false
 
   - name: "vehicle"
     text_prompt: "cars trucks pickup trucks SUVs vans off-road vehicles"
     display_mode: "both"
-    color_rgb: [255, 200, 0]
+    color: "#ffc800"
     is_semantic: false
     confidence_threshold: 0.25            # cars are missed at the global 0.35
 
   - name: "obstacle"
     text_prompt: "rock log or debris on the ground"
     display_mode: "bbox_only"
-    color_rgb: [255, 64, 64]
+    color: "#ff4040"
     is_semantic: false
 
   # ----- Semantic classes (SegFormer / ADE20K merged) --------------------
@@ -55,50 +55,64 @@ classes:
   #   water=21, sky=2
   #
   # Mapping rationale (off-road biased):
-  #   * road_ground includes #91 (dirt-track) and #52 (path) because in
-  #     off-road imagery those ARE the drivable surface, not paved road.
-  #   * sand_gravel keeps #46 (sand) only; #91 moved to road_ground.
-  #   * grass stays as #9 only - if you want general "low vegetation",
-  #     add a separate `vegetation` class with #16 (plant) and #4 (tree).
+  #   * road_ground uses path + dirt-track only (#52, #91). We intentionally
+  #     EXCLUDE ADE20K ``earth`` (#13): it labels most bare soil and causes
+  #     SegFormer to paint entire fields purple (merged road_ground wins argmax).
+  #     Omit ``sidewalk`` (#11) for the same generic-ground bleed in off-road
+  #     video. Add #6 ``road`` if you need paved-lane recall.
+  #   * sand_gravel keeps #46 (sand) only; #91 lives in road_ground.
+  #   * vegetation (tree + plant) competes with road_ground on forest frames;
+  #     keeps argmax from painting whole canopies as path/dirt-track.
+  #   * grass stays as #9 only (low grass / lawn), separate from tall vegetation.
   #   * sky is included as a semantic class with display_mode "none" so
   #     sky pixels are absorbed (and rendered transparent) instead of
   #     leaking into terrain classes via argmax.
   #   Adjust the lists below for your domain, e.g. paved-road robotics
   #   would drop #91 from road_ground.
-  # - name: "road_ground"
-  #   text_prompt: "road or drivable ground surface"
-  #   display_mode: "mask_only"
-  #   color_rgb: [100, 100, 255]
-  #   is_semantic: true
-  #   ade20k_indices: [6, 11, 13, 52, 91]   # road, sidewalk, earth, path, dirt-track
+  - name: "road_ground"
+    text_prompt: "road or drivable ground surface"
+    display_mode: "mask_only"
+    color: "#6464ff"
+    is_semantic: true
+    ade20k_indices: [52, 91]              # path, dirt-track — no earth/sidewalk
+    native_indices:
+      goose_12: [5]
 
   - name: "grass"
     text_prompt: "grass"
     display_mode: "mask_only"
-    color_rgb: [0, 200, 80]
+    color: "#00c850"
     is_semantic: true
     ade20k_indices: [9]                   # grass only
+    native_indices:
+      goose_12: [0]
+
+  - name: "vegetation"
+    text_prompt: "trees and tall vegetation"
+    display_mode: "mask_only"
+    color: "#288c28"
+    is_semantic: true
+    ade20k_indices: [4, 16]             # tree, plant
+    native_indices:
+      goose_12: [0]
 
   - name: "sand_gravel"
     text_prompt: "sand or gravel surface"
     display_mode: "mask_only"
-    color_rgb: [194, 178, 128]
+    color: "#c2b280"
     is_semantic: true
     ade20k_indices: [46]                  # sand only (dirt-track lives in road_ground)
+    native_indices:
+      goose_12: [1]
 
   - name: "sky"
     text_prompt: "sky"
     display_mode: "none"                  # absorbed but not drawn
-    color_rgb: [200, 200, 200]
+    color: "#c8c8c8"
     is_semantic: true
     ade20k_indices: [2]                   # sky
-
-  # - name: "vegetation"
-  #   text_prompt: "trees and tall vegetation"
-  #   display_mode: "mask_only"
-  #   color_rgb: [40, 140, 30]
-  #   is_semantic: true
-  #   ade20k_indices: [4, 16]       # tree + plant
+    native_indices:
+      goose_12: [8]
 
   # - name: "water"
   #   text_prompt: "water or wet surface"
@@ -143,3 +157,21 @@ source:
 
 datasets:
   download_dir: "./datasets"
+
+# ---------------------------------------------------------------------------
+# ORFD / GOOSE freespace strip comparison
+# Consumed only by scripts/orfd_semantic_comparison.py — keeps that CLI small.
+# ---------------------------------------------------------------------------
+orfd_semantic_comparison:
+  orfd_trav_gray: 255          # fillcolor traversable stripe (override 128 if mirrors differ)
+  # Optional: traversable iff merged P(road_ground) >= this (omit or null → pure argmax).
+  freespace_merged_prob_floor: 0.42
+  goose:
+    ex_root: "datasets/goose/gooseEx_2d_val/gooseEx_2d_val"
+    label_csv: "datasets/goose/gooseEx_2d_val/gooseEx_2d_val/goose_label_mapping.csv"
+    scenario_dir: "spot_scenario03"
+    samples: 5                 # >0 adds random val frames from scenario_dir
+    traversable_categories: [terrain, road]   # GOOSE-12 names; gravel is usually "terrain"
+  instance_mask_subtraction:
+    subtract_from_traversable: true
+    dilate_px: 5

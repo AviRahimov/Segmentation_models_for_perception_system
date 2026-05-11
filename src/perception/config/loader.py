@@ -11,6 +11,9 @@ from typing import Any
 
 import yaml
 
+from ..core.colors_named import _NAMED_COLORS, parse_color
+from ..models.semantic._class_catalogues import GOOSE_12_NAMES
+from ..models.semantic._class_catalogues import CATALOGUE_SIZES
 from .schema import (
     AppConfig,
     ClassDef,
@@ -19,12 +22,16 @@ from .schema import (
     InstanceModelCfg,
     InstanceSAM2Cfg,
     ModelsCfg,
+    OrfdSemanticComparisonCfg,
+    OrfdSemanticComparisonGooseCfg,
+    OrfdSemanticComparisonInstanceMaskCfg,
     PlayerCfg,
     SemanticEMACfg,
     SemanticModelCfg,
     SourceCfg,
     TemporalCfg,
     VALID_DISPLAY_MODES,
+    VALID_NATIVE_CATALOGUES,
     VALID_SOURCE_TYPES,
 )
 
@@ -88,6 +95,97 @@ def _build_app_config(raw: dict[str, Any]) -> AppConfig:
         player=_build_player(_require_dict(raw.get("player"), "player")),
         source=_build_source(_require_dict(raw.get("source"), "source")),
         datasets=_build_datasets(_require_dict(raw.get("datasets"), "datasets")),
+        orfd_semantic_comparison=_build_orfd_semantic_comparison(
+            _require_dict(raw.get("orfd_semantic_comparison"), "orfd_semantic_comparison"),
+        ),
+    )
+
+
+def _build_orfd_semantic_comparison(raw: dict[str, Any]) -> OrfdSemanticComparisonCfg:
+    grey = raw.get("orfd_trav_gray", 255)
+    if not isinstance(grey, int) or grey < 0 or grey > 255:
+        raise ConfigError(f"orfd_semantic_comparison.orfd_trav_gray must be int in [0,255], got {grey!r}")
+
+    tau = raw.get("freespace_merged_prob_floor", None)
+    if tau is not None:
+        if not isinstance(tau, (int, float)) or not (0.0 < float(tau) < 1.0):
+            raise ConfigError(
+                "orfd_semantic_comparison.freespace_merged_prob_floor must be null "
+                "or float in (0, 1), "
+                f"got {tau!r}",
+            )
+        tau_f: float | None = float(tau)
+    else:
+        tau_f = None
+
+    goose_r = _require_dict(raw.get("goose"), "goose") if raw else {}
+    tcats = goose_r.get("traversable_categories", ["terrain", "road"])
+    if tcats is None:
+        tcats_list: list[str] = []
+    elif isinstance(tcats, (list, tuple)):
+        tcats_list = []
+        for i, item in enumerate(tcats):
+            if not isinstance(item, str) or not item.strip():
+                raise ConfigError(f"goose.traversable_categories[{i}] must be a non-empty string")
+            tcats_list.append(item.strip().lower())
+    elif isinstance(tcats, str):
+        tcats_list = [x.strip().lower() for x in tcats.split(",") if x.strip()]
+    else:
+        raise ConfigError(f"goose.traversable_categories must be a list or string, got {type(tcats).__name__}")
+    if not tcats_list:
+        raise ConfigError("goose.traversable_categories must list at least one GOOSE coarse name")
+
+    allowed = frozenset(GOOSE_12_NAMES)
+    for c in tcats_list:
+        if c not in allowed:
+            raise ConfigError(
+                f"goose.traversable_categories: unknown GOOSE-12 category {c!r} "
+                f"(allowed: {sorted(allowed)})",
+            )
+
+    seen: set[str] = set()
+    tcats_unique: list[str] = []
+    for c in tcats_list:
+        if c not in seen:
+            seen.add(c)
+            tcats_unique.append(c)
+
+    g_samples = goose_r.get("samples", 0)
+    if not isinstance(g_samples, int) or g_samples < 0:
+        raise ConfigError(f"goose.samples must be int >= 0, got {g_samples!r}")
+
+    inst_r = _require_dict(raw.get("instance_mask_subtraction"), "instance_mask_subtraction") if raw else {}
+    subtract = bool(inst_r.get("subtract_from_traversable", False))
+    dilate_px = inst_r.get("dilate_px", 5)
+    if not isinstance(dilate_px, int) or dilate_px < 0:
+        raise ConfigError(f"instance_mask_subtraction.dilate_px must be int >= 0, got {dilate_px!r}")
+
+    goose_cfg = OrfdSemanticComparisonGooseCfg(
+        ex_root=str(goose_r.get(
+            "ex_root",
+            OrfdSemanticComparisonGooseCfg.ex_root,
+        )),
+        label_csv=str(goose_r.get(
+            "label_csv",
+            OrfdSemanticComparisonGooseCfg.label_csv,
+        )),
+        scenario_dir=str(goose_r.get(
+            "scenario_dir",
+            OrfdSemanticComparisonGooseCfg.scenario_dir,
+        )),
+        samples=int(g_samples),
+        traversable_categories=tuple(tcats_unique),
+    )
+    inst_cfg = OrfdSemanticComparisonInstanceMaskCfg(
+        subtract_from_traversable=subtract,
+        dilate_px=int(dilate_px),
+    )
+
+    return OrfdSemanticComparisonCfg(
+        orfd_trav_gray=int(grey),
+        freespace_merged_prob_floor=tau_f,
+        goose=goose_cfg,
+        instance_mask_subtraction=inst_cfg,
     )
 
 
@@ -117,34 +215,23 @@ def _build_classes(raw: Any) -> tuple[ClassDef, ...]:
                 f"classes[{i}={name!r}].display_mode={display_mode!r} not in {sorted(VALID_DISPLAY_MODES)}"
             )
 
-        color = entry.get("color_rgb", [255, 0, 0])
-        if not isinstance(color, (list, tuple)) or len(color) != 3:
-            raise ConfigError(f"classes[{i}={name!r}].color_rgb must be a 3-element list, got {color!r}")
-        try:
-            color_t = tuple(int(c) for c in color)
-        except (TypeError, ValueError):
-            raise ConfigError(f"classes[{i}={name!r}].color_rgb must contain integers") from None
-        if any(not 0 <= c <= 255 for c in color_t):
-            raise ConfigError(f"classes[{i}={name!r}].color_rgb values must be in [0, 255]")
+        color_t = _parse_class_color(entry, i, name)
 
         is_semantic = bool(entry.get("is_semantic", False))
-        ade = entry.get("ade20k_indices", ())
-        if isinstance(ade, int):
-            ade = [ade]
-        try:
-            ade_t = tuple(int(x) for x in ade)
-        except (TypeError, ValueError):
-            raise ConfigError(f"classes[{i}={name!r}].ade20k_indices must be ints") from None
+        native_idx = _parse_native_indices(entry, i, name)
+        ade_t = native_idx.get("ade20k", ())
 
-        if is_semantic and not ade_t:
+        if is_semantic and not any(native_idx.values()):
             raise ConfigError(
-                f"Semantic class {name!r} must define ade20k_indices "
-                "(SegFormer-B2 is closed-vocabulary on ADE20K)"
+                f"Semantic class {name!r} must define at least one non-empty "
+                "entry under native_indices (or the legacy ade20k_indices "
+                "shorthand) - closed-vocab models cannot be served without it"
             )
-        if not is_semantic and ade_t:
+        if not is_semantic and (native_idx or "ade20k_indices" in entry or "native_indices" in entry):
             # Soft warning would be nice, but a strict error is safer.
             raise ConfigError(
-                f"Instance class {name!r} must NOT define ade20k_indices"
+                f"Instance class {name!r} must NOT define ade20k_indices "
+                "or native_indices"
             )
 
         cls_conf_raw = entry.get("confidence_threshold", None)
@@ -177,11 +264,111 @@ def _build_classes(raw: Any) -> tuple[ClassDef, ...]:
                 display_mode=display_mode,  # type: ignore[arg-type]
                 color_rgb=color_t,  # type: ignore[arg-type]
                 is_semantic=is_semantic,
-                ade20k_indices=ade_t,
+                native_indices=native_idx,
                 confidence_threshold=cls_conf,
             )
         )
     return tuple(out)
+
+
+# --------------------------------------------------------------------------- #
+# Color and native-indices helpers                                            #
+# --------------------------------------------------------------------------- #
+
+
+def _parse_class_color(entry: dict[str, Any], i: int, name: str) -> tuple[int, int, int]:
+    """Parse the ``color`` (or legacy ``color_rgb``) field for one class.
+
+    The on-disk format is ``color: "<name-or-hex>"``. The legacy
+    ``color_rgb: [R, G, B]`` array form is rejected with a clear
+    deprecation message — silently coercing is too easy to leave wrong.
+    """
+    if "color_rgb" in entry:
+        raise ConfigError(
+            f"classes[{i}={name!r}].color_rgb is deprecated; use "
+            f'color: "<name>" or color: "#RRGGBB". '
+            f"Valid names: {sorted(_NAMED_COLORS)}"
+        )
+    spec = entry.get("color", "red")
+    if not isinstance(spec, str):
+        raise ConfigError(
+            f"classes[{i}={name!r}].color must be a string "
+            f'(named color or "#RRGGBB" hex), got {type(spec).__name__}: {spec!r}'
+        )
+    try:
+        return parse_color(spec)
+    except ValueError as e:
+        raise ConfigError(f"classes[{i}={name!r}].color: {e}") from None
+
+
+def _parse_native_indices(
+    entry: dict[str, Any], i: int, name: str
+) -> dict[str, tuple[int, ...]]:
+    """Parse ``native_indices: {ade20k: [...], goose_12: [...]}`` plus the
+    legacy ``ade20k_indices: [...]`` shorthand.
+
+    Returns a fresh dict so callers can store it on the (frozen) dataclass
+    without aliasing across instances.
+    """
+    out: dict[str, tuple[int, ...]] = {}
+
+    legacy = entry.get("ade20k_indices", None)
+    if legacy is not None:
+        if isinstance(legacy, int):
+            legacy = [legacy]
+        try:
+            out["ade20k"] = tuple(int(x) for x in legacy)
+        except (TypeError, ValueError):
+            raise ConfigError(
+                f"classes[{i}={name!r}].ade20k_indices must be ints"
+            ) from None
+        _validate_catalogue_range("ade20k", out["ade20k"], i, name)
+
+    native = entry.get("native_indices", None)
+    if native is not None:
+        if not isinstance(native, dict):
+            raise ConfigError(
+                f"classes[{i}={name!r}].native_indices must be a mapping, "
+                f"got {type(native).__name__}"
+            )
+        for key, raw in native.items():
+            k = str(key)
+            if k not in VALID_NATIVE_CATALOGUES:
+                raise ConfigError(
+                    f"unknown native_indices key {k!r}; allowed: "
+                    "{'ade20k','goose_12'}"
+                )
+            if isinstance(raw, int):
+                raw = [raw]
+            if raw is None:
+                raw = []
+            try:
+                idx = tuple(int(x) for x in raw)
+            except (TypeError, ValueError):
+                raise ConfigError(
+                    f"classes[{i}={name!r}].native_indices[{k!r}] must "
+                    "contain ints"
+                ) from None
+            _validate_catalogue_range(k, idx, i, name)
+            if k in out and out[k] != idx:
+                raise ConfigError(
+                    f"classes[{i}={name!r}] declares both ade20k_indices "
+                    f"and native_indices.ade20k with different values"
+                )
+            out[k] = idx
+    return out
+
+
+def _validate_catalogue_range(
+    catalogue: str, idx: tuple[int, ...], i: int, name: str
+) -> None:
+    n = CATALOGUE_SIZES[catalogue]
+    for v in idx:
+        if not 0 <= v < n:
+            raise ConfigError(
+                f"classes[{i}={name!r}].native_indices[{catalogue!r}] "
+                f"value {v} out of range [0, {n})"
+            )
 
 
 def _build_models(raw: dict[str, Any]) -> ModelsCfg:
@@ -194,7 +381,8 @@ def _build_models(raw: dict[str, Any]) -> ModelsCfg:
     )
     sem = SemanticModelCfg(
         name=str(sem_raw.get("name", "segformer-b2")),
-        weights=str(sem_raw.get("weights", "nvidia/segformer-b2-finetuned-ade-512-512")),
+        # Empty string => factory resolves the default weights for `name`.
+        weights=str(sem_raw.get("weights", "") or ""),
     )
     if not 0.0 <= inst.confidence_threshold <= 1.0:
         raise ConfigError(
