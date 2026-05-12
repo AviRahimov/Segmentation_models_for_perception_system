@@ -6,7 +6,7 @@ Public sub-packages:
 * ``perception.core``    — pure data contracts shared across modules
 * ``perception.io``      — frame sources (video, camera, image directory)
 * ``perception.models``  — instance + semantic models and inference backends
-* ``perception.temporal``— causal smoothing (logit EMA, scene cuts, SAM2)
+* ``perception.temporal``— causal smoothing (logit EMA, scene cuts, IoU tracker)
 * ``perception.render``  — overlay primitives + display-mode-aware renderer
 * ``perception.pipeline``— DI container that orchestrates per-frame inference
 * ``perception.ui``      — PyQt6 video player (decoupled from inference)

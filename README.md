@@ -2,8 +2,8 @@
 
 Real-time perception stack for off-road robots. Combines **open-vocabulary
 instance segmentation** (YOLOE-26L), **closed-vocab terrain segmentation**
-(SegFormer-B2), **causal temporal smoothing** (logit EMA + SAM 2.1
-streaming), and a non-blocking **PyQt6 video player**. Everything is driven
+(SegFormer-B2), **causal temporal smoothing** (logit EMA + IoU-backed instance
+association), and a non-blocking **PyQt6 video player**. Everything is driven
 by a single `config.yaml`; adding a new class is a single YAML edit.
 
 ```
@@ -20,7 +20,7 @@ by a single `config.yaml`; adding a new class is a single YAML edit.
 |                  |           +----------+---------+       |               |
 |                  v                      v                 |               |
 |         +-----------------+    +-----------------+        |               |
-|         |  SAM2 / IoU     |    |  LogitsEMA      |  <-----+ reset on cut  |
+|         |  IoU tracker    |    |  LogitsEMA      |  <-----+ reset on cut  |
 |         |  tracker        |    |  (causal)       |                        |
 |         +--------+--------+    +---------+-------+                        |
 |                  |                       |                                |
@@ -75,9 +75,6 @@ pip install --upgrade pip
 # up automatically:
 pip install -r requirements.txt
 
-# OPTIONAL: SAM 2.1 streaming tracker
-pip install "git+https://github.com/facebookresearch/sam2.git@main"
-
 # OPTIONAL: TensorRT (Jetson: bundled with JetPack; x86: NVIDIA wheel).
 # After installing, follow the four integration steps documented at
 # src/perception/models/backends/tensorrt.py
@@ -100,9 +97,6 @@ run (mirrors: GitHub `ultralytics/assets` v8.4.0 → HF Hub
 `openvision/yoloe26-l-seg`).
 - **SegFormer-B2** is fetched by `transformers` into the standard
 Hugging Face cache.
-- **SAM 2.1** is opt-in: set `temporal.instance_sam2.checkpoint` and
-`model_config` in `config.yaml`. If unset, the IoU fallback tracker
-is used.
 
 ---
 
@@ -202,11 +196,6 @@ drawn in its assigned colour with the requested display mode.
 | `temporal.semantic_ema.alpha`                    | `0.35`                                      | EMA weight on the *current* frame's logits.                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `temporal.semantic_ema.reset_on_scene_cut`       | `true`                                      | Drop EMA + tracker state on scene cut.                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `temporal.semantic_ema.scene_cut_threshold`      | `0.45`                                      | Bhattacharyya distance threshold in [0, 1].                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `temporal.instance_sam2.enabled`                 | `true`                                      | Use SAM2 tracker if available; otherwise IoU fallback.                                                                                                                                                                                                                                                                                                                                                                                            |
-| `temporal.instance_sam2.reprompt_every_n_frames` | `30`                                        | SAM2 re-prompt cadence.                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `temporal.instance_sam2.min_track_score`         | `0.4`                                       | Re-prompt when detector score drops below this.                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `temporal.instance_sam2.checkpoint`              | `""`                                        | SAM2 checkpoint path; empty -> tracker disabled.                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `temporal.instance_sam2.model_config`            | `""`                                        | SAM2 model YAML path.                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `hardware.device`                                | `cuda`                                      | Torch device.                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `hardware.fp16`                                  | `true`                                      | Run models in half precision on GPU.                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `hardware.use_tensorrt`                          | `false`                                     | Use TensorRT backend (see backends/tensorrt.py).                                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -237,7 +226,7 @@ src/perception/
     instance/  YOLOE wrapper (cached text embeds)
     semantic/  SegFormer wrapper (raw merged logits via ADE20K LUT)
     factory.py registry-based dispatch
-  temporal/    LogitsEMA, scene-cut, IoU + SAM2 trackers
+  temporal/    LogitsEMA, scene-cut, IoU instance tracker
   pipeline/    PerceptionPipeline (DI of all of the above)
   render/      overlay primitives + display-mode-aware renderer
   ui/          PyQt6 widgets + decode/inference QThread workers

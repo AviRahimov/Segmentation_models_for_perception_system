@@ -30,8 +30,6 @@ classes:
 temporal:
   semantic_ema:
     alpha: 0.4
-  instance_sam2:
-    enabled: false
 
 hardware:
   device: "cpu"

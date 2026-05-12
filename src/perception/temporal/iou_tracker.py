@@ -1,8 +1,8 @@
-"""Lightweight IoU-based tracker used as the SAM2 fallback.
+"""Lightweight IoU-based instance tracker across frames.
 
-This module has no SAM2 dependency. It greedily matches new detections to
-the previous frame's by class-conditioned IoU, propagating ``track_id``s
-where the match exceeds a threshold and assigning fresh ids otherwise.
+Greedily matches new detections to the previous frame's by class-conditioned
+IoU, propagating ``track_id``s where the match exceeds a threshold and
+assigning fresh ids otherwise.
 """
 from __future__ import annotations
 

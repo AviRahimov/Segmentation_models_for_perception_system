@@ -20,7 +20,6 @@ from .schema import (
     DatasetsCfg,
     HardwareCfg,
     InstanceModelCfg,
-    InstanceSAM2Cfg,
     ModelsCfg,
     OrfdSemanticComparisonCfg,
     OrfdSemanticComparisonGooseCfg,
@@ -393,7 +392,6 @@ def _build_models(raw: dict[str, Any]) -> ModelsCfg:
 
 def _build_temporal(raw: dict[str, Any]) -> TemporalCfg:
     sem = _require_dict(raw.get("semantic_ema"), "temporal.semantic_ema")
-    sam = _require_dict(raw.get("instance_sam2"), "temporal.instance_sam2")
     sem_cfg = SemanticEMACfg(
         alpha=float(sem.get("alpha", 0.35)),
         reset_on_scene_cut=bool(sem.get("reset_on_scene_cut", True)),
@@ -405,16 +403,7 @@ def _build_temporal(raw: dict[str, Any]) -> TemporalCfg:
         raise ConfigError(
             f"temporal.semantic_ema.scene_cut_threshold must be in [0, 1], got {sem_cfg.scene_cut_threshold}"
         )
-    sam_cfg = InstanceSAM2Cfg(
-        enabled=bool(sam.get("enabled", True)),
-        reprompt_every_n_frames=int(sam.get("reprompt_every_n_frames", 30)),
-        min_track_score=float(sam.get("min_track_score", 0.4)),
-        checkpoint=str(sam.get("checkpoint", "") or ""),
-        model_config=str(sam.get("model_config", "") or ""),
-    )
-    if sam_cfg.reprompt_every_n_frames < 1:
-        raise ConfigError("temporal.instance_sam2.reprompt_every_n_frames must be >= 1")
-    return TemporalCfg(semantic_ema=sem_cfg, instance_sam2=sam_cfg)
+    return TemporalCfg(semantic_ema=sem_cfg)
 
 
 def _build_hardware(raw: dict[str, Any]) -> HardwareCfg:

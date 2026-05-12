@@ -40,12 +40,6 @@ gdown==5.2.0
 # Testing
 pytest==8.3.4
 
-# OPTIONAL — install separately, not pinned because the upstream
-# package is published from git rather than PyPI:
-#   pip install "git+https://github.com/facebookresearch/sam2.git@main"
-# When installed, `perception.temporal.sam2_tracker` lights up
-# automatically; otherwise the IoU fallback tracker is used.
-#
 # OPTIONAL — for TensorRT acceleration on Jetson AGX Orin:
 #   tensorrt is shipped with JetPack; on x86 install via NVIDIA's wheel.
 #   See src/perception/models/backends/tensorrt.py for the four

@@ -34,8 +34,7 @@ class InstanceTracker(ABC):
         frame_bgr: np.ndarray,
         detections: Sequence[Detection],
     ) -> list[Detection]:
-        """Return a new list of detections with ``track_id`` populated.
-        May modify masks (e.g. SAM2 propagation)."""
+        """Return a new list of detections with ``track_id`` populated."""
 
     @abstractmethod
     def reset(self) -> None:

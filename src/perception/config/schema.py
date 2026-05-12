@@ -122,18 +122,8 @@ class SemanticEMACfg:
 
 
 @dataclass(frozen=True)
-class InstanceSAM2Cfg:
-    enabled: bool = True
-    reprompt_every_n_frames: int = 30
-    min_track_score: float = 0.4
-    checkpoint: str = ""     # path to sam2 .pt; empty -> tracker is disabled
-    model_config: str = ""   # path to sam2 yaml config
-
-
-@dataclass(frozen=True)
 class TemporalCfg:
     semantic_ema: SemanticEMACfg = field(default_factory=SemanticEMACfg)
-    instance_sam2: InstanceSAM2Cfg = field(default_factory=InstanceSAM2Cfg)
 
 
 @dataclass(frozen=True)

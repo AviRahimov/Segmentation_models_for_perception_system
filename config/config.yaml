@@ -29,20 +29,31 @@ models:
 classes:
   # ----- Instance classes (YOLOE) ----------------------------------------
   - name: "person"
-    text_prompt: "person walking or standing"
+    # Natural phrases (no hyphen compounds): improves recall vs awkward tokens.
+    # Tune ``confidence_threshold`` down if people are still missed; up if you get spurious humans.
+    text_prompt: >-
+      person, pedestrian, human, people, adult, child, man, woman,
+      full body, standing person, walking person,
+      person in the distance, human figure outdoor
     display_mode: "both"
     color: "#00ff80"
     is_semantic: false
+    confidence_threshold: 0.15
 
   - name: "vehicle"
-    text_prompt: "cars trucks pickup trucks SUVs vans off-road vehicles"
+    # Tight motor-vehicle wording (not generic ``vehicle``) trims false positives;
+    # raise ``confidence_threshold`` further if yellow boxes still latch onto non-cars.
+    text_prompt: >-
+      passenger car, driving car, SUV, pickup truck, van, minivan, jeep,
+      off-road truck, ATV, UTV, motorcycle,
+      motorbike, farm tractor, trailer
     display_mode: "both"
     color: "#ffc800"
     is_semantic: false
-    confidence_threshold: 0.25            # cars are missed at the global 0.35
+    confidence_threshold: 0.35  
 
   - name: "obstacle"
-    text_prompt: "rock log or debris on the ground"
+    text_prompt: "rock, log, debris"
     display_mode: "bbox_only"
     color: "#ff4040"
     is_semantic: false
@@ -127,12 +138,6 @@ temporal:
     alpha: 0.35
     reset_on_scene_cut: true
     scene_cut_threshold: 0.45     # Bhattacharyya distance, in [0, 1]
-  instance_sam2:
-    enabled: true
-    reprompt_every_n_frames: 30
-    min_track_score: 0.4
-    checkpoint: ""                # path to sam2.1 .pt; empty -> IoU fallback
-    model_config: ""              # path to sam2.1 yaml config
 
 # ---------------------------------------------------------------------------
 hardware:
