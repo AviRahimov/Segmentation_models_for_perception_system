@@ -8,6 +8,10 @@ models:
     name: "yoloe26l"
     weights: "yoloe-26l-seg.pt"          # Ultralytics YOLOE-26L seg checkpoint
     confidence_threshold: 0.35
+    prompt_mode: production            # production | discovery — discovery loads many prompts from a file
+    discovery_vocabulary_path: "yoloe_discovery_vocab.example.txt"  # relative to this YAML file
+    discovery_conf_floor: 0.05         # Ultralytics predict conf= (use low but non-zero)
+    # discovery_max_det: 300             # optional cap — omit for Ultralytics default
   semantic:
     name: "segformer-b2"
     weights: "nvidia/segformer-b2-finetuned-ade-512-512"
@@ -32,13 +36,11 @@ classes:
     # Natural phrases (no hyphen compounds): improves recall vs awkward tokens.
     # Tune ``confidence_threshold`` down if people are still missed; up if you get spurious humans.
     text_prompt: >-
-      person, pedestrian, human, people, adult, child, man, woman,
-      full body, standing person, walking person,
-      person in the distance, human figure outdoor
+      person
     display_mode: "both"
     color: "#00ff80"
     is_semantic: false
-    confidence_threshold: 0.15
+    confidence_threshold: 0.37
 
   - name: "vehicle"
     # Tight motor-vehicle wording (not generic ``vehicle``) trims false positives;
@@ -57,6 +59,13 @@ classes:
     display_mode: "bbox_only"
     color: "#ff4040"
     is_semantic: false
+
+  - name: "unnecessary_detection"
+    text_prompt: "truck, trash, container, barrier, traffic cone, traffic light, traffic sign, traffic block, boom barrier, road block, street light, pole"
+    display_mode: "none"
+    color: "#000000"
+    is_semantic: false
+    confidence_threshold: 0.05
 
   # ----- Semantic classes (SegFormer / ADE20K merged) --------------------
   # ADE20K channel cheat-sheet used below:

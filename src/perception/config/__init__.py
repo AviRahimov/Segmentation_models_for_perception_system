@@ -5,6 +5,7 @@ from .schema import (
     DatasetsCfg,
     HardwareCfg,
     InstanceModelCfg,
+    InstancePromptMode,
     ModelsCfg,
     PlayerCfg,
     SemanticEMACfg,
@@ -12,7 +13,7 @@ from .schema import (
     SourceCfg,
     TemporalCfg,
 )
-from .loader import load_config, override_source
+from .loader import load_config, override_source, resolve_path_relative_config
 
 __all__ = [
     "AppConfig",
@@ -20,6 +21,7 @@ __all__ = [
     "DatasetsCfg",
     "HardwareCfg",
     "InstanceModelCfg",
+    "InstancePromptMode",
     "ModelsCfg",
     "PlayerCfg",
     "SemanticEMACfg",
@@ -28,4 +30,5 @@ __all__ = [
     "TemporalCfg",
     "load_config",
     "override_source",
+    "resolve_path_relative_config",
 ]

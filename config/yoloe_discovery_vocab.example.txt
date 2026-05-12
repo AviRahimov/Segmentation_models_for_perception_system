@@ -1,0 +1,105 @@
+# Example YOLOE discovery vocabulary (one prompt per line).
+# Copy or symlink and list candidate phrases to see which indices fire on your footage.
+# Duplicate lines are ignored after the first occurrence.
+
+# Humans
+person
+pedestrian
+human
+adult
+child
+worker
+cyclist
+motorcyclist
+
+# Passenger Vehicles
+car
+coupe
+convertible
+SUV
+crossover
+pickup truck
+truck
+van
+minivan
+jeep
+off-road vehicle
+ATV
+UTV
+
+# Two-Wheel Vehicles
+motorcycle
+dirt bike
+scooter
+moped
+bicycle
+mountain bike
+e-bike
+
+# Heavy / Agricultural Vehicles
+tractor
+bulldozer
+excavator
+loader
+forklift
+harvester
+construction vehicle
+
+# Terrain / Natural Obstacles
+rock
+boulder
+stone
+tree
+bush
+shrub
+branch
+log
+stump
+fallen tree
+vegetation
+grass
+mud
+sand
+gravel
+water puddle
+ditch
+pit
+hole
+trench
+slope
+berm
+
+# Animals
+dog
+cat
+cow
+horse
+goat
+sheep
+deer
+wild animal
+
+# Traffic / Navigation Objects
+sign
+traffic sign
+warning sign
+stop sign
+cone
+barrier
+fence
+gate
+pole
+marker
+bollard
+
+# Generic Hazards / Obstacles
+obstacle
+debris
+trash
+rubble
+blockage
+tire
+crate
+unknown object
+static obstacle
+dynamic obstacle

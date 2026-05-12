@@ -38,7 +38,7 @@ class PerceptionPipeline:
         self._scene_cut = scene_cut_detector
         self._cfg = config
         self._has_semantic = bool(config.semantic_classes)
-        self._has_instance = bool(config.instance_classes)
+        self._has_instance = config.runs_yoloe_instance_inference
         self._reset_on_cut = config.temporal.semantic_ema.reset_on_scene_cut
 
     # ------------------------------------------------------------------ #
@@ -47,7 +47,9 @@ class PerceptionPipeline:
         self._inst.warmup(self._cfg.classes)
         self._sem.warmup(self._cfg.classes)
         logger.info(
-            "Pipeline warmed: %d instance classes, %d semantic classes",
+            "Pipeline warmed: YOLOE prompt_mode=%s, %d config instance classes, "
+            "%d semantic classes",
+            self._cfg.models.instance.prompt_mode,
             len(self._cfg.instance_classes),
             len(self._cfg.semantic_classes),
         )

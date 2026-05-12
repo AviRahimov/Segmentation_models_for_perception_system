@@ -9,17 +9,27 @@ from typing import Iterable
 
 import numpy as np
 
-from ..config.schema import ClassDef, PlayerCfg
+from ..config.schema import ClassDef, InstancePromptMode, PlayerCfg
 from ..core.color import make_bgr_palette
 from ..core.types import FrameResult
 from . import overlay
 
+_DISCOVERY_BGR = (255, 200, 0)
+_LABEL_TRUNC = 64
+
 
 class Renderer:
-    def __init__(self, classes: Iterable[ClassDef], player_cfg: PlayerCfg) -> None:
+    def __init__(
+        self,
+        classes: Iterable[ClassDef],
+        player_cfg: PlayerCfg,
+        *,
+        yoloe_prompt_mode: InstancePromptMode = "production",
+    ) -> None:
         self._classes: dict[str, ClassDef] = {c.name: c for c in classes}
         self._cfg = player_cfg
         self._palette_bgr = make_bgr_palette(self._classes.values())
+        self._discovery = yoloe_prompt_mode == "discovery"
 
     # ------------------------------------------------------------------ #
     def render(self, result: FrameResult, fps: float = 0.0) -> np.ndarray:
@@ -31,6 +41,18 @@ class Renderer:
 
         # Instance detections.
         for det in result.detections:
+            if self._discovery:
+                label = (
+                    det.class_name
+                    if len(det.class_name) <= _LABEL_TRUNC
+                    else det.class_name[: _LABEL_TRUNC - 3] + "..."
+                )
+                lab = label if det.track_id is None else f"{label}#{det.track_id}"
+                color = _DISCOVERY_BGR
+                if det.mask is not None:
+                    img = overlay.blend_mask(img, det.mask, color, self._cfg.mask_alpha)
+                img = overlay.draw_bbox(img, det.bbox_xyxy, color, lab, det.score)
+                continue
             cls = self._classes.get(det.class_name)
             if cls is None or cls.display_mode == "none":
                 continue
@@ -43,8 +65,18 @@ class Renderer:
 
         # HUD: legend + FPS.
         if self._cfg.show_class_legend:
-            visible = [c for c in self._classes.values() if c.display_mode != "none"]
-            img = overlay.draw_legend(img, visible)
+            note_y = 10
+            if self._discovery:
+                img = overlay.draw_yoloe_discovery_note(img, y_start=10)
+                note_y = 36
+                sem_only = [
+                    c for c in self._classes.values()
+                    if c.is_semantic and c.display_mode != "none"
+                ]
+                img = overlay.draw_legend(img, sem_only, origin=(10, note_y))
+            else:
+                visible = [c for c in self._classes.values() if c.display_mode != "none"]
+                img = overlay.draw_legend(img, visible)
         if self._cfg.show_fps:
             img = overlay.draw_fps(img, fps)
         return img

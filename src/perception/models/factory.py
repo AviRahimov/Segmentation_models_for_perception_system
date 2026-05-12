@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Type
 
-from ..config.schema import HardwareCfg, InstanceModelCfg, SemanticModelCfg
+from ..config.schema import HardwareCfg, InstanceModelCfg, InstancePromptMode, SemanticModelCfg
 from .backends.base import InferenceBackend
 from .instance.base import InstanceModel
 from .instance.yoloe import YOLOEInstanceModel
@@ -98,6 +98,10 @@ def build_instance_model(
         backend=backend,
         device=hw.device,
         fp16=hw.fp16,
+        prompt_mode=cfg.prompt_mode,
+        discovery_vocab_path=cfg.discovery_vocabulary_path,
+        discovery_conf_floor=cfg.discovery_conf_floor,
+        discovery_max_det=cfg.discovery_max_det,
     )
 
 

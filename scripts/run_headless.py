@@ -56,7 +56,7 @@ def main() -> int:
     src = build_source(cfg.source)
     pipeline = build_pipeline(cfg)
     pipeline.warmup()
-    renderer = Renderer(cfg.classes, cfg.player)
+    renderer = Renderer(cfg.classes, cfg.player, yoloe_prompt_mode=cfg.models.instance.prompt_mode)
 
     writer: cv2.VideoWriter | None = None
     n = 0

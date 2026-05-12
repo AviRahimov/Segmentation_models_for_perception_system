@@ -5,6 +5,10 @@ Text embeddings for the configured prompts are computed exactly once during
 underlying model. Subsequent :meth:`predict` calls run pure visual forward
 only - the text encoder is never re-invoked per frame.
 
+Discovery mode swaps in a newline-delimited vocabulary file (still via
+``set_classes``); per-class thresholds are bypassed in favour of
+``discovery_conf_floor``.
+
 Ultralytics has shifted the YOLOE class location across releases:
 
 * newest releases:  ``from ultralytics import YOLOE``
@@ -25,11 +29,12 @@ from typing import Any, Callable, Sequence
 import cv2
 import numpy as np
 
-from ...config.schema import ClassDef
+from ...config.schema import ClassDef, InstancePromptMode
 from ...core.types import Detection
 from .._weights import resolve_instance_weights
 from ..backends.base import InferenceBackend
 from .base import InstanceModel
+from .discovery_vocab import load_discovery_prompts
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +114,11 @@ class YOLOEInstanceModel(InstanceModel):
         backend: InferenceBackend | None = None,
         device: str = "cuda",
         fp16: bool = True,
+        *,
+        prompt_mode: InstancePromptMode = "production",
+        discovery_vocab_path: str = "",
+        discovery_conf_floor: float = 0.05,
+        discovery_max_det: int | None = None,
     ) -> None:
         # Resolve the checkpoint to a local file (downloading from a
         # mirror under ./weights/ on first use).
@@ -129,9 +139,39 @@ class YOLOEInstanceModel(InstanceModel):
         # so we don't filter low-confidence detections for permissive
         # classes before our per-class post-filter sees them.
         self._predict_conf_floor: float = self._conf
+        self._discovery_mode = prompt_mode == "discovery"
+        self._discovery_vocab_path = discovery_vocab_path
+        self._discovery_conf_floor = float(discovery_conf_floor)
+        self._discovery_max_det = discovery_max_det
+        self._yoloe_ready: bool = False
 
     # ------------------------------------------------------------------ #
     def warmup(self, classes: Sequence[ClassDef]) -> None:
+        self._yoloe_ready = False
+        if self._discovery_mode:
+            self._instance_classes = []
+            if not self._discovery_vocab_path:
+                raise RuntimeError(
+                    "YOLOE discovery mode requires discovery_vocabulary_path (set via config).",
+                )
+            try:
+                prompts = load_discovery_prompts(self._discovery_vocab_path)
+            except (OSError, ValueError) as e:
+                raise RuntimeError(f"Failed to load discovery vocabulary: {e}") from e
+            self._cls_idx_to_name = {i: p for i, p in enumerate(prompts)}
+            self._cls_idx_to_threshold = {i: 0.0 for i in range(len(prompts))}
+            self._predict_conf_floor = self._discovery_conf_floor
+            self._apply_set_classes(prompts)
+            self._yoloe_ready = True
+            logger.info(
+                "YOLOE discovery mode: %d vocabulary prompts; predict conf floor=%.4f (device=%s, fp16=%s)",
+                len(prompts),
+                self._predict_conf_floor,
+                self._device,
+                self._fp16,
+            )
+            return
+
         self._instance_classes = [c for c in classes if not c.is_semantic]
         if not self._instance_classes:
             logger.info("YOLOE: no instance classes configured; predict() will return [].")
@@ -163,7 +203,14 @@ class YOLOEInstanceModel(InstanceModel):
             "YOLOE per-class confidence thresholds: %s; predict floor=%.2f",
             ", ".join(per_class_msgs), self._predict_conf_floor,
         )
+        self._apply_set_classes(prompts)
+        self._yoloe_ready = True
+        logger.info(
+            "YOLOE warmed up with %d open-vocab prompts (device=%s, fp16=%s)",
+            len(prompts), self._device, self._fp16,
+        )
 
+    def _apply_set_classes(self, prompts: list[str]) -> None:
         set_classes = _resolve_method(self._model, "set_classes")
         if set_classes is None:
             raise RuntimeError(
@@ -173,49 +220,31 @@ class YOLOEInstanceModel(InstanceModel):
             )
         get_text_pe = _resolve_method(self._model, "get_text_pe")
 
-        # Cache the text-prompt embeddings on the model. The text encoder
-        # is invoked here exactly once.
         if get_text_pe is not None:
             text_pe = get_text_pe(prompts)
             set_classes(prompts, text_pe)
         else:
-            # YOLOWorld-style API: no separate text-PE step. This branch
-            # triggers when a YOLOWorld checkpoint is loaded by mistake.
             logger.info(
                 "Loaded model has no get_text_pe(); calling set_classes(prompts) only "
                 "(YOLOWorld-style API). Make sure the checkpoint really is open-vocab."
             )
             set_classes(prompts)
 
-        # NOTE: We deliberately do NOT call ``self._backend.prepare(inner)``
-        # on the Ultralytics model. Ultralytics manages its own device +
-        # fp16 placement inside ``model.predict(device=..., half=...)`` -
-        # crucially, it must run conv/bn fusion in fp32 *before* casting
-        # to fp16, otherwise ``fuse_conv_and_bn`` raises
-        #     RuntimeError: expected mat1 and mat2 to have the same dtype
-        # because the synthesized zero-bias tensor lands as fp32 while
-        # the rest of the model is already fp16. The same backend hook is
-        # honoured for SegFormer (whose forward we own end-to-end). For
-        # TensorRT acceleration of YOLOE, Ultralytics' canonical path is
-        # to load a pre-built ``.engine`` file via ``YOLO('model.engine')``
-        # rather than patching the PyTorch graph.
-        logger.info(
-            "YOLOE warmed up with %d open-vocab prompts (device=%s, fp16=%s)",
-            len(prompts), self._device, self._fp16,
-        )
-
     # ------------------------------------------------------------------ #
     def predict(self, frame_bgr: np.ndarray) -> list[Detection]:
-        if not self._instance_classes:
+        if not self._yoloe_ready:
             return []
 
-        results = self._model.predict(
-            frame_bgr,
-            conf=self._predict_conf_floor,
-            verbose=False,
-            device=self._device,
-            half=self._fp16,
-        )
+        pred_kw: dict[str, Any] = {
+            "conf": self._predict_conf_floor,
+            "verbose": False,
+            "device": self._device,
+            "half": self._fp16,
+        }
+        if self._discovery_max_det is not None:
+            pred_kw["max_det"] = int(self._discovery_max_det)
+
+        results = self._model.predict(frame_bgr, **pred_kw)
         out: list[Detection] = []
         if not results:
             return out
@@ -237,12 +266,10 @@ class YOLOEInstanceModel(InstanceModel):
 
         for i, (box, sc, ci) in enumerate(zip(xyxy, scores, cls_ids, strict=True)):
             ci_int = int(ci)
-            # Per-class threshold gate. Detections below the threshold
-            # configured for THEIR class are discarded here (Ultralytics
-            # only enforced the global floor).
-            cls_thr = self._cls_idx_to_threshold.get(ci_int, self._conf)
-            if float(sc) < cls_thr:
-                continue
+            if not self._discovery_mode:
+                cls_thr = self._cls_idx_to_threshold.get(ci_int, self._conf)
+                if float(sc) < cls_thr:
+                    continue
             cname = self._cls_idx_to_name.get(ci_int, "unknown")
             mask: np.ndarray | None = None
             if mask_arrs is not None and i < mask_arrs.shape[0]:

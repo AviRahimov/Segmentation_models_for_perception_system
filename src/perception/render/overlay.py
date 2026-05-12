@@ -87,3 +87,11 @@ def draw_fps(img: np.ndarray, fps: float) -> np.ndarray:
         _FONT, 0.7, (0, 255, 255), 2, cv2.LINE_AA,
     )
     return img
+
+
+def draw_yoloe_discovery_note(img: np.ndarray, *, y_start: int = 10) -> np.ndarray:
+    """Small HUD line for YOLOE discovery overlays (BGR)."""
+    line = "YOLOE discovery — prompt text on boxes; semantic legend unchanged"
+    x, y = 10, max(26, int(y_start))
+    cv2.putText(img, line, (x, y), _FONT, 0.5, (0, 240, 255), 2, cv2.LINE_AA)
+    return img

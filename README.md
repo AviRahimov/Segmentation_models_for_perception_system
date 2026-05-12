@@ -98,6 +98,23 @@ run (mirrors: GitHub `ultralytics/assets` v8.4.0 → HF Hub
 - **SegFormer-B2** is fetched by `transformers` into the standard
 Hugging Face cache.
 
+### YOLOE discovery mode (large vocabulary)
+
+Set `models.instance.prompt_mode` to `discovery` and
+`discovery_vocabulary_path` to a text file next to your YAML (one prompt
+per line; see [`config/yoloe_discovery_vocab.example.txt`](config/yoloe_discovery_vocab.example.txt)).
+Use `discovery_conf_floor` (e.g. `0.05`) and optional `discovery_max_det`
+to control clutter. The player draws every hit in a single highlight
+colour with the **winning prompt string** on the bbox; the legend shows
+**semantic** classes only. Switch back to `prompt_mode: production` to
+use `classes[*].text_prompt` again.
+
+```bash
+python scripts/yoloe_discovery_dump.py --config config/config.yaml \
+  --source samples/recording.mp4 --max-frames 200 \
+  --jsonl runs/discovery.jsonl --summary-tsv runs/discovery_summary.tsv
+```
+
 ---
 
 ## Usage
@@ -189,6 +206,10 @@ drawn in its assigned colour with the requested display mode.
 | `models.instance.name`                           | `yoloe26l`                                  | Registered instance model. See `INSTANCE_REGISTRY`.                                                                                                                                                                                                                                                                                                                                                                                               |
 | `models.instance.weights`                        | `yoloe-26l-seg.pt`                          | Ultralytics YOLOE-seg weights file.                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `models.instance.confidence_threshold`           | `0.35`                                      | YOLOE detection threshold (global default; per-class override available - see below).                                                                                                                                                                                                                                                                                                                                                             |
+| `models.instance.prompt_mode`                     | `production`                                | `production` uses `classes[*].text_prompt`; `discovery` loads many lines from `discovery_vocabulary_path` for exploratory labelling (warmer/embed cost scales with vocab size).                                                                                                                                                                                                                                                                                                                           |
+| `models.instance.discovery_vocabulary_path`       | _(empty)_                                   | Required when `prompt_mode: discovery`; path relative to `config.yaml` unless absolute.                                                                                                                                                                                                                                                                                                                                                          |
+| `models.instance.discovery_conf_floor`            | `0.05`                                      | Ultralytics `predict(conf=…)` floor in discovery mode; keep low but non-zero.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `models.instance.discovery_max_det`               | _(omit)_                                     | Optional cap passed to Ultralytics predict (helps reduce duplicate boxes).                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `models.semantic.name`                           | `segformer-b2`                              | Registered semantic model.                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `models.semantic.weights`                        | `nvidia/segformer-b2-finetuned-ade-512-512` | HF Hub id or local path.                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `classes[*]`                                     | (required)                                  | Class definitions; see "How to add a class".                                                                                                                                                                                                                                                                                                                                                                                                      |

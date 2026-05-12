@@ -90,3 +90,12 @@ def test_legend_drawn_when_enabled():
     out = rdr.render(FrameResult(_frame(64, 200), []))
     # A legend swatch should appear near the top-left.
     assert (out[15, 15] != 0).any()
+
+
+def test_discovery_overlay_draws_prompt_not_in_classes():
+    sem = ClassDef("grass", "grass", "mask_only", (40, 200, 40), True, native_indices={"ade20k": (9,)})
+    rdr = Renderer([sem], _player(show_legend=False), yoloe_prompt_mode="discovery")
+    det = Detection("pickup truck", 0.7, (10, 10, 30, 30), mask=None)
+    out = rdr.render(FrameResult(_frame(48, 48), [det]))
+    # Outline / label stripe should disturb at least one pixel vs empty frame.
+    assert (out != 0).any()

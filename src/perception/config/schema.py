@@ -34,6 +34,8 @@ from typing import Literal
 
 DisplayMode = Literal["both", "bbox_only", "mask_only", "none"]
 SourceType = Literal["video", "camera", "image_dir"]
+InstancePromptMode = Literal["production", "discovery"]
+VALID_INSTANCE_PROMPT_MODES: frozenset[str] = frozenset({"production", "discovery"})
 
 VALID_DISPLAY_MODES: frozenset[str] = frozenset({"both", "bbox_only", "mask_only", "none"})
 VALID_SOURCE_TYPES: frozenset[str] = frozenset({"video", "camera", "image_dir"})
@@ -97,6 +99,13 @@ class InstanceModelCfg:
     name: str = "yoloe26l"
     confidence_threshold: float = 0.35
     weights: str | None = None  # default per-model when None
+    #: ``production`` uses ``classes[*].text_prompt`` for YOLOE ``set_classes``.
+    #: ``discovery`` loads many prompts from ``discovery_vocabulary_path`` for exploration.
+    prompt_mode: InstancePromptMode = "production"
+    #: Absolute path after load (when ``prompt_mode == "discovery"``); empty in production.
+    discovery_vocabulary_path: str = ""
+    discovery_conf_floor: float = 0.05
+    discovery_max_det: int | None = None
 
 
 @dataclass(frozen=True)
@@ -211,3 +220,10 @@ class AppConfig:
     @property
     def semantic_classes(self) -> tuple[ClassDef, ...]:
         return tuple(c for c in self.classes if c.is_semantic)
+
+    @property
+    def runs_yoloe_instance_inference(self) -> bool:
+        """True when the pipeline should run YOLOE (production classes or discovery vocab)."""
+        if self.models.instance.prompt_mode == "discovery":
+            return True
+        return bool(self.instance_classes)

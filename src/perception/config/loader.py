@@ -20,6 +20,7 @@ from .schema import (
     DatasetsCfg,
     HardwareCfg,
     InstanceModelCfg,
+    InstancePromptMode,
     ModelsCfg,
     OrfdSemanticComparisonCfg,
     OrfdSemanticComparisonGooseCfg,
@@ -30,6 +31,7 @@ from .schema import (
     SourceCfg,
     TemporalCfg,
     VALID_DISPLAY_MODES,
+    VALID_INSTANCE_PROMPT_MODES,
     VALID_NATIVE_CATALOGUES,
     VALID_SOURCE_TYPES,
 )
@@ -46,7 +48,7 @@ def load_config(path: str | Path) -> AppConfig:
     raw = yaml.safe_load(p.read_text()) or {}
     if not isinstance(raw, dict):
         raise ConfigError(f"Top-level YAML must be a mapping, got {type(raw).__name__}")
-    return _build_app_config(raw)
+    return _build_app_config(raw, config_file=p.resolve())
 
 
 def override_source(
@@ -71,6 +73,14 @@ def override_source(
     return dataclasses.replace(cfg, source=new)
 
 
+def resolve_path_relative_config(config_file: Path, raw: str) -> Path:
+    """Resolve ``raw`` absolute or relative to the directory of ``config_file``."""
+    p = Path(str(raw).strip()).expanduser()
+    if p.is_absolute():
+        return p.resolve()
+    return (Path(config_file).resolve().parent / p).resolve()
+
+
 # --------------------------------------------------------------------------- #
 # Internal builders                                                            #
 # --------------------------------------------------------------------------- #
@@ -84,10 +94,13 @@ def _require_dict(value: Any, name: str) -> dict[str, Any]:
     return value
 
 
-def _build_app_config(raw: dict[str, Any]) -> AppConfig:
+def _build_app_config(raw: dict[str, Any], *, config_file: Path) -> AppConfig:
     classes = _build_classes(raw.get("classes"))
     return AppConfig(
-        models=_build_models(_require_dict(raw.get("models"), "models")),
+        models=_build_models(
+            _require_dict(raw.get("models"), "models"),
+            config_file=config_file,
+        ),
         classes=classes,
         temporal=_build_temporal(_require_dict(raw.get("temporal"), "temporal")),
         hardware=_build_hardware(_require_dict(raw.get("hardware"), "hardware")),
@@ -370,13 +383,51 @@ def _validate_catalogue_range(
             )
 
 
-def _build_models(raw: dict[str, Any]) -> ModelsCfg:
+def _build_models(raw: dict[str, Any], *, config_file: Path) -> ModelsCfg:
     inst_raw = _require_dict(raw.get("instance"), "models.instance")
     sem_raw = _require_dict(raw.get("semantic"), "models.semantic")
+    pm = str(inst_raw.get("prompt_mode", "production") or "production").strip().lower()
+    if pm not in VALID_INSTANCE_PROMPT_MODES:
+        raise ConfigError(
+            f"models.instance.prompt_mode must be one of {sorted(VALID_INSTANCE_PROMPT_MODES)}, got {pm!r}"
+        )
+    d_path = ""
+    max_det_raw = inst_raw.get("discovery_max_det")
+    discovery_max_det: int | None
+    if max_det_raw is None or max_det_raw == "":
+        discovery_max_det = None
+    else:
+        discovery_max_det = int(max_det_raw)
+        if discovery_max_det < 1:
+            raise ConfigError("models.instance.discovery_max_det must be >= 1 when set")
+
+    if pm == "discovery":
+        vp = str(inst_raw.get("discovery_vocabulary_path", "") or "").strip()
+        if not vp:
+            raise ConfigError(
+                "models.instance.discovery_vocabulary_path is required when prompt_mode is discovery",
+            )
+        abs_vp = resolve_path_relative_config(config_file, vp)
+        if not abs_vp.is_file():
+            raise ConfigError(f"Discovery vocabulary file not found or not a file: {abs_vp}")
+        d_path = str(abs_vp)
+
+    d_conf = float(inst_raw.get("discovery_conf_floor", 0.05))
+    if not 0.0 < d_conf <= 1.0:
+        raise ConfigError(
+            f"models.instance.discovery_conf_floor must be in (0, 1], got {d_conf}",
+        )
+
+    ipm: InstancePromptMode = "discovery" if pm == "discovery" else "production"
+
     inst = InstanceModelCfg(
         name=str(inst_raw.get("name", "yoloe26l")),
         confidence_threshold=float(inst_raw.get("confidence_threshold", 0.35)),
         weights=inst_raw.get("weights"),
+        prompt_mode=ipm,
+        discovery_vocabulary_path=d_path,
+        discovery_conf_floor=d_conf,
+        discovery_max_det=discovery_max_det,
     )
     sem = SemanticModelCfg(
         name=str(sem_raw.get("name", "segformer-b2")),
