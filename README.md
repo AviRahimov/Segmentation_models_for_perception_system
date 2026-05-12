@@ -152,6 +152,18 @@ python scripts/run_headless.py --source datasets/rugd/images --max-frames 1000
 
 Same pipeline, no Qt - useful for benchmarking and CI.
 
+### Batch annotate all videos in ``samples/``
+
+Writes one overlay MP4 per clip (models loaded once; temporal buffers reset per file):
+
+```bash
+python scripts/render_samples.py --config config/config.yaml
+# Default: scans ./samples/*.mp4 (etc.) -> ./samples/annotated/<name>_annotated.mp4
+
+python scripts/render_samples.py --samples-dir /data/clips --out-dir /data/out_overlays
+python scripts/render_samples.py --recursive --max-frames 300   # smoke test per clip
+```
+
 ### Download test datasets
 
 ```bash
