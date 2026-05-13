@@ -121,9 +121,14 @@ def build_semantic_model(
     # the per-key default (different checkpoint for each B-variant /
     # GOOSE wrapper).
     weights = cfg.weights or SEMANTIC_DEFAULT_WEIGHTS.get(name, "")
-    return cls(
+    kwargs: dict = dict(
         weights=weights,
         backend=backend,
         device=hw.device,
         fp16=hw.fp16,
     )
+    if cfg.num_classes is not None:
+        kwargs["num_classes"] = cfg.num_classes
+    if "segformer" in name:
+        kwargs["name"] = name   # lets the wrapper find the HF base for local .pth files
+    return cls(**kwargs)

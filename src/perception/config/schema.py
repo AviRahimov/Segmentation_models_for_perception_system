@@ -115,6 +115,12 @@ class SemanticModelCfg:
     #: :data:`perception.models.factory.SEMANTIC_DEFAULT_WEIGHTS`". Set
     #: this in YAML only when you want to override the standard checkpoint.
     weights: str = ""
+    #: Number of output classes for a fine-tuned model. ``None`` means the
+    #: standard closed-vocab mode (ADE20K-150 for SegFormer, GOOSE-12 for
+    #: DDRNet) with LUT merging. When set to a positive integer the wrapper
+    #: skips the LUT and uses the model's output channels directly; semantic
+    #: classes in config serve as the ordered label list.
+    num_classes: int | None = None
 
 
 @dataclass(frozen=True)

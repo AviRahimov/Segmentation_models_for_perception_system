@@ -95,12 +95,16 @@ def _require_dict(value: Any, name: str) -> dict[str, Any]:
 
 
 def _build_app_config(raw: dict[str, Any], *, config_file: Path) -> AppConfig:
-    classes = _build_classes(raw.get("classes"))
+    # Build models first so we can tell _build_classes whether native_indices
+    # validation should be relaxed (fine-tuned model with num_classes set).
+    models_cfg = _build_models(
+        _require_dict(raw.get("models"), "models"),
+        config_file=config_file,
+    )
+    fine_tuned = models_cfg.semantic.num_classes is not None
+    classes = _build_classes(raw.get("classes"), allow_empty_native_indices=fine_tuned)
     return AppConfig(
-        models=_build_models(
-            _require_dict(raw.get("models"), "models"),
-            config_file=config_file,
-        ),
+        models=models_cfg,
         classes=classes,
         temporal=_build_temporal(_require_dict(raw.get("temporal"), "temporal")),
         hardware=_build_hardware(_require_dict(raw.get("hardware"), "hardware")),
@@ -201,7 +205,7 @@ def _build_orfd_semantic_comparison(raw: dict[str, Any]) -> OrfdSemanticComparis
     )
 
 
-def _build_classes(raw: Any) -> tuple[ClassDef, ...]:
+def _build_classes(raw: Any, *, allow_empty_native_indices: bool = False) -> tuple[ClassDef, ...]:
     if not raw:
         raise ConfigError("'classes' must contain at least one entry")
     if not isinstance(raw, list):
@@ -233,11 +237,13 @@ def _build_classes(raw: Any) -> tuple[ClassDef, ...]:
         native_idx = _parse_native_indices(entry, i, name)
         ade_t = native_idx.get("ade20k", ())
 
-        if is_semantic and not any(native_idx.values()):
+        if is_semantic and not any(native_idx.values()) and not allow_empty_native_indices:
             raise ConfigError(
                 f"Semantic class {name!r} must define at least one non-empty "
                 "entry under native_indices (or the legacy ade20k_indices "
-                "shorthand) - closed-vocab models cannot be served without it"
+                "shorthand) - closed-vocab models cannot be served without it "
+                "(set models.semantic.num_classes to use a fine-tuned model "
+                "that does not require native_indices)"
             )
         if not is_semantic and (native_idx or "ade20k_indices" in entry or "native_indices" in entry):
             # Soft warning would be nice, but a strict error is safer.
@@ -429,10 +435,28 @@ def _build_models(raw: dict[str, Any], *, config_file: Path) -> ModelsCfg:
         discovery_conf_floor=d_conf,
         discovery_max_det=discovery_max_det,
     )
+    num_classes_raw = sem_raw.get("num_classes", None)
+    sem_num_classes: int | None
+    if num_classes_raw is None:
+        sem_num_classes = None
+    else:
+        try:
+            sem_num_classes = int(num_classes_raw)
+        except (TypeError, ValueError):
+            raise ConfigError(
+                f"models.semantic.num_classes must be a positive integer or null, "
+                f"got {num_classes_raw!r}"
+            ) from None
+        if sem_num_classes < 1:
+            raise ConfigError(
+                f"models.semantic.num_classes must be >= 1, got {sem_num_classes}"
+            )
+
     sem = SemanticModelCfg(
         name=str(sem_raw.get("name", "segformer-b2")),
         # Empty string => factory resolves the default weights for `name`.
         weights=str(sem_raw.get("weights", "") or ""),
+        num_classes=sem_num_classes,
     )
     if not 0.0 <= inst.confidence_threshold <= 1.0:
         raise ConfigError(

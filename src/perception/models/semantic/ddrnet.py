@@ -77,7 +77,18 @@ _INFERENCE_HW = (512, 512)
 
 
 class DDRNetSemanticModel(SemanticModel):
-    """DDRNet-39 wrapper with a 12-class GOOSE head."""
+    """DDRNet-39 wrapper — GOOSE-12 head (default) or fine-tuned N-class head.
+
+    When ``num_classes`` is ``None`` (default), the model loads the standard
+    12-class GOOSE checkpoint and merges predictions via a ``goose_12`` LUT
+    (same pattern as :class:`SegFormerSemanticModel`).
+
+    When ``num_classes`` is set to a positive integer other than 12, the model
+    is built with that many output channels, the checkpoint is loaded with
+    ``strict=True`` (the checkpoint must already have the matching head), and
+    ``warmup()`` derives ``class_names`` from the config semantic classes in
+    order without building a LUT.
+    """
 
     NATIVE_CATALOGUE: str = "goose_12"
     NUM_NATIVE_CLASSES: int = len(GOOSE_12_NAMES)
@@ -88,18 +99,21 @@ class DDRNetSemanticModel(SemanticModel):
         backend: InferenceBackend | None = None,
         device: str = "cuda",
         fp16: bool = True,
+        num_classes: int | None = None,
     ) -> None:
         self._weights = weights
         self._device = device
         self._fp16 = bool(fp16) and isinstance(device, str) and device.startswith("cuda")
 
-        # Build the architecture and strict-load the published checkpoint.
-        # The constructor is cheap (a few MB on CPU); strict=True is the
-        # whole point of vendoring the super_gradients layout.
-        self._model = ddrnet_39_goose(num_classes=self.NUM_NATIVE_CLASSES, use_aux_heads=False)
+        # Fine-tuned mode: num_classes overrides the GOOSE-12 head size.
+        head_classes = num_classes if num_classes is not None else self.NUM_NATIVE_CLASSES
+        self._fine_tuned: bool = head_classes != self.NUM_NATIVE_CLASSES
+
+        # Build the architecture and strict-load the checkpoint.
+        self._model = ddrnet_39_goose(num_classes=head_classes, use_aux_heads=False)
         ckpt = torch.load(weights, map_location="cpu", weights_only=False)
         # GOOSE checkpoints wrap the state-dict under "net". Be tolerant
-        # of the rare bare-state-dict export (e.g. for deployment).
+        # of the rare bare-state-dict export (e.g. for fine-tuned saves).
         if isinstance(ckpt, dict) and "net" in ckpt:
             state_dict = ckpt["net"]
             self._ckpt_acc = float(ckpt.get("acc", float("nan")))
@@ -134,18 +148,28 @@ class DDRNetSemanticModel(SemanticModel):
 
     # ------------------------------------------------------------------ #
     def warmup(self, classes: Sequence[ClassDef]) -> None:
-        """Build the GOOSE-12 -> user-class merge LUT.
-
-        Each semantic user class must declare ``native_indices.goose_12``
-        in ``config.yaml``. Classes that only declare ``ade20k`` indices
-        cannot be served by this wrapper and trigger a clear runtime
-        error.
+        """Build the GOOSE-12 -> user-class merge LUT (standard mode),
+        or validate class count (fine-tuned mode).
         """
         sem = [c for c in classes if c.is_semantic]
         self._semantic_classes = sem
         if not sem:
             self._lut = None
             logger.info("DDRNet: no semantic classes configured.")
+            return
+
+        if self._fine_tuned:
+            n_model = self._model.num_classes
+            if len(sem) != n_model:
+                raise ValueError(
+                    f"DDRNetSemanticModel (fine-tuned): config has {len(sem)} "
+                    f"semantic classes but the checkpoint has {n_model} output "
+                    f"channels. Adjust the classes list to match the model."
+                )
+            self._lut = None
+            logger.info(
+                "DDRNet (fine-tuned) warmed up: %d classes, no LUT merge.", len(sem),
+            )
             return
 
         n_native = self.NUM_NATIVE_CLASSES
@@ -198,14 +222,26 @@ class DDRNetSemanticModel(SemanticModel):
     # ------------------------------------------------------------------ #
     @torch.inference_mode()
     def predict_logits(self, frame_bgr: np.ndarray) -> torch.Tensor:
-        if self._lut is None or not self._semantic_classes:
+        if not self._semantic_classes:
             raise RuntimeError(
                 "DDRNetSemanticModel.predict_logits called before warmup() "
-                "(or with no semantic classes). Configure semantic classes "
-                "with native_indices.goose_12 in config.yaml."
+                "(or with no semantic classes configured)."
             )
 
         logits_raw = self.raw_logits_hw(frame_bgr)
+
+        if self._fine_tuned:
+            # Fine-tuned mode: model already outputs user-class channels.
+            probs = torch.softmax(logits_raw.float(), dim=0).to(logits_raw.dtype)
+            return probs  # (C_user, H, W)
+
+        if self._lut is None:
+            raise RuntimeError(
+                "DDRNetSemanticModel.predict_logits: no GOOSE-12 LUT built. "
+                "Configure semantic classes with native_indices.goose_12 in config.yaml."
+            )
+
+        # Standard GOOSE-12 LUT merge path.
         perm = torch.tensor(
             DOC_SLOT_TO_RAW_CHANNEL,
             device=logits_raw.device,
