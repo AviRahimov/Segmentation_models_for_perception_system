@@ -31,7 +31,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import PolynomialLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 
 # Make sure the src package is importable when running as a script.
@@ -47,8 +47,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("train_orfd")
 
-IGNORE_INDEX = 255   # sky / ambiguous band — excluded from loss and IoU
-NUM_CLASSES = 2       # 0 = non-traversable, 1 = traversable
+IGNORE_INDEX = 255    # augmentation-edge padding — excluded from loss and IoU
+NUM_CLASSES = 3       # 0 = non_traversable, 1 = traversable, 2 = sky
+N_WARMUP = 5          # epochs of linear LR warmup before cosine decay
 
 
 def seed_everything(seed: int) -> None:
@@ -75,7 +76,7 @@ def build_segformer(variant: str, device: str, fp16: bool) -> tuple[nn.Module, o
     """Return (model, processor) for SegFormer fine-tuning.
 
     Loads the ADE20K-pretrained backbone and replaces the decode head with a
-    fresh 2-class head (``ignore_mismatched_sizes=True``).
+    fresh NUM_CLASSES-class head (``ignore_mismatched_sizes=True``).
     """
     from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
 
@@ -261,6 +262,7 @@ def train_one_epoch(
             loss = criterion(logits, labels)
 
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         total_loss += loss.item()
 
@@ -388,8 +390,11 @@ def main() -> None:
         ]
 
     optimizer = AdamW(param_groups, weight_decay=args.wd)
-    scheduler = PolynomialLR(optimizer, total_iters=args.epochs, power=0.9)
-    criterion = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX)
+    warmup_sched = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=N_WARMUP)
+    cosine_sched = CosineAnnealingLR(optimizer, T_max=max(1, args.epochs - N_WARMUP), eta_min=1e-7)
+    scheduler = SequentialLR(optimizer, schedulers=[warmup_sched, cosine_sched],
+                             milestones=[N_WARMUP])
+    criterion = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX, label_smoothing=0.1)
 
     # --- Training loop ---
     best_miou     = 0.0

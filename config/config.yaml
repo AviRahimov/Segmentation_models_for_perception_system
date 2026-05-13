@@ -17,22 +17,22 @@ models:
     discovery_conf_floor: 0.05
 
   semantic:
-    # ── OPTION A: Fine-tuned binary (ORFD) ─────────────────────────────────
-    # 2-class head trained on ORFD freespace dataset.
-    # Classes below: non_traversable + road_ground (no ade20k_indices needed).
+    # ── OPTION A: Fine-tuned 3-class (ORFD) ────────────────────────────────
+    # 3-class head trained on ORFD: non_traversable, traversable, sky.
+    # Classes below: non_traversable + road_ground + sky (no ade20k_indices needed).
     name: "segformer-b2"
     weights: "weights/orfd/segformer-b2/best.pth"
-    num_classes: 2
+    num_classes: 3
 
     # ── OPTION B: SegFormer-B4 fine-tuned (ORFD) ───────────────────────────
     # name: "segformer-b4"
     # weights: "weights/orfd/segformer-b4/best.pth"
-    # num_classes: 2
+    # num_classes: 3
 
     # ── OPTION C: DDRNet fine-tuned (ORFD) ─────────────────────────────────
     # name: "ddrnet"
     # weights: "weights/orfd/ddrnet/best.pth"
-    # num_classes: 2
+    # num_classes: 3
 
     # ── OPTION D: SegFormer-B2 ADE20K pretrained (no fine-tuning) ──────────
     # Requires semantic classes below to have ade20k_indices.
@@ -83,8 +83,8 @@ classes:
 
   # ── Semantic classes — MUST match the semantic model option above ─────────
 
-  # For OPTION A/B/C (fine-tuned binary, num_classes: 2):
-  # Class order must match model output: 0 = non_traversable, 1 = road_ground
+  # For OPTION A/B/C (fine-tuned 3-class, num_classes: 3):
+  # Class order must match model output: 0 = non_traversable, 1 = road_ground, 2 = sky
   - name: "non_traversable"
     text_prompt: "obstacle or non-drivable area"
     display_mode: "none"
@@ -95,6 +95,12 @@ classes:
     text_prompt: "road or drivable ground surface"
     display_mode: "mask_only"
     color: "#6464ff"
+    is_semantic: true
+
+  - name: "sky"
+    text_prompt: "sky"
+    display_mode: "none"      # predicted but not rendered — prevents sky-as-traversable artifact
+    color: "#c8c8c8"
     is_semantic: true
 
   # For OPTION D (ADE20K pretrained), replace the two above with:
