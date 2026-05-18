@@ -137,8 +137,18 @@ class SemanticEMACfg:
 
 
 @dataclass(frozen=True)
+class InstanceTrackerCfg:
+    iou_threshold: float = 0.30
+    max_hold_frames: int = 2        # frames to re-emit a missed track (0 = disabled)
+    hold_score_decay: float = 0.85  # per-missed-frame score multiplier
+    bbox_alpha: float = 0.50        # EMA weight for bbox coords (1=raw, 0=frozen)
+    score_alpha: float = 0.40       # EMA weight for displayed confidence
+
+
+@dataclass(frozen=True)
 class TemporalCfg:
     semantic_ema: SemanticEMACfg = field(default_factory=SemanticEMACfg)
+    instance_tracker: InstanceTrackerCfg = field(default_factory=InstanceTrackerCfg)
 
 
 @dataclass(frozen=True)

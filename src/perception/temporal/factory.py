@@ -17,10 +17,17 @@ def build_scene_cut_detector(cfg: TemporalCfg) -> SceneCutDetector:
 
 
 def build_instance_tracker(
-    _cfg: TemporalCfg,
+    cfg: TemporalCfg,
     *,
     device: str = "cuda",
 ) -> InstanceTracker:
     """Associate instance detections across frames via mask/box IoU."""
     del device  # API stability with PerceptionPipeline; IoU tracker ignores device.
-    return IoUInstanceTracker()
+    tc = cfg.instance_tracker
+    return IoUInstanceTracker(
+        iou_threshold=tc.iou_threshold,
+        max_hold_frames=tc.max_hold_frames,
+        hold_score_decay=tc.hold_score_decay,
+        bbox_alpha=tc.bbox_alpha,
+        score_alpha=tc.score_alpha,
+    )

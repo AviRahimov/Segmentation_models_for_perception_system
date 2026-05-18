@@ -84,16 +84,25 @@ class SegFormerSemanticModel(SemanticModel):
         self._processor = SegformerImageProcessor.from_pretrained(processor_source)
 
         if _is_local:
-            n_labels = num_classes if num_classes is not None else 150
+            ckpt = torch.load(weights, map_location="cpu", weights_only=True)
+            state_dict = ckpt.get("net", ckpt) if isinstance(ckpt, dict) else ckpt
+            # Auto-detect from checkpoint so old 2-class and new 3-class checkpoints
+            # both load correctly regardless of what num_classes the caller passes.
+            n_labels = state_dict["decode_head.classifier.weight"].shape[0]
+            if num_classes is not None and num_classes != n_labels:
+                logger.warning(
+                    "num_classes=%d passed but checkpoint has %d output classes; "
+                    "using checkpoint value.",
+                    num_classes, n_labels,
+                )
             self._model = SegformerForSemanticSegmentation.from_pretrained(
                 hf_base,
                 num_labels=n_labels,
                 ignore_mismatched_sizes=True,
             )
-            ckpt = torch.load(weights, map_location="cpu", weights_only=True)
-            state_dict = ckpt.get("net", ckpt) if isinstance(ckpt, dict) else ckpt
             self._model.load_state_dict(state_dict, strict=True)
-            logger.info("SegFormer loaded from local checkpoint %s (strict)", weights)
+            logger.info("SegFormer loaded from local checkpoint %s (%d classes, strict)",
+                        weights, n_labels)
         elif num_classes is not None and num_classes != 150:
             # Fine-tuned checkpoint at a HuggingFace path / directory.
             self._model = SegformerForSemanticSegmentation.from_pretrained(
@@ -132,18 +141,28 @@ class SegFormerSemanticModel(SemanticModel):
             return
 
         if self._fine_tuned:
-            # Fine-tuned mode: class_names come from config in order;
-            # no LUT is needed (model outputs directly in user-class space).
+            # Fine-tuned mode: model outputs directly in user-class space, no LUT needed.
             n_model = int(getattr(self._model.config, "num_labels", len(sem)))
-            if len(sem) != n_model:
+            if len(sem) < n_model:
                 raise ValueError(
                     f"SegFormerSemanticModel (fine-tuned): config has {len(sem)} "
                     f"semantic classes but the checkpoint has {n_model} output "
-                    f"channels. Adjust the classes list to match the model."
+                    f"channels. Add the missing classes to the config."
+                )
+            if len(sem) > n_model:
+                # Config has more classes than model outputs (e.g. 3-class config with
+                # a 2-class checkpoint). Extra classes beyond index n_model-1 will
+                # never be argmaxed and therefore never rendered — that is fine.
+                logger.warning(
+                    "SegFormer (fine-tuned): config has %d semantic classes but "
+                    "checkpoint has %d output channels; classes beyond index %d "
+                    "will never be predicted.",
+                    len(sem), n_model, n_model - 1,
                 )
             self._lut = None
             logger.info(
-                "SegFormer (fine-tuned) warmed up: %d classes, no LUT merge.", len(sem),
+                "SegFormer (fine-tuned) warmed up: %d model channels, %d config classes.",
+                n_model, len(sem),
             )
             return
 

@@ -26,6 +26,7 @@ from .schema import (
     OrfdSemanticComparisonGooseCfg,
     OrfdSemanticComparisonInstanceMaskCfg,
     PlayerCfg,
+    InstanceTrackerCfg,
     SemanticEMACfg,
     SemanticModelCfg,
     SourceCfg,
@@ -478,7 +479,29 @@ def _build_temporal(raw: dict[str, Any]) -> TemporalCfg:
         raise ConfigError(
             f"temporal.semantic_ema.scene_cut_threshold must be in [0, 1], got {sem_cfg.scene_cut_threshold}"
         )
-    return TemporalCfg(semantic_ema=sem_cfg)
+
+    trk = raw.get("instance_tracker", {}) or {}
+    trk_cfg = InstanceTrackerCfg(
+        iou_threshold=float(trk.get("iou_threshold", 0.30)),
+        max_hold_frames=int(trk.get("max_hold_frames", 2)),
+        hold_score_decay=float(trk.get("hold_score_decay", 0.85)),
+        bbox_alpha=float(trk.get("bbox_alpha", 0.50)),
+        score_alpha=float(trk.get("score_alpha", 0.40)),
+    )
+    for name, val in (
+        ("iou_threshold", trk_cfg.iou_threshold),
+        ("hold_score_decay", trk_cfg.hold_score_decay),
+        ("bbox_alpha", trk_cfg.bbox_alpha),
+        ("score_alpha", trk_cfg.score_alpha),
+    ):
+        if not 0.0 <= val <= 1.0:
+            raise ConfigError(f"temporal.instance_tracker.{name} must be in [0, 1], got {val}")
+    if trk_cfg.max_hold_frames < 0:
+        raise ConfigError(
+            f"temporal.instance_tracker.max_hold_frames must be >= 0, got {trk_cfg.max_hold_frames}"
+        )
+
+    return TemporalCfg(semantic_ema=sem_cfg, instance_tracker=trk_cfg)
 
 
 def _build_hardware(raw: dict[str, Any]) -> HardwareCfg:

@@ -21,7 +21,7 @@ models:
     # 3-class head trained on ORFD: non_traversable, traversable, sky.
     # Classes below: non_traversable + road_ground + sky (no ade20k_indices needed).
     name: "segformer-b2"
-    weights: "weights/orfd/segformer-b2/best.pth"
+    weights: "weights/orfd/final_dataset/segformer-b2/best.pth"
     num_classes: 3
 
     # ── OPTION B: SegFormer-B4 fine-tuned (ORFD) ───────────────────────────
@@ -149,6 +149,13 @@ temporal:
     alpha: 0.35
     reset_on_scene_cut: true
     scene_cut_threshold: 0.45
+
+  instance_tracker:
+    iou_threshold: 0.30       # min IoU to match detection to previous track
+    max_hold_frames: 5        # frames a missed track is re-emitted (0 = no hold)
+    hold_score_decay: 0.85    # per-missed-frame score decay (0.85^2 ≈ 0.72)
+    bbox_alpha: 0.95          # EMA weight for bbox smoothing (lower = smoother)
+    score_alpha: 0.40         # EMA weight for confidence display
 
 # ---------------------------------------------------------------------------
 hardware:

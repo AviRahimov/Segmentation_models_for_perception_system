@@ -6,6 +6,13 @@ state is reset between clips). Default layout::
 
     samples/foo.mp4 -> samples/annotated/foo_annotated.mp4
 
+With ``--run-all`` the script loops over every registered model and writes
+outputs to per-model sub-directories::
+
+    samples/annotated/segformer-b2-orfd/foo_annotated.mp4
+    samples/annotated/segformer-b2-final/foo_annotated.mp4
+    …
+
 ``samples`` is typically gitignored; outputs land alongside under
 ``samples/annotated`` by default (override with ``--out-dir``).
 """
@@ -15,35 +22,94 @@ import argparse
 import logging
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import cv2
+import torch
 
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent
 sys.path.insert(0, str((_REPO_ROOT / "src").resolve()))
 
 from perception.config.loader import load_config, override_source  # noqa: E402
-from perception.io.factory import build_source  # noqa: E402
-from perception.pipeline.perception import build_pipeline  # noqa: E402
-from perception.render.renderer import Renderer  # noqa: E402
+from perception.config.schema import AppConfig                      # noqa: E402
+from perception.io.factory import build_source                      # noqa: E402
+from perception.pipeline.perception import build_pipeline           # noqa: E402
+from perception.render.renderer import Renderer                     # noqa: E402
 
 logger = logging.getLogger("render_samples")
 
 _VIDEO_EXTENSIONS = frozenset({".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"})
 
 
-def _collect_videos(samples_dir: Path, *, recursive: bool, skip_under: Path) -> list[Path]:
+# --------------------------------------------------------------------------- #
+# Registered models for --run-all                                              #
+# --------------------------------------------------------------------------- #
+
+
+def _render_model_registry() -> list[dict]:
+    """All trained models that can be swapped in for visual comparison."""
+    return [
+        {
+            "key":         "segformer-b2-orfd",
+            "name":        "segformer-b2",
+            "weights":     str(_REPO_ROOT / "weights" / "orfd" / "segformer-b2" / "best.pth"),
+            "num_classes": 3,
+        },
+        {
+            "key":         "segformer-b4-orfd",
+            "name":        "segformer-b4",
+            "weights":     str(_REPO_ROOT / "weights" / "orfd" / "segformer-b4" / "best.pth"),
+            "num_classes": 3,
+        },
+        {
+            "key":         "ddrnet-orfd",
+            "name":        "ddrnet",
+            "weights":     str(_REPO_ROOT / "weights" / "orfd" / "ddrnet" / "best.pth"),
+            "num_classes": 3,
+        },
+        {
+            "key":         "segformer-b2-final",
+            "name":        "segformer-b2",
+            "weights":     str(_REPO_ROOT / "weights" / "orfd" / "final_dataset" / "segformer-b2" / "best.pth"),
+            "num_classes": 3,
+        },
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# Helpers                                                                      #
+# --------------------------------------------------------------------------- #
+
+
+def _with_semantic_model(
+    cfg: AppConfig,
+    name: str,
+    weights: str,
+    num_classes: int,
+) -> AppConfig:
+    """Return a copy of cfg with the semantic model swapped out."""
+    sem = replace(cfg.models.semantic, name=name, weights=weights, num_classes=num_classes)
+    return replace(cfg, models=replace(cfg.models, semantic=sem))
+
+
+def _collect_videos(
+    samples_dir: Path,
+    *,
+    recursive: bool,
+    skip_under: Path,
+    exclude: set[str],
+) -> list[Path]:
     skip_root = skip_under.resolve()
     out: list[Path] = []
-    if recursive:
-        candidates = samples_dir.rglob("*")
-    else:
-        candidates = samples_dir.iterdir()
+    candidates = samples_dir.rglob("*") if recursive else samples_dir.iterdir()
     for p in candidates:
         if not p.is_file():
             continue
         if p.suffix.lower() not in _VIDEO_EXTENSIONS:
+            continue
+        if p.name in exclude:
             continue
         try:
             if p.resolve().is_relative_to(skip_root):
@@ -57,7 +123,7 @@ def _collect_videos(samples_dir: Path, *, recursive: bool, skip_under: Path) -> 
 def _render_one_clip(
     pipeline,
     renderer,
-    cfg_template,
+    cfg_template: AppConfig,
     video_path: Path,
     output_path: Path,
     *,
@@ -103,8 +169,12 @@ def _render_one_clip(
             writer.release()
         src.release()
 
-    elapsed = time.perf_counter() - t0
-    return n, elapsed
+    return n, time.perf_counter() - t0
+
+
+# --------------------------------------------------------------------------- #
+# Entry point                                                                  #
+# --------------------------------------------------------------------------- #
 
 
 def main() -> int:
@@ -140,6 +210,21 @@ def main() -> int:
         default=0,
         help="Cap frames per clip (0 = full length)",
     )
+    p.add_argument(
+        "--exclude",
+        nargs="*",
+        default=["recording.mp4"],
+        help="Video filenames to skip (default: recording.mp4)",
+    )
+    p.add_argument(
+        "--run-all",
+        action="store_true",
+        help=(
+            "Loop over all registered trained models. "
+            "Outputs go to <out-dir>/<model-key>/. "
+            "Skips any model whose checkpoint file is missing."
+        ),
+    )
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args()
 
@@ -150,48 +235,103 @@ def main() -> int:
 
     samples_dir = Path(args.samples_dir).resolve()
     if not samples_dir.is_dir():
-        logger.error("Samples directory does not exist or is not a directory: %s", samples_dir)
+        logger.error("Samples directory not found: %s", samples_dir)
         return 1
 
     out_dir = Path(args.out_dir).resolve() if args.out_dir else (samples_dir / "annotated")
-
     cfg_template = load_config(args.config)
-    pipeline = build_pipeline(cfg_template)
-    pipeline.warmup()
-    renderer = Renderer(
-        cfg_template.classes,
-        cfg_template.player,
-        yoloe_prompt_mode=cfg_template.models.instance.prompt_mode,
-    )
 
-    videos = _collect_videos(samples_dir, recursive=args.recursive, skip_under=out_dir)
+    exclude_set = set(args.exclude or [])
+    videos = _collect_videos(
+        samples_dir,
+        recursive=args.recursive,
+        skip_under=out_dir,
+        exclude=exclude_set,
+    )
     if not videos:
         logger.warning("No video files found under %s", samples_dir)
         return 0
 
-    logger.info("Found %d video(s); writing to %s", len(videos), out_dir)
+    if exclude_set:
+        logger.info("Excluding: %s", ", ".join(sorted(exclude_set)))
+    logger.info("Found %d video(s) to render.", len(videos))
 
-    for vid in videos:
-        rel = vid.name
-        out_name = f"{vid.stem}{args.suffix}.mp4"
-        output_path = out_dir / out_name
-        logger.info("Rendering %s -> %s", rel, output_path)
-        try:
-            n, elapsed = _render_one_clip(
-                pipeline,
-                renderer,
-                cfg_template,
-                vid,
-                output_path,
-                max_frames=args.max_frames,
+    # ── Determine which models to run ──────────────────────────────────────
+    if args.run_all:
+        registry = [
+            m for m in _render_model_registry()
+            if Path(m["weights"]).exists()
+        ]
+        if not registry:
+            logger.error(
+                "No checkpoint files found for any registered model. "
+                "Train first with scripts/train_orfd.py."
             )
-            fps = n / max(1e-6, elapsed)
-            logger.info("  %d frames in %.2fs (%.1f FPS avg)", n, elapsed, fps)
-        except Exception as e:
-            logger.exception("Failed on %s: %s", vid, e)
             return 1
+        missing = [m["key"] for m in _render_model_registry() if not Path(m["weights"]).exists()]
+        if missing:
+            logger.warning("Skipping models with missing checkpoints: %s", ", ".join(missing))
+        models_to_run = registry
+        logger.info("Running %d model(s): %s", len(registry), ", ".join(m["key"] for m in registry))
+    else:
+        models_to_run = []  # empty → single-model mode below
 
-    logger.info("Done.")
+    # ── Run ────────────────────────────────────────────────────────────────
+    failed: list[tuple[str, str, str]] = []  # (model_key, video_name, error)
+
+    def _run_model(cfg: AppConfig, model_out_dir: Path, model_label: str) -> None:
+        pipeline = build_pipeline(cfg)
+        pipeline.warmup()
+        renderer = Renderer(
+            cfg.classes,
+            cfg.player,
+            yoloe_prompt_mode=cfg.models.instance.prompt_mode,
+        )
+        logger.info("=== Model: %s → %s ===", model_label, model_out_dir)
+        try:
+            for vid in videos:
+                out_name = f"{vid.stem}{args.suffix}.mp4"
+                output_path = model_out_dir / out_name
+                logger.info("  %s -> %s", vid.name, output_path.relative_to(out_dir.parent))
+                try:
+                    n, elapsed = _render_one_clip(
+                        pipeline,
+                        renderer,
+                        cfg_template,
+                        vid,
+                        output_path,
+                        max_frames=args.max_frames,
+                    )
+                    fps = n / max(1e-6, elapsed)
+                    logger.info("    %d frames in %.2fs (%.1f FPS avg)", n, elapsed, fps)
+                except Exception as e:
+                    logger.exception("    FAILED: %s", e)
+                    failed.append((model_label, vid.name, str(e)))
+        finally:
+            del pipeline
+            torch.cuda.empty_cache()
+
+    if models_to_run:
+        for model_def in models_to_run:
+            cfg = _with_semantic_model(
+                cfg_template,
+                name=model_def["name"],
+                weights=model_def["weights"],
+                num_classes=model_def["num_classes"],
+            )
+            _run_model(cfg, out_dir / model_def["key"], model_def["key"])
+    else:
+        # Single-model mode: use config as-is, flat output directory.
+        _run_model(cfg_template, out_dir, "config")
+
+    # ── Summary ────────────────────────────────────────────────────────────
+    if failed:
+        logger.error("%d render(s) failed:", len(failed))
+        for model_key, vid_name, err in failed:
+            logger.error("  [%s] %s — %s", model_key, vid_name, err)
+        return 1
+
+    logger.info("Done. All renders completed successfully.")
     return 0
 
 

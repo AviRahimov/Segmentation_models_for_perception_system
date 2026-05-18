@@ -8,14 +8,20 @@ Supported models
 
 Usage
 -----
-    python scripts/train_orfd.py --model segformer-b2
-    python scripts/train_orfd.py --model ddrnet --lr 1e-4 --epochs 80
+    # Use config/train.yaml (default):
+    python scripts/train_orfd.py
+
+    # Override individual settings:
+    python scripts/train_orfd.py --lr 1e-4 --epochs 50
+
+    # Resume an interrupted run:
+    python scripts/train_orfd.py --resume weights/orfd/segformer-b2/last.pth
 
 Output
 ------
 Best checkpoint (by validation mIoU) → weights/orfd/<model_name>/best.pth
-Last checkpoint                       → weights/orfd/<model_name>/last.pth
-Training log                          → weights/orfd/<model_name>/train_log.json
+Last checkpoint (full state)         → weights/orfd/<model_name>/last.pth
+Training log                         → weights/orfd/<model_name>/train_log.json
 """
 from __future__ import annotations
 
@@ -26,6 +32,7 @@ import random
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -48,8 +55,50 @@ logging.basicConfig(
 logger = logging.getLogger("train_orfd")
 
 IGNORE_INDEX = 255    # augmentation-edge padding — excluded from loss and IoU
-NUM_CLASSES = 3       # 0 = non_traversable, 1 = traversable, 2 = sky
-N_WARMUP = 5          # epochs of linear LR warmup before cosine decay
+NUM_CLASSES  = 3      # 0 = non_traversable, 1 = traversable, 2 = sky
+
+
+# --------------------------------------------------------------------------- #
+# Config loader                                                                #
+# --------------------------------------------------------------------------- #
+
+
+def load_train_config(path: str) -> dict[str, Any]:
+    """Read train.yaml and return a flat dict of default values for argparse."""
+    import yaml
+    p = Path(path)
+    if not p.exists():
+        return {}
+    with p.open() as f:
+        raw = yaml.safe_load(f) or {}
+    ds = raw.get("dataset",  {}) or {}
+    m  = raw.get("model",    {}) or {}
+    tr = raw.get("training", {}) or {}
+    return {
+        "data":               ds.get("root",          "datasets/orfd"),
+        "train_split":        ds.get("train_split",   "training"),
+        "val_split":          ds.get("val_split",     "validation"),
+        "model":              m.get("name",            "segformer-b2"),
+        "out":                m.get("out_dir")         or None,
+        "epochs":             tr.get("epochs",         100),
+        "batch":              tr.get("batch_size",     8),
+        "lr":                 tr.get("lr",             6e-5),
+        "wd":                 tr.get("weight_decay",   0.01),
+        "workers":            tr.get("workers",        4),
+        "patience":           tr.get("patience",       10),
+        "fp16":               tr.get("fp16",           True),
+        "seed":               tr.get("seed",           None),
+        "resume_from":        tr.get("resume_from",    "") or "",
+        "n_warmup":           tr.get("n_warmup_epochs",       5),
+        "freeze_epochs":      tr.get("ddrnet_freeze_epochs",  10),
+        "clip_norm":          tr.get("grad_clip_norm",        1.0),
+        "label_smoothing":    tr.get("label_smoothing",       0.1),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# RNG helpers                                                                  #
+# --------------------------------------------------------------------------- #
 
 
 def seed_everything(seed: int) -> None:
@@ -97,17 +146,16 @@ def build_segformer(variant: str, device: str, fp16: bool) -> tuple[nn.Module, o
 
 
 def build_ddrnet(device: str, fp16: bool) -> nn.Module:
-    """Return DDRNet-39 with 12-class backbone weights + fresh 2-class head.
+    """Return DDRNet-39 with 12-class backbone weights + fresh 3-class head.
 
     Strategy:
         1. Build the full GOOSE-12 architecture (num_classes=12).
         2. Strict-load the GOOSE-12 checkpoint (all 501 entries match).
         3. Replace ``model.final_layer`` with a fresh ``SegmentHead``
-           (in_planes=256, inter_planes=256, out_planes=2, scale_factor=8).
-        4. Freeze the backbone for the first ``DDRNET_FREEZE_EPOCHS`` epochs
+           (in_planes=256, inter_planes=256, out_planes=NUM_CLASSES, scale_factor=8).
+        4. Freeze the backbone for the first ``freeze_epochs`` epochs
            to let the new head stabilise (done in the training loop).
     """
-    import torch.nn as nn
     sys.path.insert(0, str(_ROOT / "src"))
     from perception.models.semantic._vendored.ddrnet39_goose import (
         DDRNet, SegmentHead, ddrnet_39_goose,
@@ -126,15 +174,13 @@ def build_ddrnet(device: str, fp16: bool) -> nn.Module:
     state_dict = ckpt["net"] if isinstance(ckpt, dict) and "net" in ckpt else ckpt
     model.load_state_dict(state_dict, strict=True)
 
-    # Replace the final classification head with a 2-class head.
-    # in_planes = highres_planes * layer5_bottleneck_expansion = 128 * 2 = 256
     model.final_layer = SegmentHead(
         in_planes=256,
         inter_planes=256,
         out_planes=NUM_CLASSES,
         scale_factor=8,
     )
-    logger.info("DDRNet final_layer replaced with 2-class head.")
+    logger.info("DDRNet final_layer replaced with %d-class head.", NUM_CLASSES)
 
     model = model.to(device)
     return model
@@ -146,8 +192,8 @@ def build_ddrnet(device: str, fp16: bool) -> nn.Module:
 
 
 def compute_miou(
-    preds: torch.Tensor,  # (N, H, W) int64 predicted class indices
-    labels: torch.Tensor, # (N, H, W) int64 ground truth
+    preds: torch.Tensor,   # (N, H, W) int64 predicted class indices
+    labels: torch.Tensor,  # (N, H, W) int64 ground truth
     num_classes: int = NUM_CLASSES,
     ignore_index: int = IGNORE_INDEX,
 ) -> tuple[float, list[float]]:
@@ -180,12 +226,10 @@ def segformer_forward(
     device: str,
     fp16: bool,
 ) -> torch.Tensor:
-    """Return (B, 2, H, W) upsampled logits from SegFormer."""
+    """Return (B, NUM_CLASSES, H, W) upsampled logits from SegFormer."""
     b, _, h, w = images_chw.shape
 
     # Re-encode as the HF processor expects: list of HWC uint8 RGB ndarrays.
-    # We already have normalised tensors, so we reverse normalisation to get
-    # the raw pixel values the processor can accept.
     _MEAN = torch.tensor([0.485, 0.456, 0.406], device=images_chw.device).view(1, 3, 1, 1)
     _STD  = torch.tensor([0.229, 0.224, 0.225], device=images_chw.device).view(1, 3, 1, 1)
     rgb_01 = images_chw * _STD + _MEAN
@@ -195,11 +239,11 @@ def segformer_forward(
     pixel_values = inputs["pixel_values"].to(device)
 
     outputs = model(pixel_values=pixel_values)
-    logits = outputs.logits  # (B, 2, H/4, W/4)
+    logits = outputs.logits  # (B, C, H/4, W/4)
     logits = torch.nn.functional.interpolate(
         logits, size=(h, w), mode="bilinear", align_corners=False,
     )
-    return logits  # (B, 2, H, W)
+    return logits  # (B, C, H, W)
 
 
 def ddrnet_forward(
@@ -208,21 +252,17 @@ def ddrnet_forward(
     device: str,
     fp16: bool,
 ) -> torch.Tensor:
-    """Return (B, 2, H, W) upsampled logits from DDRNet."""
+    """Return (B, NUM_CLASSES, H, W) upsampled logits from DDRNet."""
     b, _, h, w = images_chw.shape
     x = images_chw.to(device)
 
-    # DDRNet's skip connections compute width_output = W // 8 and expect the
-    # backbone feature maps to have exactly that width. When W is not divisible
-    # by 8 the floor-division mismatches the actual conv-stride output by 1.
-    # Pad to the nearest multiple of 8; crop back via interpolate at the end.
+    # Pad to nearest multiple of 8 (DDRNet stride requirement).
     pad_h = (8 - h % 8) % 8
     pad_w = (8 - w % 8) % 8
     if pad_h > 0 or pad_w > 0:
         x = torch.nn.functional.pad(x, (0, pad_w, 0, pad_h), mode="reflect")
 
     logits = model(x)
-    # Upsample to the exact original (H, W), which also removes any padding.
     logits = torch.nn.functional.interpolate(
         logits, size=(h, w), mode="bilinear", align_corners=False,
     )
@@ -232,8 +272,6 @@ def ddrnet_forward(
 # --------------------------------------------------------------------------- #
 # Training loop                                                                #
 # --------------------------------------------------------------------------- #
-
-DDRNET_FREEZE_EPOCHS = 10  # freeze backbone for first N epochs
 
 
 def train_one_epoch(
@@ -245,6 +283,7 @@ def train_one_epoch(
     device: str,
     fp16: bool,
     model_name: str,
+    clip_norm: float,
 ) -> float:
     model.train()
     total_loss = 0.0
@@ -253,7 +292,6 @@ def train_one_epoch(
         labels = labels.to(device, non_blocking=True)
 
         optimizer.zero_grad(set_to_none=True)
-        # bfloat16 has the same exponent range as float32, so no GradScaler is needed.
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=fp16):
             if model_name.startswith("segformer"):
                 logits = segformer_forward(model, processor, images, device, fp16=False)
@@ -262,7 +300,7 @@ def train_one_epoch(
             loss = criterion(logits, labels)
 
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
         optimizer.step()
         total_loss += loss.item()
 
@@ -294,8 +332,8 @@ def evaluate(
                 logits = segformer_forward(model, processor, images, device, fp16=False)
             else:
                 logits = ddrnet_forward(model, images, device, fp16=False)
-
             loss = criterion(logits, labels)
+
         total_loss += loss.item()
         preds = logits.argmax(dim=1)
         all_preds.append(preds.cpu())
@@ -313,44 +351,73 @@ def evaluate(
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Fine-tune segmentation model on ORFD")
-    p.add_argument("--model",   default="segformer-b2",
-                   choices=["segformer-b2", "segformer-b4", "ddrnet"],
-                   help="Model to train")
-    p.add_argument("--data",    default=str(_ROOT / "datasets" / "orfd"),
-                   help="Path to ORFD root (contains training/, validation/)")
-    p.add_argument("--epochs",  type=int, default=100)
-    p.add_argument("--batch",   type=int, default=8)
-    p.add_argument("--lr",      type=float, default=6e-5)
-    p.add_argument("--wd",      type=float, default=0.01,  help="AdamW weight decay")
-    p.add_argument("--workers", type=int, default=4)
-    p.add_argument("--patience",type=int, default=10,
-                   help="Early-stopping patience (epochs without val mIoU improvement)")
-    p.add_argument("--no-fp16", action="store_true", help="Disable mixed-precision training")
-    p.add_argument("--seed",    type=int, default=None,
-                   help="Global RNG seed for reproducibility (omit for non-deterministic)")
-    p.add_argument("--out",     default=None,
+    # Two-pass: first extract --config, then load its values as argparse defaults.
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", default=str(_ROOT / "config" / "train.yaml"))
+    known, _ = pre.parse_known_args()
+    cfg = load_train_config(known.config)
+
+    p = argparse.ArgumentParser(description="Fine-tune segmentation model on ORFD/custom dataset")
+    p.add_argument("--config", default=str(_ROOT / "config" / "train.yaml"),
+                   help="Path to train.yaml config file")
+    p.add_argument("--model",   default=cfg.get("model", "segformer-b2"),
+                   choices=["segformer-b2", "segformer-b4", "ddrnet"])
+    p.add_argument("--data",    default=cfg.get("data",    "datasets/orfd"),
+                   help="Path to dataset root (must contain training/ and validation/)")
+    p.add_argument("--epochs",  type=int,   default=cfg.get("epochs",   100))
+    p.add_argument("--batch",   type=int,   default=cfg.get("batch",    8))
+    p.add_argument("--lr",      type=float, default=cfg.get("lr",       6e-5))
+    p.add_argument("--wd",      type=float, default=cfg.get("wd",       0.01))
+    p.add_argument("--workers", type=int,   default=cfg.get("workers",  4))
+    p.add_argument("--patience",type=int,   default=cfg.get("patience", 10))
+    p.add_argument("--seed",    type=int,   default=cfg.get("seed",     None))
+    p.add_argument("--out",     default=cfg.get("out", None),
                    help="Output directory (default: weights/orfd/<model>/)")
+    p.add_argument("--resume",  default=cfg.get("resume_from", ""),
+                   help="Path to last.pth checkpoint to resume from")
+    p.add_argument("--no-fp16", dest="fp16", action="store_false",
+                   default=cfg.get("fp16", True),
+                   help="Disable bfloat16 mixed-precision training")
+    # Advanced knobs (expose previously hardcoded constants)
+    p.add_argument("--n-warmup",       type=int,   default=cfg.get("n_warmup",       5),
+                   help="Linear LR warmup epochs before cosine decay")
+    p.add_argument("--freeze-epochs",  type=int,   default=cfg.get("freeze_epochs",  10),
+                   help="Freeze DDRNet backbone for first N epochs")
+    p.add_argument("--clip-norm",      type=float, default=cfg.get("clip_norm",      1.0),
+                   help="Gradient clipping max norm")
+    p.add_argument("--label-smoothing",type=float, default=cfg.get("label_smoothing",0.1),
+                   help="Cross-entropy label smoothing")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    fp16   = not args.no_fp16 and device == "cuda"
+    fp16   = args.fp16 and device == "cuda"
 
     if args.seed is not None:
         seed_everything(args.seed)
         logger.info("Global seed: %d", args.seed)
 
-    out_dir = Path(args.out) if args.out else _ROOT / "weights" / "orfd" / args.model
+    if args.out:
+        out_dir = Path(args.out)
+        if not out_dir.is_absolute():
+            out_dir = _ROOT / out_dir
+    else:
+        out_dir = _ROOT / "weights" / "orfd" / args.model
     out_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Output directory: %s", out_dir)
     logger.info("Device: %s  fp16: %s", device, fp16)
 
     # --- Datasets ---
-    train_ds = ORFDDataset(args.data, split="training",   augment=True)
-    val_ds   = ORFDDataset(args.data, split="validation", augment=False)
+    # Resolve relative paths against the project root so the script works
+    # regardless of which directory the user runs it from.
+    data_path = Path(args.data)
+    if not data_path.is_absolute():
+        data_path = _ROOT / data_path
+
+    train_ds = ORFDDataset(str(data_path), split="training",   augment=True)
+    val_ds   = ORFDDataset(str(data_path), split="validation", augment=False)
     train_loader = DataLoader(
         train_ds, batch_size=args.batch, shuffle=True,
         num_workers=args.workers, pin_memory=True, drop_last=True,
@@ -370,7 +437,6 @@ def main() -> None:
         model = build_ddrnet(device, fp16)
 
     # --- Optimiser ---
-    # Use different LR for backbone vs head (fine-tuning heuristic).
     if args.model.startswith("segformer"):
         head_params = list(model.decode_head.parameters())
         head_ids = {id(p) for p in head_params}
@@ -380,7 +446,6 @@ def main() -> None:
             {"params": head_params,      "lr": args.lr},
         ]
     else:
-        # DDRNet: freeze backbone params for first DDRNET_FREEZE_EPOCHS epochs.
         final_layer_ids = {id(p) for p in model.final_layer.parameters()}
         backbone_params = [p for p in model.parameters() if id(p) not in final_layer_ids]
         head_params     = list(model.final_layer.parameters())
@@ -390,28 +455,60 @@ def main() -> None:
         ]
 
     optimizer = AdamW(param_groups, weight_decay=args.wd)
-    warmup_sched = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=N_WARMUP)
-    cosine_sched = CosineAnnealingLR(optimizer, T_max=max(1, args.epochs - N_WARMUP), eta_min=1e-7)
+    warmup_sched = LinearLR(optimizer, start_factor=0.1, end_factor=1.0,
+                            total_iters=args.n_warmup)
+    cosine_sched = CosineAnnealingLR(optimizer,
+                                     T_max=max(1, args.epochs - args.n_warmup),
+                                     eta_min=1e-7)
     scheduler = SequentialLR(optimizer, schedulers=[warmup_sched, cosine_sched],
-                             milestones=[N_WARMUP])
-    criterion = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX, label_smoothing=0.1)
+                             milestones=[args.n_warmup])
+    criterion = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX,
+                                    label_smoothing=args.label_smoothing)
+
+    # --- Resume ---
+    start_epoch = 1
+    best_miou   = 0.0
+
+    if args.resume:
+        resume_path = Path(args.resume)
+        if not resume_path.exists():
+            raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+        ckpt = torch.load(str(resume_path), map_location="cpu", weights_only=False)
+        model.load_state_dict(ckpt["net"])
+        if "optimizer" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer"])
+        if "scheduler" in ckpt:
+            scheduler.load_state_dict(ckpt["scheduler"])
+        start_epoch = ckpt.get("epoch", 0) + 1
+        best_miou   = ckpt.get("best_miou", ckpt.get("miou", 0.0))
+        logger.info(
+            "Resumed from %s  (epoch %d, best mIoU %.4f)",
+            resume_path, start_epoch - 1, best_miou,
+        )
 
     # --- Training loop ---
-    best_miou     = 0.0
     patience_left = args.patience
     log_entries: list[dict] = []
 
-    for epoch in range(1, args.epochs + 1):
+    # Reload existing log if resuming so we don't overwrite history.
+    log_path = out_dir / "train_log.json"
+    if args.resume and log_path.exists():
+        try:
+            log_entries = json.loads(log_path.read_text())
+        except Exception:
+            log_entries = []
+
+    for epoch in range(start_epoch, args.epochs + 1):
         t0 = time.perf_counter()
 
         # Unfreeze DDRNet backbone after warm-up period.
-        if args.model == "ddrnet" and epoch == DDRNET_FREEZE_EPOCHS + 1:
+        if args.model == "ddrnet" and epoch == args.freeze_epochs + 1:
             optimizer.param_groups[0]["lr"] = args.lr * 0.1
             logger.info("Epoch %d: DDRNet backbone unfrozen.", epoch)
 
         train_loss = train_one_epoch(
             model, processor, train_loader, optimizer, criterion,
-            device, fp16, args.model,
+            device, fp16, args.model, args.clip_norm,
         )
         val_loss, val_miou = evaluate(
             model, processor, val_loader, criterion, device, fp16, args.model,
@@ -427,15 +524,18 @@ def main() -> None:
         entry = dict(epoch=epoch, train_loss=train_loss,
                      val_loss=val_loss, val_miou=val_miou)
         log_entries.append(entry)
-        (out_dir / "train_log.json").write_text(json.dumps(log_entries, indent=2))
+        log_path.write_text(json.dumps(log_entries, indent=2))
 
-        # Save last checkpoint.
-        _save_checkpoint(model, out_dir / "last.pth", epoch, val_miou)
+        # last.pth: full state for resume.
+        _save_checkpoint(
+            model, out_dir / "last.pth", epoch, val_miou,
+            optimizer=optimizer, scheduler=scheduler, best_miou=best_miou,
+        )
 
-        # Save best checkpoint.
         if val_miou > best_miou:
             best_miou = val_miou
             patience_left = args.patience
+            # best.pth: weights only (used by run_player.py).
             _save_checkpoint(model, out_dir / "best.pth", epoch, val_miou)
             logger.info("  → new best mIoU %.4f saved.", best_miou)
         else:
@@ -448,8 +548,23 @@ def main() -> None:
     logger.info("Best checkpoint: %s", out_dir / "best.pth")
 
 
-def _save_checkpoint(model: nn.Module, path: Path, epoch: int, miou: float) -> None:
-    torch.save({"net": model.state_dict(), "epoch": epoch, "miou": miou}, str(path))
+def _save_checkpoint(
+    model: nn.Module,
+    path: Path,
+    epoch: int,
+    miou: float,
+    optimizer=None,
+    scheduler=None,
+    best_miou: float | None = None,
+) -> None:
+    state: dict[str, Any] = {"net": model.state_dict(), "epoch": epoch, "miou": miou}
+    if optimizer is not None:
+        state["optimizer"] = optimizer.state_dict()
+    if scheduler is not None:
+        state["scheduler"] = scheduler.state_dict()
+    if best_miou is not None:
+        state["best_miou"] = best_miou
+    torch.save(state, str(path))
 
 
 if __name__ == "__main__":

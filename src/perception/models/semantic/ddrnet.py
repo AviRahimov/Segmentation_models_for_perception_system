@@ -105,15 +105,8 @@ class DDRNetSemanticModel(SemanticModel):
         self._device = device
         self._fp16 = bool(fp16) and isinstance(device, str) and device.startswith("cuda")
 
-        # Fine-tuned mode: num_classes overrides the GOOSE-12 head size.
-        head_classes = num_classes if num_classes is not None else self.NUM_NATIVE_CLASSES
-        self._fine_tuned: bool = head_classes != self.NUM_NATIVE_CLASSES
-
-        # Build the architecture and strict-load the checkpoint.
-        self._model = ddrnet_39_goose(num_classes=head_classes, use_aux_heads=False)
+        # Load checkpoint first so we can auto-detect the head size.
         ckpt = torch.load(weights, map_location="cpu", weights_only=False)
-        # GOOSE checkpoints wrap the state-dict under "net". Be tolerant
-        # of the rare bare-state-dict export (e.g. for fine-tuned saves).
         if isinstance(ckpt, dict) and "net" in ckpt:
             state_dict = ckpt["net"]
             self._ckpt_acc = float(ckpt.get("acc", float("nan")))
@@ -122,6 +115,29 @@ class DDRNetSemanticModel(SemanticModel):
             state_dict = ckpt
             self._ckpt_acc = float("nan")
             self._ckpt_epoch = -1
+
+        # Auto-detect head size from the final_layer weights so that old 2-class
+        # and new 3-class fine-tuned checkpoints both load correctly regardless of
+        # what num_classes the caller passes.
+        _fl_keys = sorted(
+            k for k in state_dict if k.startswith("final_layer.") and k.endswith(".weight")
+        )
+        if _fl_keys:
+            detected = state_dict[_fl_keys[-1]].shape[0]
+            if num_classes is not None and num_classes != detected:
+                logger.warning(
+                    "num_classes=%d passed but checkpoint final_layer has %d output "
+                    "channels; using checkpoint value.",
+                    num_classes, detected,
+                )
+            head_classes = detected
+        else:
+            head_classes = num_classes if num_classes is not None else self.NUM_NATIVE_CLASSES
+
+        self._fine_tuned: bool = head_classes != self.NUM_NATIVE_CLASSES
+
+        # Build the architecture and strict-load the checkpoint.
+        self._model = ddrnet_39_goose(num_classes=head_classes, use_aux_heads=False)
         self._model.load_state_dict(state_dict, strict=True)
         self._model.eval()
 
@@ -160,15 +176,23 @@ class DDRNetSemanticModel(SemanticModel):
 
         if self._fine_tuned:
             n_model = self._model.num_classes
-            if len(sem) != n_model:
+            if len(sem) < n_model:
                 raise ValueError(
                     f"DDRNetSemanticModel (fine-tuned): config has {len(sem)} "
                     f"semantic classes but the checkpoint has {n_model} output "
-                    f"channels. Adjust the classes list to match the model."
+                    f"channels. Add the missing classes to the config."
+                )
+            if len(sem) > n_model:
+                logger.warning(
+                    "DDRNet (fine-tuned): config has %d semantic classes but "
+                    "checkpoint has %d output channels; classes beyond index %d "
+                    "will never be predicted.",
+                    len(sem), n_model, n_model - 1,
                 )
             self._lut = None
             logger.info(
-                "DDRNet (fine-tuned) warmed up: %d classes, no LUT merge.", len(sem),
+                "DDRNet (fine-tuned) warmed up: %d model channels, %d config classes.",
+                n_model, len(sem),
             )
             return
 

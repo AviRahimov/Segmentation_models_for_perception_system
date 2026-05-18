@@ -113,6 +113,13 @@ def _default_model_defs() -> list[dict[str, Any]]:
             "type": "ddrnet-finetuned",
             "checkpoint": str(_ROOT / "weights" / "orfd" / "ddrnet" / "best.pth"),
         },
+        {
+            "key": "segformer-b2-final",
+            "label": "SegFormer-B2\n(final dataset)",
+            "type": "segformer-finetuned",
+            "hf_id": "nvidia/segformer-b2-finetuned-ade-512-512",
+            "checkpoint": str(_ROOT / "weights" / "orfd" / "final_dataset" / "segformer-b2" / "best.pth"),
+        },
     ]
     return defs
 
@@ -162,15 +169,19 @@ def load_segformer_baseline(hf_id: str, device: str, fp16: bool):
 
 
 def load_segformer_finetuned(hf_id: str, checkpoint: str, device: str, fp16: bool):
-    """Load fine-tuned 2-class SegFormer from a training checkpoint."""
+    """Load fine-tuned SegFormer from a training checkpoint (2- or 3-class)."""
     from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
 
     ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
     state_dict = ckpt["net"] if isinstance(ckpt, dict) and "net" in ckpt else ckpt
 
+    # Auto-detect number of output classes from the checkpoint so this works
+    # for both the old 2-class checkpoints and the new 3-class (sky) checkpoints.
+    n_classes = state_dict["decode_head.classifier.weight"].shape[0]
+
     processor = SegformerImageProcessor.from_pretrained(hf_id)
     model = SegformerForSemanticSegmentation.from_pretrained(
-        hf_id, num_labels=NUM_CLASSES, ignore_mismatched_sizes=True,
+        hf_id, num_labels=n_classes, ignore_mismatched_sizes=True,
     )
     model.load_state_dict(state_dict, strict=True)
     model.eval().to(device)
@@ -185,9 +196,11 @@ def load_segformer_finetuned(hf_id: str, checkpoint: str, device: str, fp16: boo
         pv = inputs["pixel_values"].to(device)
         if fp16:
             pv = pv.half()
-        out = model(pixel_values=pv).logits  # (1, 2, H/4, W/4)
+        out = model(pixel_values=pv).logits  # (1, n_classes, H/4, W/4)
         out = F.interpolate(out, size=(h, w), mode="bilinear", align_corners=False)[0]
-        return out.argmax(0).byte().cpu().numpy()
+        # Class 1 = traversable in both 2-class and 3-class models;
+        # sky (class 2) maps to 0 (non-traversable) automatically.
+        return (out.argmax(0) == 1).byte().cpu().numpy()
 
     params = sum(p.numel() for p in model.parameters()) / 1e6
     size_mb = Path(checkpoint).stat().st_size / 1e6
@@ -195,7 +208,7 @@ def load_segformer_finetuned(hf_id: str, checkpoint: str, device: str, fp16: boo
 
 
 def load_ddrnet_finetuned(checkpoint: str, device: str, fp16: bool):
-    """Load fine-tuned 2-class DDRNet from a training checkpoint."""
+    """Load fine-tuned DDRNet from a training checkpoint (2- or 3-class)."""
     from perception.models.semantic._vendored.ddrnet39_goose import (
         SegmentHead, ddrnet_39_goose,
     )
@@ -203,7 +216,13 @@ def load_ddrnet_finetuned(checkpoint: str, device: str, fp16: bool):
     ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
     state_dict = ckpt["net"] if isinstance(ckpt, dict) and "net" in ckpt else ckpt
 
-    model = ddrnet_39_goose(num_classes=NUM_CLASSES, use_aux_heads=False)
+    # Auto-detect output classes from the final layer weight shape.
+    final_keys = sorted(
+        k for k in state_dict if k.startswith("final_layer.") and k.endswith(".weight")
+    )
+    n_classes = state_dict[final_keys[-1]].shape[0]
+
+    model = ddrnet_39_goose(num_classes=n_classes, use_aux_heads=False)
     model.load_state_dict(state_dict, strict=True)
     model.eval().to(device)
     if fp16:
@@ -220,9 +239,16 @@ def load_ddrnet_finetuned(checkpoint: str, device: str, fp16: bool):
         x = (x - _MEAN) / _STD
         if fp16:
             x = x.half()
-        out = model(x)  # (1, 2, H', W')
+        # Pad to multiple of 8 (DDRNet stride requirement).
+        _, _, h_pad, w_pad = x.shape
+        pad_h = (8 - h_pad % 8) % 8
+        pad_w = (8 - w_pad % 8) % 8
+        if pad_h or pad_w:
+            x = F.pad(x, (0, pad_w, 0, pad_h), mode="reflect")
+        out = model(x)  # (1, n_classes, H', W')
         out = F.interpolate(out, size=(h, w), mode="bilinear", align_corners=False)[0]
-        return out.argmax(0).byte().cpu().numpy()
+        # Class 1 = traversable; sky (class 2) maps to 0 automatically.
+        return (out.argmax(0) == 1).byte().cpu().numpy()
 
     params = sum(p.numel() for p in model.parameters()) / 1e6
     size_mb = Path(checkpoint).stat().st_size / 1e6

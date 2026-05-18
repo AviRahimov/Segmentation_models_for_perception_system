@@ -1,0 +1,44 @@
+# Training configuration for train_orfd.py
+#
+# HOW TO USE
+# ----------
+# Run without any flags to use this file:
+#   python scripts/train_orfd.py
+#
+# Override individual settings on the command line (config is the baseline):
+#   python scripts/train_orfd.py --lr 1e-4 --epochs 50
+#
+# Resume an interrupted run:
+#   python scripts/train_orfd.py --resume weights/orfd/segformer-b2/last.pth
+#   (or set resume_from below and just run python scripts/train_orfd.py)
+
+# ---------------------------------------------------------------------------
+dataset:
+  root: "datasets/Final_Dataset"
+  train_split: "training"
+  val_split: "validation"
+
+# ---------------------------------------------------------------------------
+model:
+  name: "segformer-b2"          # segformer-b2 | segformer-b4 | ddrnet
+  out_dir: "weights/orfd/final_dataset/segformer-b2/"                   # leave empty → weights/orfd/<model_name>/
+
+# ---------------------------------------------------------------------------
+training:
+  epochs: 100
+  batch_size: 8
+  lr: 6.0e-5
+  weight_decay: 0.01
+  workers: 4
+  patience: 10                  # epochs without val mIoU improvement → stop
+  fp16: true                    # bfloat16 mixed-precision (requires CUDA)
+  seed: 42                      # set to null for non-deterministic
+
+  # Resume: leave empty to start fresh, or point to a last.pth checkpoint.
+  resume_from: ""
+
+  # Advanced — usually no need to change these
+  n_warmup_epochs: 5            # linear LR warmup epochs before cosine decay
+  ddrnet_freeze_epochs: 10      # freeze DDRNet backbone for first N epochs
+  grad_clip_norm: 1.0           # gradient clipping max norm
+  label_smoothing: 0.1          # cross-entropy label smoothing
