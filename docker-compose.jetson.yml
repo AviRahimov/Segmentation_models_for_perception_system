@@ -1,0 +1,49 @@
+# docker-compose.jetson.yml
+# Usage:
+#   Headless (default):  docker compose -f docker-compose.jetson.yml up perception
+#   GUI player:          docker compose -f docker-compose.jetson.yml --profile gui up perception-gui
+
+version: "3.8"
+
+services:
+
+  perception:
+    image: perception:headless
+    build:
+      context: .
+      dockerfile: Dockerfile.jetson
+      target: headless
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+    volumes:
+      - ./weights:/app/weights
+      - ./config:/app/config
+      - ./samples:/app/samples
+      - hf_cache:/cache/huggingface
+    restart: unless-stopped
+
+  perception-gui:
+    image: perception:gui
+    build:
+      context: .
+      dockerfile: Dockerfile.jetson
+      target: gui
+    runtime: nvidia
+    profiles: [gui]
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,display
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./weights:/app/weights
+      - ./config:/app/config
+      - ./samples:/app/samples
+      - hf_cache:/cache/huggingface
+    network_mode: host
+
+volumes:
+  hf_cache:

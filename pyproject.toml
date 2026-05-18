@@ -7,7 +7,7 @@ name = "perception"
 version = "0.1.0"
 description = "Real-time off-road robotics perception (YOLOE + SegFormer + temporal smoothing + PyQt6)"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 authors = [{ name = "Perception Team" }]
 license = { text = "MIT" }
 classifiers = [

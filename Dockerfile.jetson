@@ -1,0 +1,88 @@
+# =============================================================================
+# Off-Road Perception System — Jetson Orin AGX Container
+#
+# Base: NVIDIA L4T JetPack 6.0 + PyTorch 2.3.0 + CUDA 12.2 (aarch64)
+# Stages:
+#   headless — inference + training, no GUI (default for robot deployment)
+#   gui      — adds PyQt6 system packages for the interactive player
+#
+# Build headless:  docker build --target headless -t perception:headless -f Dockerfile.jetson .
+# Build gui:       docker build --target gui      -t perception:gui      -f Dockerfile.jetson .
+# =============================================================================
+
+# ── Stage 1: system dependencies + Python packages ──────────────────────────
+FROM nvcr.io/nvidia/l4t-pytorch:r36.3.0-pth2.3-py3 AS base
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# System libraries required by OpenCV and ultralytics
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1-mesa-glx \
+        libglib2.0-0 \
+        libsm6 \
+        libxrender1 \
+        libxext6 \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python dependencies.
+# torch & torchvision are already installed in the base image; pip will see
+# them as satisfied and skip them even if ultralytics/transformers list them
+# as requirements.
+COPY requirements-jetson.txt .
+RUN pip3 install --no-cache-dir -r requirements-jetson.txt
+
+# ── Stage 2: headless (robot / inference-only) ───────────────────────────────
+FROM base AS headless
+
+# Copy only the files the application needs at runtime
+COPY pyproject.toml .
+COPY src/           ./src/
+COPY config/        ./config/
+COPY scripts/       ./scripts/
+
+# Install the local package (no deps — already installed above).
+# Editable install creates the .pth so `import perception` resolves to src/.
+RUN pip3 install --no-cache-dir --no-deps -e .
+
+# Weights, samples, and datasets are mounted at runtime — not baked in.
+VOLUME ["/app/weights", "/app/samples", "/app/datasets"]
+
+# Expose HuggingFace cache as a named volume so model weights survive rebuilds.
+ENV TRANSFORMERS_CACHE=/cache/huggingface \
+    HF_HOME=/cache/huggingface
+
+ENTRYPOINT ["python3"]
+CMD ["scripts/run_headless.py"]
+
+# ── Stage 3: gui (interactive player with display) ───────────────────────────
+FROM base AS gui
+
+# PyQt6 via system packages — more reliable on aarch64 than the pip wheel
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3-pyqt6 \
+        libqt6widgets6 \
+        libqt6multimedia6 \
+        libqt6multimediawidgets6 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml .
+COPY src/           ./src/
+COPY config/        ./config/
+COPY scripts/       ./scripts/
+
+RUN pip3 install --no-cache-dir --no-deps -e .
+
+VOLUME ["/app/weights", "/app/samples", "/app/datasets"]
+
+ENV TRANSFORMERS_CACHE=/cache/huggingface \
+    HF_HOME=/cache/huggingface \
+    QT_X11_NO_MITSHM=1
+
+ENTRYPOINT ["python3"]
+CMD ["scripts/run_player.py"]

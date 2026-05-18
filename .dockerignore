@@ -1,0 +1,22 @@
+# Never bake these into the image — they are large and mounted as volumes at runtime
+weights/
+datasets/
+samples/
+
+# Virtual environment — not needed inside the container
+.venv/
+
+# Python bytecode
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Git and CI artefacts
+.git/
+.pytest_cache/
+reports/
+
+# Large media files
+*.mp4
+*.avi
+*.mkv

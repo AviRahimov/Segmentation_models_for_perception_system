@@ -1,0 +1,15 @@
+# Jetson Orin AGX — Python dependencies
+# torch and torchvision are pre-installed in the l4t-pytorch base image.
+# DO NOT add them here — that would overwrite the Jetson-tuned aarch64 build.
+
+numpy==1.26.4
+opencv-python==4.10.0.84
+Pillow==11.0.0
+ultralytics==8.4.47
+transformers==4.46.3
+supervision==0.25.1
+PyYAML==6.0.2
+requests==2.32.3
+tqdm==4.67.1
+gdown==5.2.0
+pytest==8.3.4
