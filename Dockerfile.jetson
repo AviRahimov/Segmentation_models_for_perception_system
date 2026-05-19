@@ -4,19 +4,21 @@
 # Base: NVIDIA L4T JetPack 6.0 + PyTorch 2.3.0 + CUDA 12.2 (aarch64)
 # Stages:
 #   headless — inference + training, no GUI (default for robot deployment)
-#   gui      — adds PyQt6 system packages for the interactive player
+#   gui      — adds PyQt5 system packages for the interactive player
 #
 # Build headless:  docker build --target headless -t perception:headless -f Dockerfile.jetson .
 # Build gui:       docker build --target gui      -t perception:gui      -f Dockerfile.jetson .
 # =============================================================================
 
 # ── Stage 1: system dependencies + Python packages ──────────────────────────
-FROM nvcr.io/nvidia/l4t-pytorch:r36.3.0-pth2.3-py3 AS base
+FROM dustynv/l4t-pytorch:r36.2.0 AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_INDEX_URL=https://pypi.org/simple \
+    PIP_EXTRA_INDEX_URL=https://pypi.ngc.nvidia.com
 
 # System libraries required by OpenCV and ultralytics
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -26,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxrender1 \
         libxext6 \
         git \
+	python3-opencv \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -58,17 +61,16 @@ ENV TRANSFORMERS_CACHE=/cache/huggingface \
     HF_HOME=/cache/huggingface
 
 ENTRYPOINT ["python3"]
-CMD ["scripts/run_headless.py"]
+CMD ["scripts/run_headless.py --source samples/off_road_vid4.mp4"]
 
 # ── Stage 3: gui (interactive player with display) ───────────────────────────
 FROM base AS gui
 
-# PyQt6 via system packages — more reliable on aarch64 than the pip wheel
+# PyQt5 via system packages — more reliable on aarch64 than the pip wheel
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3-pyqt6 \
-        libqt6widgets6 \
-        libqt6multimedia6 \
-        libqt6multimediawidgets6 \
+        python3-pyqt5 \
+        python3-pyqt5.qtmultimedia \
+        libqt5multimedia5-plugins \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml .

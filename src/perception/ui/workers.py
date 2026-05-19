@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import queue
 
-from PyQt6.QtCore import QMutex, QThread, pyqtSignal
+from PyQt5.QtCore import QMutex, QThread, pyqtSignal
 
 from ..io.source_base import FrameSource
 from ..pipeline.perception import PerceptionPipeline

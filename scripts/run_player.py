@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GUI entry point: PyQt6 video player with real-time perception overlay."""
+"""GUI entry point: PyQt5 video player with real-time perception overlay."""
 from __future__ import annotations
 
 import argparse
@@ -11,7 +11,7 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str((_HERE.parent / "src").resolve()))
 
-from PyQt6.QtWidgets import QApplication  # noqa: E402
+from PyQt5.QtWidgets import QApplication  # noqa: E402
 
 from perception.config.loader import load_config, override_source  # noqa: E402
 from perception.io.factory import build_source  # noqa: E402
@@ -54,7 +54,7 @@ def main() -> int:
     win = MainWindow(src, pipeline, renderer, cfg)
     win.resize(1280, 800)
     win.show()
-    return app.exec()
+    return app.exec_()
 
 
 if __name__ == "__main__":

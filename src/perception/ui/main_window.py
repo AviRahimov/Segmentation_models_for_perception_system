@@ -5,9 +5,9 @@ import logging
 import queue
 import time
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import QMainWindow, QStatusBar, QVBoxLayout, QWidget
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QKeySequence
+from PyQt5.QtWidgets import QMainWindow, QShortcut, QStatusBar, QVBoxLayout, QWidget
 
 from ..config.schema import AppConfig
 from ..core.types import FrameResult

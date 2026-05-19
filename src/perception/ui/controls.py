@@ -1,8 +1,8 @@
 """Player controls: play/pause, seek slider, position readout, speed."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtWidgets import (
     QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
@@ -38,7 +38,7 @@ class PlayerControls(QWidget):
         self.btn_play.toggled.connect(self._on_play_toggled)
         layout.addWidget(self.btn_play)
 
-        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(0, max(0, self._total - 1))
         self.slider.setEnabled(self._has_total)
         self.slider.sliderReleased.connect(

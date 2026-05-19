@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import numpy as np
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QImage, QPixmap
-from PyQt6.QtWidgets import QLabel, QSizePolicy
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtWidgets import QLabel, QSizePolicy
 
 
 class VideoCanvas(QLabel):
@@ -12,10 +12,10 @@ class VideoCanvas(QLabel):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setAlignment(Qt.AlignCenter)
         self.setMinimumSize(640, 360)
         self.setStyleSheet("background: #111;")
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setScaledContents(False)
         self._last_frame: np.ndarray | None = None
 
@@ -26,12 +26,12 @@ class VideoCanvas(QLabel):
         h, w = frame.shape[:2]
         # Convert BGR -> RGB without unnecessary copies.
         rgb = np.ascontiguousarray(frame[:, :, ::-1])
-        img = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
+        img = QImage(rgb.data, w, h, w * 3, QImage.Format_RGB888)
         pix = QPixmap.fromImage(img)
         scaled = pix.scaled(
             self.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
         )
         self.setPixmap(scaled)
 
