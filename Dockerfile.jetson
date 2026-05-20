@@ -18,7 +18,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_INDEX_URL=https://pypi.org/simple \
-    PIP_EXTRA_INDEX_URL=https://pypi.ngc.nvidia.com
+    PIP_EXTRA_INDEX_URL=https://pypi.ngc.nvidia.com \
+    MALLOC_CHECK_=0
 
 # System libraries required by OpenCV and ultralytics
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -39,7 +40,8 @@ WORKDIR /app
 # as requirements.
 COPY requirements-jetson.txt .
 RUN pip3 install --no-cache-dir -r requirements-jetson.txt
-
+RUN pip3 install --no-cache-dir --no-deps git+https://github.com/ultralytics/CLIP.git
+RUN pip3 install --no-cache-dir "ftfy==6.1.1" regex tqdm
 RUN wget -q https://github.com/ultralytics/assets/releases/download/v8.4.0/mobileclip2_b.ts \
     -O /app/mobileclip2_b.ts
 

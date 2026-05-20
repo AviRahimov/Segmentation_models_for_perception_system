@@ -15,6 +15,7 @@ models:
     prompt_mode: production            # production | discovery
     discovery_vocabulary_path: "yoloe_discovery_vocab.example.txt"
     discovery_conf_floor: 0.05
+    imgsz: 512                         # inference image size; 640 = default, 512 saves ~25% on YOLOE
 
   semantic:
     # ── OPTION A: Fine-tuned 3-class (ORFD) ────────────────────────────────
@@ -23,6 +24,7 @@ models:
     name: "segformer-b2"
     weights: "weights/orfd/final_dataset/segformer-b2/best.pth"
     num_classes: 3
+    processor_size: 256                # processor input size; 512 = default, 256 = ~2x faster, 384 = middle ground
 
     # ── OPTION B: SegFormer-B4 fine-tuned (ORFD) ───────────────────────────
     # name: "segformer-b4"
@@ -145,6 +147,7 @@ classes:
 
 # ---------------------------------------------------------------------------
 temporal:
+  semantic_skip_frames: 2   # Run SegFormer every N frames. 1=every frame, 2=halves SegFormer cost
   semantic_ema:
     alpha: 0.35
     reset_on_scene_cut: true
@@ -174,7 +177,7 @@ player:
 # ---------------------------------------------------------------------------
 source:
   type: "video"                   # video | camera | image_dir
-  path: "samples/recording.mp4"
+  path: "samples/desert_video.mp4"
   camera_index: 0
   image_dir_glob: "*.png"
   fps_hint: 30.0

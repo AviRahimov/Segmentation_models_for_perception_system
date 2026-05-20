@@ -102,6 +102,7 @@ def build_instance_model(
         discovery_vocab_path=cfg.discovery_vocabulary_path,
         discovery_conf_floor=cfg.discovery_conf_floor,
         discovery_max_det=cfg.discovery_max_det,
+        imgsz=cfg.imgsz,
     )
 
 
@@ -131,4 +132,6 @@ def build_semantic_model(
         kwargs["num_classes"] = cfg.num_classes
     if "segformer" in name:
         kwargs["name"] = name   # lets the wrapper find the HF base for local .pth files
+        if cfg.processor_size is not None:
+            kwargs["processor_size"] = cfg.processor_size
     return cls(**kwargs)

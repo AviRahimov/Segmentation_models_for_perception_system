@@ -9,7 +9,7 @@ Public sub-packages:
 * ``perception.temporal``— causal smoothing (logit EMA, scene cuts, IoU tracker)
 * ``perception.render``  — overlay primitives + display-mode-aware renderer
 * ``perception.pipeline``— DI container that orchestrates per-frame inference
-* ``perception.ui``      — PyQt6 video player (decoupled from inference)
+* ``perception.ui``      — PyQt5 video player (decoupled from inference)
 * ``perception.datasets``— dataset downloaders (RUGD, ORFD)
 """
 

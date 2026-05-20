@@ -64,6 +64,7 @@ class SegFormerSemanticModel(SemanticModel):
         device: str = "cuda",
         fp16: bool = True,
         num_classes: int | None = None,
+        processor_size: int | None = None,
     ) -> None:
         # Lazy import for environments without transformers (e.g. unit tests).
         from transformers import (  # type: ignore
@@ -82,6 +83,9 @@ class SegFormerSemanticModel(SemanticModel):
         hf_base = _HF_BASES.get(name, _HF_BASES["segformer-b2"])
         processor_source = hf_base if _is_local else weights
         self._processor = SegformerImageProcessor.from_pretrained(processor_source)
+        if processor_size is not None:
+            self._processor.size = {"height": processor_size, "width": processor_size}
+            logger.info("SegFormer processor input size overridden to %dx%d", processor_size, processor_size)
 
         if _is_local:
             ckpt = torch.load(weights, map_location="cpu", weights_only=True)
@@ -214,8 +218,8 @@ class SegFormerSemanticModel(SemanticModel):
         logits = outputs.logits  # (1, C, H/4, W/4)
 
         logits = torch.nn.functional.interpolate(
-            logits, size=(h, w), mode="bilinear", align_corners=False
-        )[0]  # (C, H, W)
+            logits, size=(h // 2, w // 2), mode="bilinear", align_corners=False
+        )[0]  # (C, H//2, W//2)
 
         if self._fine_tuned:
             # Direct mode: softmax over the model's native output classes.

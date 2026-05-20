@@ -408,6 +408,16 @@ def _build_models(raw: dict[str, Any], *, config_file: Path) -> ModelsCfg:
         if discovery_max_det < 1:
             raise ConfigError("models.instance.discovery_max_det must be >= 1 when set")
 
+    imgsz_raw = inst_raw.get("imgsz", 640)
+    try:
+        inst_imgsz = int(imgsz_raw)
+    except (TypeError, ValueError):
+        raise ConfigError(
+            f"models.instance.imgsz must be a positive integer, got {imgsz_raw!r}"
+        ) from None
+    if inst_imgsz < 32:
+        raise ConfigError(f"models.instance.imgsz must be >= 32, got {inst_imgsz}")
+
     if pm == "discovery":
         vp = str(inst_raw.get("discovery_vocabulary_path", "") or "").strip()
         if not vp:
@@ -435,6 +445,7 @@ def _build_models(raw: dict[str, Any], *, config_file: Path) -> ModelsCfg:
         discovery_vocabulary_path=d_path,
         discovery_conf_floor=d_conf,
         discovery_max_det=discovery_max_det,
+        imgsz=inst_imgsz,
     )
     num_classes_raw = sem_raw.get("num_classes", None)
     sem_num_classes: int | None
@@ -453,11 +464,29 @@ def _build_models(raw: dict[str, Any], *, config_file: Path) -> ModelsCfg:
                 f"models.semantic.num_classes must be >= 1, got {sem_num_classes}"
             )
 
+    proc_size_raw = sem_raw.get("processor_size", None)
+    sem_proc_size: int | None
+    if proc_size_raw is None:
+        sem_proc_size = None
+    else:
+        try:
+            sem_proc_size = int(proc_size_raw)
+        except (TypeError, ValueError):
+            raise ConfigError(
+                f"models.semantic.processor_size must be a positive integer or null, "
+                f"got {proc_size_raw!r}"
+            ) from None
+        if sem_proc_size < 32:
+            raise ConfigError(
+                f"models.semantic.processor_size must be >= 32, got {sem_proc_size}"
+            )
+
     sem = SemanticModelCfg(
         name=str(sem_raw.get("name", "segformer-b2")),
         # Empty string => factory resolves the default weights for `name`.
         weights=str(sem_raw.get("weights", "") or ""),
         num_classes=sem_num_classes,
+        processor_size=sem_proc_size,
     )
     if not 0.0 <= inst.confidence_threshold <= 1.0:
         raise ConfigError(
@@ -501,7 +530,21 @@ def _build_temporal(raw: dict[str, Any]) -> TemporalCfg:
             f"temporal.instance_tracker.max_hold_frames must be >= 0, got {trk_cfg.max_hold_frames}"
         )
 
-    return TemporalCfg(semantic_ema=sem_cfg, instance_tracker=trk_cfg)
+    skip_raw = raw.get("semantic_skip_frames", 1)
+    try:
+        sem_skip = int(skip_raw)
+    except (TypeError, ValueError):
+        raise ConfigError(
+            f"temporal.semantic_skip_frames must be a positive integer, got {skip_raw!r}"
+        ) from None
+    if sem_skip < 1:
+        raise ConfigError(f"temporal.semantic_skip_frames must be >= 1, got {sem_skip}")
+
+    return TemporalCfg(
+        semantic_ema=sem_cfg,
+        instance_tracker=trk_cfg,
+        semantic_skip_frames=sem_skip,
+    )
 
 
 def _build_hardware(raw: dict[str, Any]) -> HardwareCfg:

@@ -69,6 +69,7 @@ runs/
 
 # Hugging Face cache override (project-local)
 .hf_cache/
+cache/
 
 # Jupyter
 .ipynb_checkpoints/

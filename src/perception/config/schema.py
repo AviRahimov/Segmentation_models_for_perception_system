@@ -106,6 +106,9 @@ class InstanceModelCfg:
     discovery_vocabulary_path: str = ""
     discovery_conf_floor: float = 0.05
     discovery_max_det: int | None = None
+    #: Ultralytics inference image size (square). Lower = faster at cost of small-object recall.
+    #: 640 is the YOLOE-26L default; 512 saves ~25% with negligible quality loss for large objects.
+    imgsz: int = 640
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,11 @@ class SemanticModelCfg:
     #: skips the LUT and uses the model's output channels directly; semantic
     #: classes in config serve as the ordered label list.
     num_classes: int | None = None
+    #: SegFormer processor input resolution (square, pixels). ``None`` keeps
+    #: the model default (512 for segformer-b2/b4). Set to 256 for ~2× speedup
+    #: at the cost of slightly coarser class boundaries; 384 is a middle ground.
+    #: Change in config.yaml only — no code changes needed to revert.
+    processor_size: int | None = None
 
 
 @dataclass(frozen=True)
@@ -149,6 +157,10 @@ class InstanceTrackerCfg:
 class TemporalCfg:
     semantic_ema: SemanticEMACfg = field(default_factory=SemanticEMACfg)
     instance_tracker: InstanceTrackerCfg = field(default_factory=InstanceTrackerCfg)
+    #: Run SegFormer every N frames; reuse the last EMA-smoothed result for skipped frames.
+    #: 1 = every frame (no skipping). 2 = half cost, imperceptible on stable terrain.
+    #: Scene cuts and seeks always force immediate SegFormer inference regardless of this value.
+    semantic_skip_frames: int = 1
 
 
 @dataclass(frozen=True)

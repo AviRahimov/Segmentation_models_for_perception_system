@@ -7,6 +7,7 @@ without touching this file.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import time
 
@@ -40,6 +41,15 @@ class PerceptionPipeline:
         self._has_semantic = bool(config.semantic_classes)
         self._has_instance = config.runs_yoloe_instance_inference
         self._reset_on_cut = config.temporal.semantic_ema.reset_on_scene_cut
+        # Persistent thread pool for parallel model inference. Only created when
+        # both models are active; otherwise the sequential else-branch is used.
+        self._executor: concurrent.futures.ThreadPoolExecutor | None = (
+            concurrent.futures.ThreadPoolExecutor(max_workers=2)
+            if (self._has_instance and self._has_semantic) else None
+        )
+        self._semantic_skip: int = config.temporal.semantic_skip_frames
+        self._semantic_frame_counter: int = 0
+        self._last_sem_pred: SemanticPrediction | None = None
 
     # ------------------------------------------------------------------ #
     def warmup(self) -> None:
@@ -64,22 +74,58 @@ class PerceptionPipeline:
             logger.debug("Scene cut at frame %d - resetting temporal buffers", frame_idx)
             self._smoother.reset()
             self._tracker.reset()
+            self._semantic_frame_counter = 0
+            self._last_sem_pred = None
 
-        # 2. Instance detection + tracking.
-        detections = []
-        if self._has_instance:
-            raw = self._inst.predict(frame_bgr)
-            detections = self._tracker.update(frame_bgr, raw)
-
-        # 3. Semantic logits + causal EMA.
-        sem_pred: SemanticPrediction | None = None
-        if self._has_semantic:
-            logits = self._sem.predict_logits(frame_bgr)
-            smoothed = self._smoother.update(logits)
-            sem_pred = SemanticPrediction(
-                logits=smoothed,
-                class_names=self._sem.class_names,
+        # 2+3. Instance detection and semantic segmentation.
+        # SegFormer runs every semantic_skip_frames frames; YOLOE runs every frame.
+        run_sem = (
+            self._has_semantic
+            and (
+                self._semantic_skip <= 1
+                or self._last_sem_pred is None
+                or self._semantic_frame_counter % self._semantic_skip == 0
             )
+        )
+        self._semantic_frame_counter += 1
+
+        detections: list = []
+        sem_pred: SemanticPrediction | None = None
+
+        if self._executor is not None and run_sem:
+            def _run_instance() -> list:
+                raw = self._inst.predict(frame_bgr)
+                return self._tracker.update(frame_bgr, raw)
+
+            def _run_semantic() -> SemanticPrediction:
+                logits = self._sem.predict_logits(frame_bgr)
+                smoothed = self._smoother.update(logits)
+                return SemanticPrediction(logits=smoothed, class_names=self._sem.class_names)
+
+            f_inst = self._executor.submit(_run_instance)
+            f_sem  = self._executor.submit(_run_semantic)
+            detections = f_inst.result()
+            self._last_sem_pred = sem_pred = f_sem.result()
+
+        elif self._executor is not None:
+            # SegFormer skipped this frame — run YOLOE directly, reuse last semantic.
+            if self._has_instance:
+                raw = self._inst.predict(frame_bgr)
+                detections = self._tracker.update(frame_bgr, raw)
+            sem_pred = self._last_sem_pred
+
+        else:
+            if self._has_instance:
+                raw = self._inst.predict(frame_bgr)
+                detections = self._tracker.update(frame_bgr, raw)
+            if run_sem:
+                logits = self._sem.predict_logits(frame_bgr)
+                smoothed = self._smoother.update(logits)
+                self._last_sem_pred = sem_pred = SemanticPrediction(
+                    logits=smoothed, class_names=self._sem.class_names
+                )
+            elif self._has_semantic:
+                sem_pred = self._last_sem_pred
 
         dt_ms = (time.perf_counter() - t0) * 1000.0
         return FrameResult(
@@ -97,6 +143,8 @@ class PerceptionPipeline:
         self._smoother.reset()
         self._tracker.reset()
         self._scene_cut.reset()
+        self._semantic_frame_counter = 0
+        self._last_sem_pred = None
 
 
 # --------------------------------------------------------------------------- #

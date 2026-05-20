@@ -48,12 +48,11 @@ def blend_mask(
     sel = mask.astype(bool)
     if not sel.any():
         return img
-    overlay = np.zeros_like(img)
-    overlay[sel] = color
-    out = img.copy()
-    out[sel] = (img[sel].astype(np.float32) * (1.0 - alpha)
-                + overlay[sel].astype(np.float32) * alpha).astype(np.uint8)
-    return out
+    color_arr = np.array(color, dtype=np.float32)
+    img[sel] = (
+        img[sel].astype(np.float32) * (1.0 - alpha) + color_arr * alpha
+    ).astype(np.uint8)
+    return img
 
 
 def draw_legend(

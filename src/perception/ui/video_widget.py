@@ -31,7 +31,7 @@ class VideoCanvas(QLabel):
         scaled = pix.scaled(
             self.size(),
             Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
+            Qt.FastTransformation,
         )
         self.setPixmap(scaled)
 

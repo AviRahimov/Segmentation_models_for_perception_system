@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
+import cv2
 import numpy as np
 
 from ..config.schema import ClassDef, InstancePromptMode, PlayerCfg
@@ -88,6 +89,9 @@ class Renderer:
         if sem.logits.numel() == 0 or len(sem.class_names) == 0:
             return img
         idx = sem.logits.argmax(dim=0).detach().cpu().numpy().astype(np.int32)
+        h, w = img.shape[:2]
+        if idx.shape != (h, w):
+            idx = cv2.resize(idx, (w, h), interpolation=cv2.INTER_NEAREST)
 
         rg = "road_ground"
         road_idx = sem.class_names.index(rg) if rg in sem.class_names else None

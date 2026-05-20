@@ -119,6 +119,7 @@ class YOLOEInstanceModel(InstanceModel):
         discovery_vocab_path: str = "",
         discovery_conf_floor: float = 0.05,
         discovery_max_det: int | None = None,
+        imgsz: int = 640,
     ) -> None:
         # Resolve the checkpoint to a local file (downloading from a
         # mirror under ./weights/ on first use).
@@ -143,6 +144,7 @@ class YOLOEInstanceModel(InstanceModel):
         self._discovery_vocab_path = discovery_vocab_path
         self._discovery_conf_floor = float(discovery_conf_floor)
         self._discovery_max_det = discovery_max_det
+        self._imgsz = int(imgsz)
         self._yoloe_ready: bool = False
 
     # ------------------------------------------------------------------ #
@@ -240,6 +242,7 @@ class YOLOEInstanceModel(InstanceModel):
             "verbose": False,
             "device": self._device,
             "half": self._fp16,
+            "imgsz": self._imgsz,
         }
         if self._discovery_max_det is not None:
             pred_kw["max_det"] = int(self._discovery_max_det)
