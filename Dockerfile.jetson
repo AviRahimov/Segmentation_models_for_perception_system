@@ -40,6 +40,9 @@ WORKDIR /app
 COPY requirements-jetson.txt .
 RUN pip3 install --no-cache-dir -r requirements-jetson.txt
 
+RUN wget -q https://github.com/ultralytics/assets/releases/download/v8.4.0/mobileclip2_b.ts \
+    -O /app/mobileclip2_b.ts
+
 # ── Stage 2: headless (robot / inference-only) ───────────────────────────────
 FROM base AS headless
 
@@ -61,7 +64,7 @@ ENV TRANSFORMERS_CACHE=/cache/huggingface \
     HF_HOME=/cache/huggingface
 
 ENTRYPOINT ["python3"]
-CMD ["scripts/run_headless.py --source samples/off_road_vid4.mp4"]
+CMD ["scripts/run_headless.py"]
 
 # ── Stage 3: gui (interactive player with display) ───────────────────────────
 FROM base AS gui
