@@ -3,7 +3,6 @@
 # DO NOT add them here — that would overwrite the Jetson-tuned aarch64 build.
 
 numpy==1.26.4
-opencv-python==4.10.0.84
 Pillow==11.0.0
 ultralytics==8.4.47
 transformers==4.46.3
@@ -13,3 +12,4 @@ requests==2.32.3
 tqdm==4.67.1
 gdown==5.2.0
 pytest==8.3.4
+git+https://github.com/ultralytics/CLIP.git
