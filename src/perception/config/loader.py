@@ -487,6 +487,7 @@ def _build_models(raw: dict[str, Any], *, config_file: Path) -> ModelsCfg:
         weights=str(sem_raw.get("weights", "") or ""),
         num_classes=sem_num_classes,
         processor_size=sem_proc_size,
+        trt_engine_path=str(sem_raw.get("trt_engine_path", "") or ""),
     )
     if not 0.0 <= inst.confidence_threshold <= 1.0:
         raise ConfigError(
@@ -534,11 +535,21 @@ def _build_temporal(raw: dict[str, Any]) -> TemporalCfg:
 
 
 def _build_hardware(raw: dict[str, Any]) -> HardwareCfg:
+    trt_ws_raw = raw.get("trt_workspace_gb", 4)
+    try:
+        trt_ws = int(trt_ws_raw)
+    except (TypeError, ValueError):
+        raise ConfigError(
+            f"hardware.trt_workspace_gb must be a positive integer, got {trt_ws_raw!r}"
+        ) from None
+    if trt_ws < 1:
+        raise ConfigError(f"hardware.trt_workspace_gb must be >= 1, got {trt_ws}")
     return HardwareCfg(
         device=str(raw.get("device", "cuda")),
         fp16=bool(raw.get("fp16", True)),
         use_tensorrt=bool(raw.get("use_tensorrt", False)),
         text_embed_cache=bool(raw.get("text_embed_cache", True)),
+        trt_workspace_gb=trt_ws,
     )
 
 

@@ -25,6 +25,7 @@ models:
     weights: "weights/orfd/final_dataset/segformer-b2/best.pth"
     num_classes: 3
     processor_size: 256                # processor input size; 512 = default, 256 = ~2x faster, 384 = middle ground
+    trt_engine_path: ""                # fill after: python scripts/export_trt.py --model segformer
 
     # ── OPTION B: SegFormer-B4 fine-tuned (ORFD) ───────────────────────────
     # name: "segformer-b4"
@@ -163,8 +164,9 @@ temporal:
 hardware:
   device: "cuda"
   fp16: true
-  use_tensorrt: false
+  use_tensorrt: false        # set to true after running scripts/export_trt.py
   text_embed_cache: true
+  trt_workspace_gb: 4        # GB workspace for TRT engine build (export time only)
 
 player:
   mask_alpha: 0.45

@@ -129,6 +129,12 @@ class SemanticModelCfg:
     #: at the cost of slightly coarser class boundaries; 384 is a middle ground.
     #: Change in config.yaml only — no code changes needed to revert.
     processor_size: int | None = None
+    #: Path to a pre-built TensorRT ``.engine`` file for the semantic model.
+    #: Required when ``hardware.use_tensorrt: true``.
+    #: Build with: ``python scripts/export_trt.py --model segformer``
+    #: Engine is specific to the GPU, TRT version, and processor_size — rebuild
+    #: after any JetPack upgrade or processor_size change.
+    trt_engine_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -165,6 +171,9 @@ class HardwareCfg:
     fp16: bool = True
     use_tensorrt: bool = False
     text_embed_cache: bool = True
+    #: GPU memory (GB) reserved for the TRT engine build workspace.
+    #: Only used by scripts/export_trt.py; ignored at inference time.
+    trt_workspace_gb: int = 4
 
 
 @dataclass(frozen=True)

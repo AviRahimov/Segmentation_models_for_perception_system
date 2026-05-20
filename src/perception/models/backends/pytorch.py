@@ -15,7 +15,7 @@ class PyTorchBackend(InferenceBackend):
     def is_available(self) -> bool:
         return True
 
-    def prepare(self, model: Any, *, device: str, fp16: bool) -> Any:
+    def prepare(self, model: Any, *, device: str, fp16: bool, engine_path: str = "") -> Any:
         if model is None:
             return None
         if hasattr(model, "to"):

@@ -134,4 +134,6 @@ def build_semantic_model(
         kwargs["name"] = name   # lets the wrapper find the HF base for local .pth files
         if cfg.processor_size is not None:
             kwargs["processor_size"] = cfg.processor_size
+        if cfg.trt_engine_path:
+            kwargs["trt_engine_path"] = cfg.trt_engine_path
     return cls(**kwargs)

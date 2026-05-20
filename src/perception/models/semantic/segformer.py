@@ -65,6 +65,7 @@ class SegFormerSemanticModel(SemanticModel):
         fp16: bool = True,
         num_classes: int | None = None,
         processor_size: int | None = None,
+        trt_engine_path: str = "",
     ) -> None:
         # Lazy import for environments without transformers (e.g. unit tests).
         from transformers import (  # type: ignore
@@ -123,9 +124,16 @@ class SegFormerSemanticModel(SemanticModel):
         # A freshly loaded fine-tuned checkpoint knows its own num_labels.
         loaded_num_labels = int(getattr(self._model.config, "num_labels", 150))
         self._fine_tuned: bool = loaded_num_labels != 150
+        # Cache before backend.prepare() may replace self._model with a TRT wrapper.
+        self._num_labels: int = loaded_num_labels
 
         if backend is not None:
-            self._model = backend.prepare(self._model, device=self._device, fp16=self._fp16)
+            self._model = backend.prepare(
+                self._model,
+                device=self._device,
+                fp16=self._fp16,
+                engine_path=trt_engine_path,
+            )
         else:
             self._model = self._model.to(self._device)
             if self._fp16:
@@ -146,7 +154,10 @@ class SegFormerSemanticModel(SemanticModel):
 
         if self._fine_tuned:
             # Fine-tuned mode: model outputs directly in user-class space, no LUT needed.
-            n_model = int(getattr(self._model.config, "num_labels", len(sem)))
+            n_model = int(
+                getattr(getattr(self._model, "config", None), "num_labels",
+                        getattr(self, "_num_labels", len(sem)))
+            )
             if len(sem) < n_model:
                 raise ValueError(
                     f"SegFormerSemanticModel (fine-tuned): config has {len(sem)} "

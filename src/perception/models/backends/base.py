@@ -18,5 +18,9 @@ class InferenceBackend(ABC):
         """Returns ``True`` if this backend can be used in the current env."""
 
     @abstractmethod
-    def prepare(self, model: Any, *, device: str, fp16: bool) -> Any:
-        """Move/compile ``model`` for execution. May return a wrapped object."""
+    def prepare(self, model: Any, *, device: str, fp16: bool, engine_path: str = "") -> Any:
+        """Move/compile ``model`` for execution. May return a wrapped object.
+
+        ``engine_path`` is consumed by :class:`TensorRTBackend` (path to a
+        pre-built ``.engine`` file) and ignored by all other backends.
+        """

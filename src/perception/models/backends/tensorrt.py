@@ -1,94 +1,100 @@
-"""TensorRT backend - structured stub.
+"""TensorRT FP16 inference backend for SegFormer.
 
-This module intentionally does *not* depend on ``tensorrt`` at import time
-so the rest of the project remains usable on developer laptops without the
-TensorRT runtime. To enable TensorRT acceleration on a production target
-(e.g. Jetson AGX Orin 64GB), a future engineer must implement the four
-steps documented below; nothing else in the codebase needs to change.
+At inference time this module only *loads* a pre-built engine from disk and
+wraps it behind the same interface that ``SegFormerSemanticModel`` expects.
+No compilation happens at startup; the one-time build step is handled by
+``scripts/export_trt.py``.
 
-Integration steps
------------------
+YOLOE uses TRT through Ultralytics' own engine loader — just point
+``models.instance.weights`` to a ``.engine`` file and it works automatically.
+This backend is therefore only used for the semantic model (SegFormer / DDRNet).
 
-1. **Export the underlying PyTorch model to ONNX.**
-
-   For Hugging Face SegFormer::
-
-       import torch
-       from transformers import SegformerForSemanticSegmentation
-
-       model = SegformerForSemanticSegmentation.from_pretrained(
-           "nvidia/segformer-b2-finetuned-ade-512-512"
-       ).eval().cuda().half()
-       sample = torch.randn(1, 3, 512, 512, device="cuda", dtype=torch.half)
-       torch.onnx.export(
-           model, sample, "segformer_b2.onnx",
-           input_names=["pixel_values"],
-           output_names=["logits"],
-           dynamic_axes={
-               "pixel_values": {0: "B", 2: "H", 3: "W"},
-               "logits":       {0: "B", 2: "h", 3: "w"},
-           },
-           opset_version=17,
-       )
-
-   For Ultralytics YOLOE the canonical TensorRT path does NOT go through
-   this backend's ``prepare`` hook (Ultralytics has its own engine
-   loader). Instead, export and load a ``.engine`` file directly::
-
-       from ultralytics import YOLOE
-       model = YOLOE("yoloe-26l-seg.pt")
-       model.export(format="engine", imgsz=640, half=True, dynamic=True,
-                    workspace=4)
-       # Then in config.yaml set:
-       #   models.instance.weights: "weights/yoloe-26l-seg.engine"
-       # and the YOLOEInstanceModel will pick it up unchanged.
-
-2. **Build a TensorRT engine from the ONNX file.** Implement
-   :meth:`TensorRTBackend._build_engine`::
-
-       import tensorrt as trt
-       logger = trt.Logger(trt.Logger.WARNING)
-       builder = trt.Builder(logger)
-       network = builder.create_network(
-           1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
-       )
-       parser = trt.OnnxParser(network, logger)
-       with open(onnx_path, "rb") as f:
-           parser.parse(f.read())
-       config = builder.create_builder_config()
-       config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 30)
-       config.set_flag(trt.BuilderFlag.FP16)
-       engine_bytes = builder.build_serialized_network(network, config)
-       Path(engine_path).write_bytes(engine_bytes)
-
-3. **Load the engine and allocate device buffers.** Implement
-   :meth:`TensorRTBackend._load_engine`. Allocate cuda buffers for every
-   binding (``engine.num_bindings`` x ``engine.get_binding_shape``). Cache
-   ``context`` and the binding tensor list on ``self``.
-
-4. **Replace the underlying model's forward.** In :meth:`prepare`, monkey-
-   patch ``model.forward`` (PyTorch) or ``model.predict`` (Ultralytics) with
-   a thin function that:
-       a. copies ``pixel_values`` into the device input buffer,
-       b. ``context.execute_async_v3(stream)`` then synchronizes,
-       c. wraps the device output buffer as a ``torch.Tensor`` of the same
-          shape and dtype the original PyTorch model produced.
-
-   Because the *shape and dtype* match, no downstream code (post-processing,
-   smoothing, rendering) needs to be aware of the swap.
-
-The :class:`PerceptionPipeline` selects PyTorch by default; users opt into
-TensorRT by setting ``hardware.use_tensorrt: true`` in ``config.yaml``.
+Requirements
+------------
+* JetPack 6.x ships TensorRT 8.6 — the ``set_tensor_address`` /
+  ``execute_async_v3`` API used here requires TRT >= 8.5.
+* The engine file must be built on the same Jetson (GPU + driver + TRT version
+  are baked into the serialised engine). Re-run ``export_trt.py`` after any
+  JetPack upgrade.
 """
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
+
+import torch
 
 from .base import InferenceBackend
 
 logger = logging.getLogger(__name__)
 
+
+# --------------------------------------------------------------------------- #
+# Helper types that mimic the HuggingFace model interface                      #
+# --------------------------------------------------------------------------- #
+
+class _TRTModelConfig:
+    """Minimal config object so ``warmup()`` can read ``model.config.num_labels``."""
+    def __init__(self, num_labels: int) -> None:
+        self.num_labels = num_labels
+
+
+class _TRTOutput:
+    """Mimics HF ``SemanticSegmenterOutput`` so ``predict_logits()`` is unchanged."""
+    __slots__ = ("logits",)
+
+    def __init__(self, logits: torch.Tensor) -> None:
+        self.logits = logits
+
+
+class _TRTSegFormerWrapper:
+    """Wraps a TRT execution context behind the HuggingFace model call interface.
+
+    After ``TensorRTBackend.prepare()`` stores an instance of this class as
+    ``SegFormerSemanticModel._model``, the rest of the model wrapper (warmup,
+    predict_logits, LUT merge) runs completely unchanged.
+    """
+
+    def __init__(
+        self,
+        engine: Any,
+        num_labels: int,
+        device: str,
+        fp16: bool,
+    ) -> None:
+        self.config = _TRTModelConfig(num_labels=num_labels)
+        self._context = engine.create_execution_context()
+        self._device = device
+        self._dtype = torch.float16 if fp16 else torch.float32
+
+        # Pre-allocate a persistent output buffer using the engine's static shape.
+        # TRT static engines report the exact output shape from get_tensor_shape.
+        out_shape = tuple(self._context.get_tensor_shape("logits"))
+        self._out_buf: torch.Tensor = torch.empty(
+            out_shape, dtype=self._dtype, device=device
+        )
+
+    # ---------------------------------------------------------------------- #
+    def __call__(self, *, pixel_values: torch.Tensor) -> _TRTOutput:
+        """Run one TRT inference pass.
+
+        ``pixel_values`` must already be on the correct CUDA device and in the
+        dtype the engine was compiled for (FP16 or FP32).  We hand its raw
+        CUDA pointer directly to TRT — no copies.
+        """
+        stream = torch.cuda.current_stream().cuda_stream
+        self._context.set_tensor_address("pixel_values", pixel_values.data_ptr())
+        self._context.set_tensor_address("logits", self._out_buf.data_ptr())
+        self._context.execute_async_v3(stream)
+        torch.cuda.current_stream().synchronize()
+        # Clone so the caller has exclusive ownership of the tensor.
+        return _TRTOutput(self._out_buf.clone())
+
+
+# --------------------------------------------------------------------------- #
+# Backend                                                                       #
+# --------------------------------------------------------------------------- #
 
 class TensorRTBackend(InferenceBackend):
     name = "tensorrt"
@@ -96,7 +102,7 @@ class TensorRTBackend(InferenceBackend):
     def __init__(self) -> None:
         self._trt_module = None
         try:
-            import tensorrt as trt  # type: ignore  # noqa: F401
+            import tensorrt as trt  # type: ignore
             self._trt_module = trt
         except Exception as e:  # noqa: BLE001
             logger.debug("tensorrt unavailable: %s", e)
@@ -104,27 +110,52 @@ class TensorRTBackend(InferenceBackend):
     def is_available(self) -> bool:
         return self._trt_module is not None
 
-    # --- step 2 hook ------------------------------------------------------ #
-    def _build_engine(self, onnx_path: str, engine_path: str) -> None:
-        raise NotImplementedError(
-            "TensorRTBackend._build_engine is a stub. "
-            "Follow step 2 in the module docstring "
-            "(see src/perception/models/backends/tensorrt.py)."
+    def prepare(
+        self,
+        model: Any,
+        *,
+        device: str,
+        fp16: bool,
+        engine_path: str = "",
+    ) -> Any:
+        """Load a pre-built TRT engine and return a wrapper that mimics the HF model.
+
+        Parameters
+        ----------
+        model:
+            The PyTorch model that would otherwise be used.  Its
+            ``config.num_labels`` is read before it is discarded, so the
+            downstream warmup() call can still validate the class count.
+        engine_path:
+            Path to the ``.engine`` file produced by ``scripts/export_trt.py``.
+            Raises clearly if absent or empty.
+        """
+        if not engine_path:
+            raise RuntimeError(
+                "TensorRT backend requires models.semantic.trt_engine_path in "
+                "config.yaml.  Run  python scripts/export_trt.py --config "
+                "config/config.yaml  first, then set the printed engine path."
+            )
+        ep = Path(engine_path)
+        if not ep.exists():
+            raise FileNotFoundError(
+                f"TRT engine not found: {engine_path}\n"
+                "Run: python scripts/export_trt.py --config config/config.yaml "
+                "--model segformer"
+            )
+
+        # Capture num_labels from the PyTorch model before it is replaced.
+        num_labels = int(
+            getattr(getattr(model, "config", None), "num_labels", 3)
         )
 
-    # --- step 3 hook ------------------------------------------------------ #
-    def _load_engine(self, engine_path: str) -> Any:
-        raise NotImplementedError(
-            "TensorRTBackend._load_engine is a stub. "
-            "Follow step 3 in the module docstring."
+        trt = self._trt_module
+        runtime = trt.Runtime(trt.Logger(trt.Logger.WARNING))
+        engine = runtime.deserialize_cuda_engine(ep.read_bytes())
+        logger.info(
+            "TensorRT engine loaded: %s  (%d output classes, device=%s, fp16=%s)",
+            engine_path, num_labels, device, fp16,
         )
-
-    # --- main entry, called by the model wrappers ------------------------- #
-    def prepare(self, model: Any, *, device: str, fp16: bool) -> Any:
-        raise NotImplementedError(
-            "TensorRTBackend.prepare is a structured stub. To enable TensorRT, "
-            "implement the four steps described in "
-            "src/perception/models/backends/tensorrt.py — namely _build_engine, "
-            "_load_engine, and the forward-replacement logic. The rest of the "
-            "perception pipeline does not need to change."
+        return _TRTSegFormerWrapper(
+            engine, num_labels=num_labels, device=device, fp16=fp16
         )
