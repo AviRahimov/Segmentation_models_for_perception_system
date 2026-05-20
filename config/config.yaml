@@ -147,7 +147,6 @@ classes:
 
 # ---------------------------------------------------------------------------
 temporal:
-  semantic_skip_frames: 2   # Run SegFormer every N frames. 1=every frame, 2=halves SegFormer cost
   semantic_ema:
     alpha: 0.35
     reset_on_scene_cut: true

@@ -157,10 +157,6 @@ class InstanceTrackerCfg:
 class TemporalCfg:
     semantic_ema: SemanticEMACfg = field(default_factory=SemanticEMACfg)
     instance_tracker: InstanceTrackerCfg = field(default_factory=InstanceTrackerCfg)
-    #: Run SegFormer every N frames; reuse the last EMA-smoothed result for skipped frames.
-    #: 1 = every frame (no skipping). 2 = half cost, imperceptible on stable terrain.
-    #: Scene cuts and seeks always force immediate SegFormer inference regardless of this value.
-    semantic_skip_frames: int = 1
 
 
 @dataclass(frozen=True)

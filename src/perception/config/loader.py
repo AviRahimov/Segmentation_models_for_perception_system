@@ -530,21 +530,7 @@ def _build_temporal(raw: dict[str, Any]) -> TemporalCfg:
             f"temporal.instance_tracker.max_hold_frames must be >= 0, got {trk_cfg.max_hold_frames}"
         )
 
-    skip_raw = raw.get("semantic_skip_frames", 1)
-    try:
-        sem_skip = int(skip_raw)
-    except (TypeError, ValueError):
-        raise ConfigError(
-            f"temporal.semantic_skip_frames must be a positive integer, got {skip_raw!r}"
-        ) from None
-    if sem_skip < 1:
-        raise ConfigError(f"temporal.semantic_skip_frames must be >= 1, got {sem_skip}")
-
-    return TemporalCfg(
-        semantic_ema=sem_cfg,
-        instance_tracker=trk_cfg,
-        semantic_skip_frames=sem_skip,
-    )
+    return TemporalCfg(semantic_ema=sem_cfg, instance_tracker=trk_cfg)
 
 
 def _build_hardware(raw: dict[str, Any]) -> HardwareCfg:

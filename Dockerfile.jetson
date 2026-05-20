@@ -40,8 +40,7 @@ WORKDIR /app
 # as requirements.
 COPY requirements-jetson.txt .
 RUN pip3 install --no-cache-dir -r requirements-jetson.txt
-RUN pip3 install --no-cache-dir --no-deps git+https://github.com/ultralytics/CLIP.git
-RUN pip3 install --no-cache-dir "ftfy==6.1.1" regex tqdm
+RUN pip3 install --no-cache-dir git+https://github.com/ultralytics/CLIP.git
 RUN wget -q https://github.com/ultralytics/assets/releases/download/v8.4.0/mobileclip2_b.ts \
     -O /app/mobileclip2_b.ts
 
