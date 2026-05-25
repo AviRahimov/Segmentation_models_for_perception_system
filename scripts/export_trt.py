@@ -187,7 +187,7 @@ def export_segformer(cfg) -> Path:
     if engine_bytes is None:
         raise RuntimeError("TRT engine build failed — check TRT logs above.")
     engine_path.write_bytes(engine_bytes)
-    logger.info("TRT engine saved: %s  (%d KB)", engine_path, len(engine_bytes) // 1024)
+    logger.info("TRT engine saved: %s  (%d KB)", engine_path, engine_bytes.nbytes // 1024)
 
     return engine_path
 

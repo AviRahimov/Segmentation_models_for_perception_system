@@ -10,7 +10,7 @@
 models:
   instance:
     name: "yoloe26l"
-    weights: "yoloe-26l-seg.pt"
+    weights: "weights/yoloe-26l-seg.engine"
     confidence_threshold: 0.35
     prompt_mode: production            # production | discovery
     discovery_vocabulary_path: "yoloe_discovery_vocab.example.txt"
@@ -25,7 +25,7 @@ models:
     weights: "weights/orfd/final_dataset/segformer-b2/best.pth"
     num_classes: 3
     processor_size: 256                # processor input size; 512 = default, 256 = ~2x faster, 384 = middle ground
-    trt_engine_path: ""                # fill after: python scripts/export_trt.py --model segformer
+    trt_engine_path: "weights/orfd/final_dataset/segformer-b2/best-256x256.engine"
 
     # ── OPTION B: SegFormer-B4 fine-tuned (ORFD) ───────────────────────────
     # name: "segformer-b4"
@@ -164,7 +164,7 @@ temporal:
 hardware:
   device: "cuda"
   fp16: true
-  use_tensorrt: false        # set to true after running scripts/export_trt.py
+  use_tensorrt: true
   text_embed_cache: true
   trt_workspace_gb: 4        # GB workspace for TRT engine build (export time only)
 
