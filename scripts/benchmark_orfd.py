@@ -94,31 +94,59 @@ def _default_model_defs() -> list[dict[str, Any]]:
             "checkpoint": None,
         },
         {
-            "key": "segformer-b2-orfd",
-            "label": "SegFormer-B2\n(fine-tuned)",
-            "type": "segformer-finetuned",
-            "hf_id": "nvidia/segformer-b2-finetuned-ade-512-512",
-            "checkpoint": str(_ROOT / "weights" / "orfd" / "segformer-b2" / "best.pth"),
-        },
-        {
-            "key": "segformer-b4-orfd",
-            "label": "SegFormer-B4\n(fine-tuned)",
-            "type": "segformer-finetuned",
-            "hf_id": "nvidia/segformer-b4-finetuned-ade-512-512",
-            "checkpoint": str(_ROOT / "weights" / "orfd" / "segformer-b4" / "best.pth"),
-        },
-        {
-            "key": "ddrnet-orfd",
-            "label": "DDRNet-39\n(fine-tuned)",
-            "type": "ddrnet-finetuned",
-            "checkpoint": str(_ROOT / "weights" / "orfd" / "ddrnet" / "best.pth"),
-        },
-        {
             "key": "segformer-b2-final",
-            "label": "SegFormer-B2\n(final dataset)",
+            "label": "SegFormer-B2\n(Final_Dataset)",
             "type": "segformer-finetuned",
             "hf_id": "nvidia/segformer-b2-finetuned-ade-512-512",
             "checkpoint": str(_ROOT / "weights" / "orfd" / "final_dataset" / "segformer-b2" / "best.pth"),
+        },
+        {
+            "key": "segformer-b2-frozen",
+            "label": "SegFormer-B2\n(frozen backbone)",
+            "type": "segformer-finetuned",
+            "hf_id": "nvidia/segformer-b2-finetuned-ade-512-512",
+            "checkpoint": str(_ROOT / "weights" / "orfd" / "frozen_backbone" / "segformer-b2" / "best.pth"),
+        },
+        {
+            "key": "segformer-b0-frozen",
+            "label": "SegFormer-B0\n(frozen backbone)",
+            "type": "segformer-finetuned",
+            "hf_id": "nvidia/segformer-b0-finetuned-ade-512-512",
+            "checkpoint": str(_ROOT / "weights" / "orfd" / "frozen_backbone" / "segformer-b0" / "best.pth"),
+        },
+        {
+            "key": "segformer-b1-frozen",
+            "label": "SegFormer-B1\n(frozen backbone)",
+            "type": "segformer-finetuned",
+            "hf_id": "nvidia/segformer-b1-finetuned-ade-512-512",
+            "checkpoint": str(_ROOT / "weights" / "orfd" / "frozen_backbone" / "segformer-b1" / "best.pth"),
+        },
+        {
+            "key": "segformer-b2-lora",
+            "label": "SegFormer-B2\n(LoRA)",
+            "type": "segformer-finetuned",
+            "hf_id": "nvidia/segformer-b2-finetuned-ade-512-512",
+            "checkpoint": str(_ROOT / "weights" / "orfd" / "lora" / "segformer-b2" / "best.pth"),
+        },
+        {
+            "key": "segformer-b2-frozen-lora",
+            "label": "SegFormer-B2\n(frozen backbone + LoRA)",
+            "type": "segformer-finetuned",
+            "hf_id": "nvidia/segformer-b2-finetuned-ade-512-512",
+            "checkpoint": str(_ROOT / "weights" / "orfd" / "frozen_lora" / "segformer-b2" / "best.pth"),
+        },
+        {
+            "key": "segformer-b4-final",
+            "label": "SegFormer-B4\n(Final_Dataset)",
+            "type": "segformer-finetuned",
+            "hf_id": "nvidia/segformer-b4-finetuned-ade-512-512",
+            "checkpoint": str(_ROOT / "weights" / "orfd" / "final_dataset" / "segformer-b4" / "best.pth"),
+        },
+        {
+            "key": "auriganet-final",
+            "label": "AurigaNet\n(ORFD fine-tuned)",
+            "type": "auriganet-finetuned",
+            "checkpoint": str(_ROOT / "weights" / "orfd" / "auriganet" / "best.pth"),
         },
     ]
     return defs
@@ -207,48 +235,36 @@ def load_segformer_finetuned(hf_id: str, checkpoint: str, device: str, fp16: boo
     return predict, params, size_mb
 
 
-def load_ddrnet_finetuned(checkpoint: str, device: str, fp16: bool):
-    """Load fine-tuned DDRNet from a training checkpoint (2- or 3-class)."""
-    from perception.models.semantic._vendored.ddrnet39_goose import (
-        SegmentHead, ddrnet_39_goose,
-    )
+def load_auriganet_finetuned(checkpoint: str, device: str, fp16: bool):
+    """Load fine-tuned AurigaNet from a training checkpoint."""
+    from perception.models.semantic._vendored.auriganet import AurigaNetArch
+
+    _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    _STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
     ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
-    state_dict = ckpt["net"] if isinstance(ckpt, dict) and "net" in ckpt else ckpt
-
-    # Auto-detect output classes from the final layer weight shape.
-    final_keys = sorted(
-        k for k in state_dict if k.startswith("final_layer.") and k.endswith(".weight")
-    )
-    n_classes = state_dict[final_keys[-1]].shape[0]
-
-    model = ddrnet_39_goose(num_classes=n_classes, use_aux_heads=False)
-    model.load_state_dict(state_dict, strict=True)
+    state_dict = ckpt.get("net", ckpt) if isinstance(ckpt, dict) else ckpt
+    model = AurigaNetArch(num_seg_classes=3, with_detection=False)
+    model.load_state_dict(state_dict, strict=False)
     model.eval().to(device)
     if fp16:
         model = model.half()
-
-    _MEAN = torch.tensor([0.485, 0.456, 0.406], device=device).view(1, 3, 1, 1)
-    _STD  = torch.tensor([0.229, 0.224, 0.225], device=device).view(1, 3, 1, 1)
 
     @torch.no_grad()
     def predict(frame_bgr: np.ndarray) -> np.ndarray:
         h, w = frame_bgr.shape[:2]
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        x = torch.from_numpy(rgb).permute(2, 0, 1).unsqueeze(0).float().to(device) / 255.0
+        resized = cv2.resize(rgb, (640, 640), interpolation=cv2.INTER_LINEAR)
+        x = resized.astype(np.float32) / 255.0
         x = (x - _MEAN) / _STD
+        x = torch.from_numpy(x.transpose(2, 0, 1)).unsqueeze(0).to(device)
         if fp16:
             x = x.half()
-        # Pad to multiple of 8 (DDRNet stride requirement).
-        _, _, h_pad, w_pad = x.shape
-        pad_h = (8 - h_pad % 8) % 8
-        pad_w = (8 - w_pad % 8) % 8
-        if pad_h or pad_w:
-            x = F.pad(x, (0, pad_w, 0, pad_h), mode="reflect")
-        out = model(x)  # (1, n_classes, H', W')
-        out = F.interpolate(out, size=(h, w), mode="bilinear", align_corners=False)[0]
-        # Class 1 = traversable; sky (class 2) maps to 0 automatically.
-        return (out.argmax(0) == 1).byte().cpu().numpy()
+        seg_logits, _, _ = model(x)  # (1, 3, 160, 160)
+        seg_logits = F.interpolate(
+            seg_logits.float(), size=(h, w), mode="bilinear", align_corners=False
+        )[0]
+        return (seg_logits.argmax(0) == 1).byte().cpu().numpy()
 
     params = sum(p.numel() for p in model.parameters()) / 1e6
     size_mb = Path(checkpoint).stat().st_size / 1e6
@@ -530,7 +546,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Benchmark models on ORFD")
     p.add_argument("--models", nargs="*", default=None,
                    help="Model keys to evaluate (default: all available)")
-    p.add_argument("--data",   default=str(_ROOT / "datasets" / "orfd"),
+    p.add_argument("--data",   default=str(_ROOT / "datasets" / "Final_Dataset"),
                    help="Path to ORFD root")
     p.add_argument("--split",  default="validation",
                    choices=["validation", "testing"])
@@ -585,8 +601,8 @@ def main() -> None:
             pfn, params, size = load_segformer_baseline(hf_id, device, fp16)
         elif mtype == "segformer-finetuned":
             pfn, params, size = load_segformer_finetuned(hf_id, ckpt, device, fp16)
-        elif mtype == "ddrnet-finetuned":
-            pfn, params, size = load_ddrnet_finetuned(ckpt, device, fp16)
+        elif mtype == "auriganet-finetuned":
+            pfn, params, size = load_auriganet_finetuned(ckpt, device, fp16)
         else:
             logger.warning("Unknown model type %s, skipping.", mtype)
             continue

@@ -12,8 +12,7 @@ from .backends.base import InferenceBackend
 from .instance.base import InstanceModel
 from .instance.yoloe import YOLOEInstanceModel
 from .semantic.base import SemanticModel
-from .semantic.ddrnet import DDRNetSemanticModel
-from .semantic.ppliteseg import PPLiteSegSemanticModel
+from .semantic.auriganet import AurigaNetSemanticModel
 from .semantic.segformer import SegFormerSemanticModel
 
 
@@ -24,56 +23,31 @@ INSTANCE_REGISTRY: dict[str, Type[InstanceModel]] = {
 }
 
 SEMANTIC_REGISTRY: dict[str, Type[SemanticModel]] = {
-    # SegFormer-B2 (ADE20K, 150 ch).
+    "segformer-b0": SegFormerSemanticModel,
+    "segformer_b0": SegFormerSemanticModel,
+    "segformer-b1": SegFormerSemanticModel,
+    "segformer_b1": SegFormerSemanticModel,
     "segformer-b2": SegFormerSemanticModel,
     "segformer_b2": SegFormerSemanticModel,
     "segformer": SegFormerSemanticModel,
-    # SegFormer-B4 (ADE20K, 150 ch). Same wrapper, different weights.
     "segformer-b4": SegFormerSemanticModel,
     "segformer_b4": SegFormerSemanticModel,
-    # DDRNet-39 with GOOSE-12 head, super_gradients-flavour layer naming.
-    # See ``perception.models.semantic._vendored.ddrnet39_goose`` for why
-    # we vendor super_gradients' DDRNet variant rather than the more
-    # commonly-published chenjun2hao DDRNet-23-slim port.
-    "ddrnet": DDRNetSemanticModel,
-    "ddrnet-39": DDRNetSemanticModel,
-    "ddrnet39": DDRNetSemanticModel,
-    # PP-LiteSeg-B2 with GOOSE-12 head -- skeleton kept on disk for a
-    # future round; predict_logits() raises NotImplementedError. See
-    # ``perception.models.semantic.ppliteseg`` for status.
-    "ppliteseg": PPLiteSegSemanticModel,
-    "pp-liteseg": PPLiteSegSemanticModel,
-    "ppliteseg-b2": PPLiteSegSemanticModel,
-    "pp-liteseg-b2": PPLiteSegSemanticModel,
+    "auriganet": AurigaNetSemanticModel,
 }
 
-#: Per-key default weights resolution. Falls back to ``cfg.weights`` when
-#: the user explicitly sets it in YAML. Centralised here so the comparison
-#: harness can ask "what would build_semantic_model use for this key?"
-#: without instantiating the model.
-#:
-#: SegFormer values are HuggingFace Hub repo IDs (the wrapper hands them
-#: to ``transformers.SegformerForSemanticSegmentation.from_pretrained``).
-#: DDRNet / PP-LiteSeg values are **on-disk paths** under ``weights/``;
-#: the wrappers ``torch.load`` them directly. The download script
-#: ``scripts/download_datasets.py`` populates these paths from the
-#: ``goose-dataset.de`` upstream URL.
+#: Per-key default weights — HuggingFace Hub repo IDs or local paths.
+#: Override via ``models.semantic.weights`` in config.yaml.
 SEMANTIC_DEFAULT_WEIGHTS: dict[str, str] = {
-    "segformer-b2":     "nvidia/segformer-b2-finetuned-ade-512-512",
-    "segformer_b2":     "nvidia/segformer-b2-finetuned-ade-512-512",
-    "segformer":        "nvidia/segformer-b2-finetuned-ade-512-512",
-    "segformer-b4":     "nvidia/segformer-b4-finetuned-ade-512-512",
-    "segformer_b4":     "nvidia/segformer-b4-finetuned-ade-512-512",
-    "ddrnet":           "weights/ddrnet_category_512.pth",
-    "ddrnet-39":        "weights/ddrnet_category_512.pth",
-    "ddrnet39":         "weights/ddrnet_category_512.pth",
-    # PP-LiteSeg checkpoint intentionally absent from the disk in this
-    # round (parent agent dropped it from comparison). The skeleton
-    # wrapper still raises NotImplementedError if anyone tries to use it.
-    "ppliteseg":        "weights/ppliteseg_category_512.pth",
-    "pp-liteseg":       "weights/ppliteseg_category_512.pth",
-    "ppliteseg-b2":     "weights/ppliteseg_category_512.pth",
-    "pp-liteseg-b2":    "weights/ppliteseg_category_512.pth",
+    "segformer-b0": "nvidia/segformer-b0-finetuned-ade-512-512",
+    "segformer_b0": "nvidia/segformer-b0-finetuned-ade-512-512",
+    "segformer-b1": "nvidia/segformer-b1-finetuned-ade-512-512",
+    "segformer_b1": "nvidia/segformer-b1-finetuned-ade-512-512",
+    "segformer-b2": "nvidia/segformer-b2-finetuned-ade-512-512",
+    "segformer_b2": "nvidia/segformer-b2-finetuned-ade-512-512",
+    "segformer":    "nvidia/segformer-b2-finetuned-ade-512-512",
+    "segformer-b4": "nvidia/segformer-b4-finetuned-ade-512-512",
+    "segformer_b4": "nvidia/segformer-b4-finetuned-ade-512-512",
+    "auriganet":    "",  # no pretrained BDD100K weights published; random init until fine-tuned
 }
 
 

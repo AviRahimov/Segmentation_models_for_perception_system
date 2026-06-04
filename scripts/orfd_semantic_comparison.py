@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""ORFD freespace comparison: SegFormer-B2 / B4 / DDRNet vs ORFD traversable GT.
+"""ORFD freespace comparison: SegFormer-B2 / B4 vs ORFD traversable GT.
 
 Pairs ``training/image_data/<id>.png`` with ``training/gt_image/<id>_fillcolor.png``.
 By default (omit ``--legacy-multiclass``) uses **fillcolor encoding** measured on
 the upstream ORFD release: **bright / 255 = traversable path**, **0 = blocked**,
-**128 = sky band omitted from IoU** (so DDRNet/SegFormer sky false positives
+**128 = sky band omitted from IoU** (so SegFormer sky false positives
 outside the drivable mask do not inflate scores). Tune ``orfd_trav_gray`` under
 ``orfd_semantic_comparison`` in ``config/config.yaml`` if your mirror swaps encodings.
 
@@ -540,7 +540,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     p.add_argument(
         "--training-root",
-        default="datasets/orfd/training",
+        default="datasets/Final_Dataset/training",
         help="ORFD folder containing image_data/ and gt_image/",
     )
     p.add_argument("--config", default="config/config.yaml")
@@ -550,7 +550,7 @@ def main() -> int:
     p.add_argument(
         "--models",
         nargs="+",
-        default=("segformer-b2", "segformer-b4", "ddrnet"),
+        default=("segformer-b2", "segformer-b4", "auriganet"),
         help="Semantic model keys.",
     )
     p.add_argument(
@@ -810,19 +810,9 @@ def main() -> int:
         use_yaml = lk == default_sem_name and bool(yaml_weights_override)
         return yaml_weights_override if use_yaml else merged_w
 
-    def _ddrnet_ckpt_exists(w_str: str) -> bool:
-        if not w_str.strip():
-            return False
-        pt = Path(w_str)
-        return pt.is_file() if pt.is_absolute() else (_REPO / pt).is_file()
-
     model_candidates: list[str] = []
     for key in args.models:
-        lk = key.lower().strip()
         w_str = _weights_for_key(key)
-        if lk == "ddrnet" and w_str and not _ddrnet_ckpt_exists(w_str):
-            logger.warning("DDRNet weights missing (%r); skipping.", w_str)
-            continue
         model_candidates.append(key)
 
     pred_store: dict[str, dict[str, np.ndarray]] = {}

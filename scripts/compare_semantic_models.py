@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Compare semantic segmentation models on GOOSE-Ex 2D val + a desert clip.
 
-Stage 2 deliverable. Loads 3 (or fewer) models from the project's
-factory (default: SegFormer-B2, SegFormer-B4, DDRNet-39 / GOOSE-12),
-runs them on the GOOSE-Ex val split (with optional subsampling), and
-reports per-user-class IoU, mean IoU, forward-only latency, and a
-qualitative side-by-side gallery.
+Loads 2 (or more) models from the project's factory
+(default: SegFormer-B2, SegFormer-B4), runs them on the GOOSE-Ex val
+split (with optional subsampling), and reports per-user-class IoU,
+mean IoU, forward-only latency, and a qualitative side-by-side gallery.
 
 The user-class set comes from ``config/config.yaml`` (see
 ``perception.config.schema``). Each user class declares
@@ -33,7 +32,7 @@ Output layout
         REPORT.md                # the human-facing summary
         metrics.json             # raw mIoU + latency numbers
         qualitative/
-            <image_id>.png       # side-by-side: input | B2 | B4 | DDRNet | GT
+            <image_id>.png       # side-by-side: input | B2 | B4 | GT
 
 The desert-clip qualitative frames are written under
 ``qualitative/desert_<idx>.png`` and have no GT panel.
@@ -79,9 +78,6 @@ logger = logging.getLogger("compare_semantic_models")
 #: written against; using it here keeps the GT remap consistent with
 #: the wrappers' prediction-side LUT.
 #:
-#: NOTE: Empirically the *DDRNet checkpoint's actual channel ordering*
-#: does not match this table (e.g. high-confidence sky pixels argmax to
-#: channel 9, not 8). See REPORT.md "Channel-mapping caveat".
 GOOSE_CATEGORY_NAMES: tuple[str, ...] = (
     "vegetation", "terrain", "vehicle", "object", "construction",
     "road", "sign", "human", "sky", "water", "animal", "void",
@@ -486,7 +482,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--desert-clip", default="samples/desert_video.mp4")
     p.add_argument("--output-dir", default="reports/semantic_comparison")
     p.add_argument("--models", nargs="*",
-                   default=["segformer-b2", "segformer-b4", "ddrnet"])
+                   default=["segformer-b2", "segformer-b4"])
     p.add_argument("--max-frames", type=int, default=200,
                    help="Cap on val frames evaluated for IoU/latency. Set to 0 "
                         "for the full split (~407 frames).")
@@ -870,39 +866,6 @@ def write_report_md(
                  f"{desert_frame_count} GT-less frames sampled from "
                  f"`samples/desert_video.mp4` to probe out-of-distribution "
                  f"off-road behaviour.")
-    lines.append("")
-
-    # Caveats
-    lines.append("## Channel-mapping caveat")
-    lines.append("")
-    lines.append("The DDRNet checkpoint (`ddrnet_category_512.pth`) outputs 12 "
-                 "channels but the **canonical channel-to-GOOSE-12 ordering "
-                 "is not published** by the GOOSE benchmark team -- the "
-                 "training framework (Deci-AI's `super_gradients`) and the "
-                 "training scripts in `goose_dataset/image_processing/` use "
-                 "`num_classes=64` (the fine ontology). The 12-channel "
-                 "category model was trained against an internal remapping "
-                 "that the team did not include in the public `goose_dataset` "
-                 "repo, the published `goose_label_mapping.csv`, the kitti "
-                 "visualizer YAML, or the colormap JSONs.")
-    lines.append("")
-    lines.append("`config/config.yaml`'s `native_indices.goose_12` per user "
-                 "class follows the **brief's pre-resolved 12-category "
-                 "ordering** (vegetation=0, terrain=1, vehicle=2, object=3, "
-                 "construction=4, road=5, sign=6, human=7, sky=8, water=9, "
-                 "animal=10, void=11). Empirically -- across the GOOSE-Ex val "
-                 "set we evaluated on -- the actual high-confidence channel "
-                 "purities suggest a different ordering (e.g. ch 9 is "
-                 "99.9%-pure 'sky' GT, not 'water'; ch 8 is 70%-vegetation in "
-                 "argmax). DDRNet's IoU numbers below should therefore be "
-                 "read as an evaluation of *the specific user-class LUT in "
-                 "the YAML*, not as the model's true GOOSE-12 capability. "
-                 "If a future round wants honest DDRNet numbers, the next "
-                 "step is to fit the `goose_12` indices empirically (e.g. "
-                 "by per-channel max-purity calibration on a held-out "
-                 "subset) or to retrain DDRNet on a published category "
-                 "remap. SegFormer-B2/B4 are unaffected -- they merge from "
-                 "ADE20K's well-documented 150-class ontology.")
     lines.append("")
 
     # Top observations
