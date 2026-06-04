@@ -1,16 +1,10 @@
-"""Tests for the semantic-model factory: registry dispatch + default weights.
-
-We never let the inner model classes touch the network / disk; they're
-either monkeypatched (SegFormer's transformers loaders) or are
-checkpoint-free skeletons in Stage 1 (DDRNet, PP-LiteSeg).
-"""
+"""Tests for the semantic-model factory: registry dispatch + default weights."""
 import pytest
 
 from perception.config.schema import HardwareCfg, SemanticModelCfg
 from perception.models import factory as model_factory
 from perception.models.backends.pytorch import PyTorchBackend
-from perception.models.semantic.ddrnet import DDRNetSemanticModel
-from perception.models.semantic.ppliteseg import PPLiteSegSemanticModel
+from perception.models.semantic.auriganet import AurigaNetSemanticModel
 from perception.models.semantic.segformer import SegFormerSemanticModel
 
 
@@ -18,7 +12,7 @@ _CPU_HW = HardwareCfg(device="cpu", fp16=False)
 
 
 # --------------------------------------------------------------------------- #
-# SegFormer-B2                                                                 #
+# SegFormer                                                                    #
 # --------------------------------------------------------------------------- #
 
 
@@ -100,105 +94,22 @@ def test_segformer_explicit_weights_override(patched_segformer):
 
 
 # --------------------------------------------------------------------------- #
-# DDRNet (Stage 2: real ``ddrnet_39_goose`` build + strict weight load).
-#
-# We don't want unit tests to hit a ~250 MB checkpoint on disk, so we
-# monkeypatch the architecture builder and ``torch.load`` to return
-# fakes that share state-dict keys / shapes with the real model. The
-# integration test that exercises the *actual* GOOSE weights lives in
-# ``tests/test_ddrnet_wrapper.py`` and is skipped when the checkpoint
-# file is absent.
+# AurigaNet                                                                    #
 # --------------------------------------------------------------------------- #
 
 
-class _FakeDDRNetModule:
-    """Minimal stand-in for the vendored DDRNet module.
-
-    We don't bother building real weights — the factory test only needs
-    ``load_state_dict`` / ``eval`` / ``to`` / ``half`` / ``parameters``
-    to behave plausibly.
-    """
-
-    def __init__(self):
-        import torch
-
-        self._dummy = torch.zeros(1)
-
-    def load_state_dict(self, sd, strict=True):  # noqa: ARG002 - mirror torch API
-        return None
-
-    def eval(self):
-        return self
-
-    def to(self, *_a, **_k):
-        return self
-
-    def half(self):
-        return self
-
-    def parameters(self):
-        yield self._dummy
-
-
-@pytest.fixture
-def patched_ddrnet(monkeypatch):
-    """Stub the DDRNet builder + ``torch.load`` so tests are network/disk-free."""
-    captured: dict[str, object] = {}
-
-    def _fake_builder(num_classes, use_aux_heads=False):  # noqa: ARG001
-        captured["num_classes"] = num_classes
-        return _FakeDDRNetModule()
-
-    def _fake_torch_load(path, *_a, **_k):
-        captured["weights_path"] = path
-        return {"net": {}, "acc": 0.0, "epoch": 0}
-
-    import torch
-
-    from perception.models.semantic import ddrnet as ddrnet_mod
-
-    monkeypatch.setattr(ddrnet_mod, "ddrnet_39_goose", _fake_builder)
-    monkeypatch.setattr(torch, "load", _fake_torch_load)
-    return captured
-
-
-def test_ddrnet_dispatch_and_weights(patched_ddrnet):
-    cfg = SemanticModelCfg(name="ddrnet", weights="")
+def test_auriganet_dispatch_cpu():
+    """Factory dispatches 'auriganet' → AurigaNetSemanticModel on CPU."""
+    cfg = SemanticModelCfg(name="auriganet", weights="")
     m = model_factory.build_semantic_model(cfg, _CPU_HW, backend=PyTorchBackend())
-    assert isinstance(m, DDRNetSemanticModel)
-    # Default points at the local on-disk checkpoint, not a URL --
-    # the wrapper does plain ``torch.load(path)``.
-    assert m._weights == "weights/ddrnet_category_512.pth"
-    assert patched_ddrnet["weights_path"] == "weights/ddrnet_category_512.pth"
-    assert patched_ddrnet["num_classes"] == 12
+    assert isinstance(m, AurigaNetSemanticModel)
 
 
-def test_ddrnet_alias_dispatch(patched_ddrnet):
-    for alias in ("ddrnet-39", "ddrnet39", "DDRNet"):
-        cfg = SemanticModelCfg(name=alias, weights="")
-        m = model_factory.build_semantic_model(cfg, _CPU_HW, backend=PyTorchBackend())
-        assert isinstance(m, DDRNetSemanticModel)
-
-
-# --------------------------------------------------------------------------- #
-# PP-LiteSeg (still a Stage-1 skeleton; constructor doesn't load weights)     #
-# --------------------------------------------------------------------------- #
-
-
-def test_ppliteseg_dispatch_and_weights():
-    cfg = SemanticModelCfg(name="ppliteseg", weights="")
+def test_auriganet_num_classes_propagated():
+    """num_classes kwarg reaches the model."""
+    cfg = SemanticModelCfg(name="auriganet", weights="", num_classes=3)
     m = model_factory.build_semantic_model(cfg, _CPU_HW, backend=PyTorchBackend())
-    assert isinstance(m, PPLiteSegSemanticModel)
-    # Skeleton points at the local download path (the on-disk file may
-    # not actually exist; the constructor just records the path).
-    assert m._weights == "weights/ppliteseg_category_512.pth"
-
-
-def test_ppliteseg_alias_dispatch():
-    for alias in ("pp-liteseg", "ppliteseg-b2", "PP-LiteSeg-B2"):
-        cfg = SemanticModelCfg(name=alias, weights="")
-        m = model_factory.build_semantic_model(cfg, _CPU_HW, backend=PyTorchBackend())
-        assert isinstance(m, PPLiteSegSemanticModel)
+    assert m._num_classes == 3
 
 
 # --------------------------------------------------------------------------- #

@@ -13,8 +13,6 @@ native channel indices to merge into that user class. Different model
 wrappers consume different catalogues:
 
 * :class:`SegFormerSemanticModel` (B2/B4) consumes ``"ade20k"`` (150 ch).
-* :class:`DDRNetSemanticModel`   consumes ``"goose_12"`` (12 ch).
-* :class:`PPLiteSegSemanticModel` consumes ``"goose_12"`` (12 ch).
 
 A semantic user class must define **at least one** non-empty entry in
 ``native_indices`` for the loader to accept it. Whether a given wrapper
@@ -116,11 +114,14 @@ class SemanticModelCfg:
     #: this in YAML only when you want to override the standard checkpoint.
     weights: str = ""
     #: Number of output classes for a fine-tuned model. ``None`` means the
-    #: standard closed-vocab mode (ADE20K-150 for SegFormer, GOOSE-12 for
-    #: DDRNet) with LUT merging. When set to a positive integer the wrapper
-    #: skips the LUT and uses the model's output channels directly; semantic
-    #: classes in config serve as the ordered label list.
+    #: standard closed-vocab mode (ADE20K-150 for SegFormer) with LUT merging.
+    #: When set to a positive integer the wrapper skips the LUT and uses the
+    #: model's output channels directly; semantic classes in config serve as
+    #: the ordered label list.
     num_classes: int | None = None
+    #: When True, predictions are averaged over the original frame and its
+    #: horizontal flip.  Adds one extra forward pass per frame (~2× latency).
+    tta: bool = False
 
 
 @dataclass(frozen=True)

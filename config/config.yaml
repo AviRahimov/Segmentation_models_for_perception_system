@@ -17,27 +17,40 @@ models:
     discovery_conf_floor: 0.05
 
   semantic:
-    # ── OPTION A: Fine-tuned 3-class (ORFD) ────────────────────────────────
+    # ── OPTION A: SegFormer-B0 frozen backbone (ORFD) — fastest ───────────
+    # name: "segformer-b0"
+    # weights: "weights/orfd/frozen_backbone/segformer-b0/best.pth"
+    # num_classes: 3
+    # tta: false
+
+    # ── OPTION B: SegFormer-B1 frozen backbone (ORFD) ──────────────────────
+    name: "segformer-b1"
+    weights: "weights/orfd/frozen_backbone/segformer-b1/best.pth"
+    num_classes: 3
+    tta: false
+
+    # ── OPTION C: SegFormer-B2 frozen backbone (ORFD) — recommended ────────
     # 3-class head trained on ORFD: non_traversable, traversable, sky.
     # Classes below: non_traversable + road_ground + sky (no ade20k_indices needed).
-    name: "segformer-b2"
-    weights: "weights/orfd/final_dataset/segformer-b2/best.pth"
-    num_classes: 3
+    # name: "segformer-b2"
+    # weights: "weights/orfd/frozen_backbone/segformer-b2/best.pth"
+    # num_classes: 3
+    # tta: false                      # set true to average original + H-flip (2× latency)
 
-    # ── OPTION B: SegFormer-B4 fine-tuned (ORFD) ───────────────────────────
+    # ── OPTION D: SegFormer-B4 fine-tuned (ORFD) ───────────────────────────
     # name: "segformer-b4"
-    # weights: "weights/orfd/segformer-b4/best.pth"
+    # weights: "weights/orfd/final_dataset_many_data_augmentations/segformer-b4/best.pth"
     # num_classes: 3
 
-    # ── OPTION C: DDRNet fine-tuned (ORFD) ─────────────────────────────────
-    # name: "ddrnet"
-    # weights: "weights/orfd/ddrnet/best.pth"
-    # num_classes: 3
-
-    # ── OPTION D: SegFormer-B2 ADE20K pretrained (no fine-tuning) ──────────
+    # ── OPTION E: SegFormer-B2 ADE20K pretrained (zero-shot, no fine-tuning) ─
     # Requires semantic classes below to have ade20k_indices.
     # name: "segformer-b2"
     # weights: ""
+
+    # ── OPTION F: AurigaNet fine-tuned (ORFD) ──────────────────────────────
+    # name: "auriganet"
+    # weights: "weights/orfd/frozen_backbone/auriganet/best.pth"
+    # num_classes: 3
 
 # ---------------------------------------------------------------------------
 # Class definitions
@@ -61,15 +74,18 @@ classes:
   - name: "vehicle"
     text_prompt: >-
       passenger car, driving car, SUV, pickup truck, van, minivan, jeep,
-      off-road truck, ATV, UTV, motorcycle,
-      motorbike, farm tractor, trailer
+      off-road truck, ATV, UTV, motorcycle, motorbike, farm tractor, trailer,
+      military truck, military vehicle, tactical vehicle, HMMWV, Humvee,
+      armored personnel carrier, APC, IFV, infantry fighting vehicle
     display_mode: "both"
     color: "#ffc800"
     is_semantic: false
     confidence_threshold: 0.35
 
   - name: "obstacle"
-    text_prompt: "rock, log, debris"
+    text_prompt: >-
+      rock, log, debris, boulder, large rock, fallen tree, tree stump,
+      deep rut, ditch, berm, earthwork
     display_mode: "bbox_only"
     color: "#ff4040"
     is_semantic: false
@@ -152,7 +168,7 @@ temporal:
 
   instance_tracker:
     iou_threshold: 0.30       # min IoU to match detection to previous track
-    max_hold_frames: 5        # frames a missed track is re-emitted (0 = no hold)
+    max_hold_frames: 0        # frames a missed track is re-emitted (0 = no hold)
     hold_score_decay: 0.85    # per-missed-frame score decay (0.85^2 ≈ 0.72)
     bbox_alpha: 0.95          # EMA weight for bbox smoothing (lower = smoother)
     score_alpha: 0.40         # EMA weight for confidence display

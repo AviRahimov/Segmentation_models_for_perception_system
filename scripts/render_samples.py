@@ -52,24 +52,6 @@ def _render_model_registry() -> list[dict]:
     """All trained models that can be swapped in for visual comparison."""
     return [
         {
-            "key":         "segformer-b2-orfd",
-            "name":        "segformer-b2",
-            "weights":     str(_REPO_ROOT / "weights" / "orfd" / "segformer-b2" / "best.pth"),
-            "num_classes": 3,
-        },
-        {
-            "key":         "segformer-b4-orfd",
-            "name":        "segformer-b4",
-            "weights":     str(_REPO_ROOT / "weights" / "orfd" / "segformer-b4" / "best.pth"),
-            "num_classes": 3,
-        },
-        {
-            "key":         "ddrnet-orfd",
-            "name":        "ddrnet",
-            "weights":     str(_REPO_ROOT / "weights" / "orfd" / "ddrnet" / "best.pth"),
-            "num_classes": 3,
-        },
-        {
             "key":         "segformer-b2-final",
             "name":        "segformer-b2",
             "weights":     str(_REPO_ROOT / "weights" / "orfd" / "final_dataset" / "segformer-b2" / "best.pth"),
@@ -211,6 +193,12 @@ def main() -> int:
         help="Cap frames per clip (0 = full length)",
     )
     p.add_argument(
+        "--video",
+        type=Path,
+        default=None,
+        help="Run inference on a single video file instead of scanning --samples-dir",
+    )
+    p.add_argument(
         "--exclude",
         nargs="*",
         default=["recording.mp4"],
@@ -233,27 +221,35 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    samples_dir = Path(args.samples_dir).resolve()
-    if not samples_dir.is_dir():
-        logger.error("Samples directory not found: %s", samples_dir)
-        return 1
-
-    out_dir = Path(args.out_dir).resolve() if args.out_dir else (samples_dir / "annotated")
     cfg_template = load_config(args.config)
 
-    exclude_set = set(args.exclude or [])
-    videos = _collect_videos(
-        samples_dir,
-        recursive=args.recursive,
-        skip_under=out_dir,
-        exclude=exclude_set,
-    )
-    if not videos:
-        logger.warning("No video files found under %s", samples_dir)
-        return 0
-
-    if exclude_set:
-        logger.info("Excluding: %s", ", ".join(sorted(exclude_set)))
+    if args.video is not None:
+        video_path = Path(args.video).resolve()
+        if not video_path.is_file():
+            logger.error("Video file not found: %s", video_path)
+            return 1
+        videos = [video_path]
+        samples_dir = video_path.parent
+        out_dir = Path(args.out_dir).resolve() if args.out_dir else (samples_dir / "annotated")
+        logger.info("Single-video mode: %s", video_path.name)
+    else:
+        samples_dir = Path(args.samples_dir).resolve()
+        if not samples_dir.is_dir():
+            logger.error("Samples directory not found: %s", samples_dir)
+            return 1
+        out_dir = Path(args.out_dir).resolve() if args.out_dir else (samples_dir / "annotated")
+        exclude_set = set(args.exclude or [])
+        videos = _collect_videos(
+            samples_dir,
+            recursive=args.recursive,
+            skip_under=out_dir,
+            exclude=exclude_set,
+        )
+        if not videos:
+            logger.warning("No video files found under %s", samples_dir)
+            return 0
+        if exclude_set:
+            logger.info("Excluding: %s", ", ".join(sorted(exclude_set)))
     logger.info("Found %d video(s) to render.", len(videos))
 
     # ── Determine which models to run ──────────────────────────────────────

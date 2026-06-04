@@ -35,6 +35,8 @@ def main() -> int:
         level=args.log_level.upper(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # getting the name of the segformer variant and logging it to make sure the correct weights are loaded.
+    logging.info(f"Using model: {args.config}")
 
     cfg = load_config(args.config)
     if args.source is not None or args.source_type is not None or args.camera is not None:

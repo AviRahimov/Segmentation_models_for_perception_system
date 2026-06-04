@@ -20,8 +20,8 @@ dataset:
 
 # ---------------------------------------------------------------------------
 model:
-  name: "segformer-b2"          # segformer-b2 | segformer-b4 | ddrnet
-  out_dir: "weights/orfd/final_dataset/segformer-b2/"                   # leave empty → weights/orfd/<model_name>/
+  name: "segformer-b2"          # segformer-b2 | segformer-b4
+  out_dir: "weights/orfd/lora/segformer-b2/"                   # leave empty → weights/orfd/<model_name>/
 
 # ---------------------------------------------------------------------------
 training:
@@ -39,6 +39,5 @@ training:
 
   # Advanced — usually no need to change these
   n_warmup_epochs: 5            # linear LR warmup epochs before cosine decay
-  ddrnet_freeze_epochs: 10      # freeze DDRNet backbone for first N epochs
   grad_clip_norm: 1.0           # gradient clipping max norm
   label_smoothing: 0.1          # cross-entropy label smoothing

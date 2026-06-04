@@ -48,6 +48,10 @@ logger = logging.getLogger(__name__)
 # Used when weights is a local .pth file: load the processor and architecture
 # from HuggingFace, then overlay the local state dict.
 _HF_BASES: dict[str, str] = {
+    "segformer-b0":  "nvidia/segformer-b0-finetuned-ade-512-512",
+    "segformer_b0":  "nvidia/segformer-b0-finetuned-ade-512-512",
+    "segformer-b1":  "nvidia/segformer-b1-finetuned-ade-512-512",
+    "segformer_b1":  "nvidia/segformer-b1-finetuned-ade-512-512",
     "segformer-b2":  "nvidia/segformer-b2-finetuned-ade-512-512",
     "segformer_b2":  "nvidia/segformer-b2-finetuned-ade-512-512",
     "segformer-b4":  "nvidia/segformer-b4-finetuned-ade-512-512",
@@ -64,6 +68,7 @@ class SegFormerSemanticModel(SemanticModel):
         device: str = "cuda",
         fp16: bool = True,
         num_classes: int | None = None,
+        tta: bool = False,
     ) -> None:
         # Lazy import for environments without transformers (e.g. unit tests).
         from transformers import (  # type: ignore
@@ -129,6 +134,7 @@ class SegFormerSemanticModel(SemanticModel):
 
         self._semantic_classes: list[ClassDef] = []
         self._lut: torch.Tensor | None = None
+        self._tta: bool = tta
 
     # ------------------------------------------------------------------ #
     def warmup(self, classes: Sequence[ClassDef]) -> None:
@@ -189,6 +195,28 @@ class SegFormerSemanticModel(SemanticModel):
         return tuple(c.name for c in self._semantic_classes)
 
     # ------------------------------------------------------------------ #
+
+    def _forward_single(self, frame_bgr: np.ndarray) -> torch.Tensor:
+        """Single forward pass → probs (C, H, W) at original resolution."""
+        h, w = frame_bgr.shape[:2]
+        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        inputs = self._processor(images=rgb, return_tensors="pt")
+        pixel_values: torch.Tensor = inputs["pixel_values"].to(self._device)
+        if self._fp16:
+            pixel_values = pixel_values.half()
+
+        outputs = self._model(pixel_values=pixel_values)
+        logits = outputs.logits  # (1, C, H/4, W/4)
+        logits = torch.nn.functional.interpolate(
+            logits, size=(h, w), mode="bilinear", align_corners=False
+        )[0]  # (C, H, W)
+
+        if self._fine_tuned:
+            return torch.softmax(logits.float(), dim=0).to(logits.dtype)
+
+        probs = torch.softmax(logits.float(), dim=0).to(logits.dtype)
+        return torch.einsum("cu,chw->uhw", self._lut, probs)  # (C_user, H, W)
+
     @torch.inference_mode()
     def predict_logits(self, frame_bgr: np.ndarray) -> torch.Tensor:
         if not self._semantic_classes:
@@ -203,28 +231,9 @@ class SegFormerSemanticModel(SemanticModel):
                 "or set models.semantic.num_classes for a fine-tuned model."
             )
 
-        h, w = frame_bgr.shape[:2]
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        inputs = self._processor(images=rgb, return_tensors="pt")
-        pixel_values: torch.Tensor = inputs["pixel_values"].to(self._device)
-        if self._fp16:
-            pixel_values = pixel_values.half()
-
-        outputs = self._model(pixel_values=pixel_values)
-        logits = outputs.logits  # (1, C, H/4, W/4)
-
-        logits = torch.nn.functional.interpolate(
-            logits, size=(h, w), mode="bilinear", align_corners=False
-        )[0]  # (C, H, W)
-
-        if self._fine_tuned:
-            # Direct mode: softmax over the model's native output classes.
-            probs = torch.softmax(logits.float(), dim=0).to(logits.dtype)
-            return probs  # (C_user, H, W)
-
-        # Standard ADE20K LUT merge:
-        # Softmax over 150 native channels first, then sum via LUT.
-        # Compute softmax in fp32 for numerical stability under fp16 inputs.
-        probs = torch.softmax(logits.float(), dim=0).to(logits.dtype)
-        merged = torch.einsum("cu,chw->uhw", self._lut, probs)  # (C_user, H, W)
-        return merged
+        probs = self._forward_single(frame_bgr)
+        if self._tta:
+            probs_flip = self._forward_single(np.fliplr(frame_bgr))
+            probs_flip = torch.flip(probs_flip, dims=[-1])
+            probs = (probs + probs_flip) * 0.5
+        return probs
