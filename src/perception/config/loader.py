@@ -438,6 +438,7 @@ def _build_models(raw: dict[str, Any], *, config_file: Path) -> ModelsCfg:
     ipm: InstancePromptMode = "discovery" if pm == "discovery" else "production"
 
     inst = InstanceModelCfg(
+        enabled=bool(inst_raw.get("enabled", True)),
         name=str(inst_raw.get("name", "yoloe26l")),
         confidence_threshold=float(inst_raw.get("confidence_threshold", 0.35)),
         weights=inst_raw.get("weights"),
