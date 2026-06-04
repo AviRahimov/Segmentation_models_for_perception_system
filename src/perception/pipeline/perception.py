@@ -136,7 +136,11 @@ def build_pipeline(cfg: AppConfig) -> PerceptionPipeline:
     )
 
     backend = build_backend(cfg.hardware.use_tensorrt)
-    instance_model = build_instance_model(cfg.models.instance, cfg.hardware, backend)
+    if cfg.runs_yoloe_instance_inference:
+        instance_model = build_instance_model(cfg.models.instance, cfg.hardware, backend)
+    else:
+        from ..models.instance.null import NullInstanceModel
+        instance_model = NullInstanceModel()
     semantic_model = build_semantic_model(cfg.models.semantic, cfg.hardware, backend)
     smoother = build_logits_smoother(cfg.temporal)
     cut = build_scene_cut_detector(cfg.temporal)

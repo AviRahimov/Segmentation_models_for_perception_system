@@ -9,6 +9,7 @@
 # ---------------------------------------------------------------------------
 models:
   instance:
+    enabled: true              # set false to skip YOLOE entirely (semantic-only mode, ~2× faster)
     name: "yoloe26l"
     weights: "weights/yoloe-26l-seg.engine"
     confidence_threshold: 0.35
@@ -179,7 +180,7 @@ temporal:
 hardware:
   device: "cuda"
   fp16: true
-  use_tensorrt: true
+  use_tensorrt: false
   text_embed_cache: true
   trt_workspace_gb: 4        # GB workspace for TRT engine build (export time only)
 

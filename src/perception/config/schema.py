@@ -94,6 +94,7 @@ class ClassDef:
 
 @dataclass(frozen=True)
 class InstanceModelCfg:
+    enabled: bool = True   # set False in config.yaml to skip YOLOE (semantic-only mode)
     name: str = "yoloe26l"
     confidence_threshold: float = 0.35
     weights: str | None = None  # default per-model when None
@@ -255,6 +256,8 @@ class AppConfig:
     @property
     def runs_yoloe_instance_inference(self) -> bool:
         """True when the pipeline should run YOLOE (production classes or discovery vocab)."""
+        if not self.models.instance.enabled:
+            return False
         if self.models.instance.prompt_mode == "discovery":
             return True
         return bool(self.instance_classes)

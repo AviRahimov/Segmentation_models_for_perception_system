@@ -145,7 +145,6 @@ class SegFormerSemanticModel(SemanticModel):
 
         self._semantic_classes: list[ClassDef] = []
         self._lut: torch.Tensor | None = None
-        self._tta: bool = tta
 
     # ------------------------------------------------------------------ #
     def warmup(self, classes: Sequence[ClassDef]) -> None:
@@ -209,27 +208,6 @@ class SegFormerSemanticModel(SemanticModel):
         return tuple(c.name for c in self._semantic_classes)
 
     # ------------------------------------------------------------------ #
-
-    def _forward_single(self, frame_bgr: np.ndarray) -> torch.Tensor:
-        """Single forward pass → probs (C, H, W) at original resolution."""
-        h, w = frame_bgr.shape[:2]
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        inputs = self._processor(images=rgb, return_tensors="pt")
-        pixel_values: torch.Tensor = inputs["pixel_values"].to(self._device)
-        if self._fp16:
-            pixel_values = pixel_values.half()
-
-        outputs = self._model(pixel_values=pixel_values)
-        logits = outputs.logits  # (1, C, H/4, W/4)
-        logits = torch.nn.functional.interpolate(
-            logits, size=(h, w), mode="bilinear", align_corners=False
-        )[0]  # (C, H, W)
-
-        if self._fine_tuned:
-            return torch.softmax(logits.float(), dim=0).to(logits.dtype)
-
-        probs = torch.softmax(logits.float(), dim=0).to(logits.dtype)
-        return torch.einsum("cu,chw->uhw", self._lut, probs)  # (C_user, H, W)
 
     @torch.inference_mode()
     def predict_logits(self, frame_bgr: np.ndarray) -> torch.Tensor:

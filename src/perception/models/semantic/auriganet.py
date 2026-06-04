@@ -54,7 +54,6 @@ class AurigaNetSemanticModel(SemanticModel):
         device: str = "cpu",
         fp16: bool = False,
         num_classes: int | None = None,
-        tta: bool = False,
     ) -> None:
         from ._vendored.auriganet import AurigaNetArch
 
@@ -91,7 +90,6 @@ class AurigaNetSemanticModel(SemanticModel):
             self._model = self._model.half()
 
         self._semantic_classes: list[ClassDef] = []
-        self._tta: bool = tta
 
     # ------------------------------------------------------------------ #
 
@@ -115,8 +113,13 @@ class AurigaNetSemanticModel(SemanticModel):
 
     # ------------------------------------------------------------------ #
 
-    def _forward_single(self, frame_bgr: np.ndarray) -> torch.Tensor:
-        """Single forward pass → probs (C, H, W) at original resolution."""
+    @torch.inference_mode()
+    def predict_logits(self, frame_bgr: np.ndarray) -> torch.Tensor:
+        if not self._semantic_classes:
+            raise RuntimeError(
+                "AurigaNetSemanticModel.predict_logits called before warmup()."
+            )
+
         h, w = frame_bgr.shape[:2]
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         resized = cv2.resize(rgb, (INPUT_SIZE, INPUT_SIZE), interpolation=cv2.INTER_LINEAR)
@@ -126,21 +129,11 @@ class AurigaNetSemanticModel(SemanticModel):
         x = x.to(self._device)
         if self._fp16:
             x = x.half()
+
         seg_logits, _embed, _det = self._model(x)  # (1, C, H/4, W/4)
+
         seg_logits = F.interpolate(
             seg_logits, size=(h, w), mode="bilinear", align_corners=False,
         )[0]  # (C, H, W)
-        return torch.softmax(seg_logits.float(), dim=0).to(seg_logits.dtype)
 
-    @torch.inference_mode()
-    def predict_logits(self, frame_bgr: np.ndarray) -> torch.Tensor:
-        if not self._semantic_classes:
-            raise RuntimeError(
-                "AurigaNetSemanticModel.predict_logits called before warmup()."
-            )
-        probs = self._forward_single(frame_bgr)
-        if self._tta:
-            probs_flip = self._forward_single(np.fliplr(frame_bgr))
-            probs_flip = torch.flip(probs_flip, dims=[-1])
-            probs = (probs + probs_flip) * 0.5
-        return probs
+        return torch.softmax(seg_logits.float(), dim=0).to(seg_logits.dtype)
