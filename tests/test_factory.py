@@ -70,3 +70,24 @@ def test_source_factory_video_requires_path():
 def test_image_dir_factory_requires_path():
     with pytest.raises(ValueError, match="source.path"):
         build_source(SourceCfg(type="image_dir", path=None))
+
+
+def test_instance_registry_yolo_closed_variants():
+    for n in (
+        "yolo11n", "yolo11m", "yolo11l", "yolo11x",
+        "yolo12n", "yolo12m", "yolo12l", "yolo12x",
+        "yolo26n", "yolo26m", "yolo26l", "yolo26x",
+    ):
+        assert n in model_factory.INSTANCE_REGISTRY, f"{n} missing from INSTANCE_REGISTRY"
+
+
+def test_instance_registry_rfdetr_variants():
+    for n in ("rfdetr-n", "rfdetr-s", "rfdetr-m", "rfdetr-l", "rfdetr-xl", "rfdetr-2xl"):
+        assert n in model_factory.INSTANCE_REGISTRY, f"{n} missing from INSTANCE_REGISTRY"
+
+
+def test_instance_default_weights_coverage():
+    for name in model_factory.INSTANCE_REGISTRY:
+        assert name in model_factory.INSTANCE_DEFAULT_WEIGHTS, (
+            f"{name} is in INSTANCE_REGISTRY but missing from INSTANCE_DEFAULT_WEIGHTS"
+        )

@@ -81,6 +81,11 @@ class ClassDef:
     is_semantic: bool
     native_indices: dict[str, tuple[int, ...]] = field(default_factory=dict)
     confidence_threshold: float | None = None
+    coco_classes: tuple[int, ...] = field(default_factory=tuple)
+    # Standard COCO IDs (1-indexed, 1–90). Used by closed-vocab detectors
+    # (yolo11/12/26, rfdetr). YOLO wrappers subtract 1 internally; RF-DETR
+    # uses the IDs as-is. Empty = this class is skipped by closed-vocab models.
+    # Must NOT be set on semantic classes.
 
     @property
     def ade20k_indices(self) -> tuple[int, ...]:

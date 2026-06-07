@@ -276,6 +276,22 @@ def _build_classes(raw: Any, *, allow_empty_native_indices: bool = False) -> tup
                     "(SegFormer has no per-class score; argmax is unconditional)"
                 )
 
+        coco_raw = entry.get("coco_classes", None)
+        if coco_raw and is_semantic:
+            raise ConfigError(
+                f"Semantic class {name!r} must NOT define coco_classes"
+            )
+        coco_t: tuple[int, ...]
+        if not coco_raw:
+            coco_t = ()
+        else:
+            try:
+                coco_t = tuple(int(x) for x in coco_raw)
+            except (TypeError, ValueError):
+                raise ConfigError(
+                    f"classes[{i}={name!r}].coco_classes must be a list of ints"
+                ) from None
+
         out.append(
             ClassDef(
                 name=name,
@@ -285,6 +301,7 @@ def _build_classes(raw: Any, *, allow_empty_native_indices: bool = False) -> tup
                 is_semantic=is_semantic,
                 native_indices=native_idx,
                 confidence_threshold=cls_conf,
+                coco_classes=coco_t,
             )
         )
     return tuple(out)

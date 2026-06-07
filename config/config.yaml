@@ -9,14 +9,14 @@
 # ---------------------------------------------------------------------------
 models:
   instance:
-    enabled: true              # set false to skip YOLOE entirely (semantic-only mode, ~2× faster)
-    name: "yoloe26l"
-    weights: "weights/yoloe-26l-seg.engine"
+    enabled: true               # set false to skip instance model entirely (semantic-only mode, ~2× faster)
+    name: "yolo26l"             # switch here: yolo26m, yolo12m, rfdetr-m, yoloe26l, etc.
+    weights: "weights/yolo26l.pt"
     confidence_threshold: 0.35
-    prompt_mode: production            # production | discovery
+    prompt_mode: production            # production | discovery (only used by yoloe)
     discovery_vocabulary_path: "yoloe_discovery_vocab.example.txt"
     discovery_conf_floor: 0.05
-    imgsz: 512                         # inference image size; 640 = default, 512 saves ~25% on YOLOE
+    imgsz: 512                         # inference image size; ignored by rfdetr (fixed per variant)
 
   semantic:
     # ── OPTION A: SegFormer-B0 frozen backbone (ORFD) — fastest ───────────
@@ -58,17 +58,21 @@ models:
 # ---------------------------------------------------------------------------
 # Class definitions
 #
-# Instance classes (`is_semantic: false`): driven by YOLOE text prompts.
+# Instance classes (`is_semantic: false`):
+#   text_prompt   — open-vocab prompt used by YOLOE only.
+#   coco_classes  — standard COCO IDs (1-indexed) used by YOLO11/12/26 and RF-DETR.
+#                   Empty list = this class is skipped by closed-vocab models.
 # Semantic classes (`is_semantic: true`): output of the semantic model.
 #   Fine-tuned mode: no ade20k_indices — model outputs user classes directly.
 #   ADE20K mode:     ade20k_indices required — maps native channels to user class.
 # ---------------------------------------------------------------------------
 classes:
 
-  # ── Instance classes (YOLOE) — always active ────────────────────────────
+  # ── Instance classes ─────────────────────────────────────────────────────
 
   - name: "person"
     text_prompt: "person"
+    coco_classes: [1]                  # COCO: person (1)
     display_mode: "both"
     color: "#00ff80"
     is_semantic: false
@@ -80,6 +84,7 @@ classes:
       off-road truck, ATV, UTV, motorcycle, motorbike, farm tractor, trailer,
       military truck, military vehicle, tactical vehicle, HMMWV, Humvee,
       armored personnel carrier, APC, IFV, infantry fighting vehicle
+    coco_classes: [3, 4, 6, 8]        # COCO: car (3), motorcycle (4), bus (6), truck (8)
     display_mode: "both"
     color: "#ffc800"
     is_semantic: false
@@ -89,12 +94,14 @@ classes:
     text_prompt: >-
       rock, log, debris, boulder, large rock, fallen tree, tree stump,
       deep rut, ditch, berm, earthwork
+    coco_classes: []                   # no COCO equivalent — skipped by closed-vocab models
     display_mode: "bbox_only"
     color: "#ff4040"
     is_semantic: false
 
   - name: "unnecessary_detection"
     text_prompt: "truck, trash, container, barrier, traffic cone, traffic light, traffic sign, traffic block, boom barrier, road block, street light, pole"
+    coco_classes: []                   # YOLOE-only suppression — skipped by closed-vocab models
     display_mode: "none"
     color: "#000000"
     is_semantic: false

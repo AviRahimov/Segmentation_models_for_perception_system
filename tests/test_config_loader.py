@@ -327,3 +327,52 @@ def test_color_4digit_hex_rejected(tmp_path):
     body = _VALID_YAML.replace('color: "green"', 'color: "#0ff0"')
     with pytest.raises(ConfigError, match="6-digit"):
         load_config(_write(tmp_path, body))
+
+
+# --------------------------------------------------------------------------- #
+# coco_classes                                                                 #
+# --------------------------------------------------------------------------- #
+
+
+def test_coco_classes_parsed(tmp_path):
+    body = _VALID_YAML.replace(
+        '    is_semantic: false\n  - name: "road_ground"',
+        '    is_semantic: false\n    coco_classes: [1, 3]\n  - name: "road_ground"',
+    )
+    cfg = load_config(_write(tmp_path, body))
+    person = next(c for c in cfg.classes if c.name == "person")
+    assert person.coco_classes == (1, 3)
+
+
+def test_coco_classes_default_is_empty(tmp_path):
+    cfg = load_config(_write(tmp_path, _VALID_YAML))
+    person = next(c for c in cfg.classes if c.name == "person")
+    assert person.coco_classes == ()
+
+
+def test_coco_classes_empty_list_allowed(tmp_path):
+    body = _VALID_YAML.replace(
+        '    is_semantic: false\n  - name: "road_ground"',
+        '    is_semantic: false\n    coco_classes: []\n  - name: "road_ground"',
+    )
+    cfg = load_config(_write(tmp_path, body))
+    person = next(c for c in cfg.classes if c.name == "person")
+    assert person.coco_classes == ()
+
+
+def test_coco_classes_rejected_on_semantic_class(tmp_path):
+    body = _VALID_YAML.replace(
+        "    ade20k_indices: [6, 13]",
+        "    ade20k_indices: [6, 13]\n    coco_classes: [1]",
+    )
+    with pytest.raises(ConfigError, match="must NOT define coco_classes"):
+        load_config(_write(tmp_path, body))
+
+
+def test_coco_classes_non_int_rejected(tmp_path):
+    body = _VALID_YAML.replace(
+        '    is_semantic: false\n  - name: "road_ground"',
+        '    is_semantic: false\n    coco_classes: ["person"]\n  - name: "road_ground"',
+    )
+    with pytest.raises(ConfigError, match="coco_classes must be a list of ints"):
+        load_config(_write(tmp_path, body))

@@ -27,6 +27,7 @@ Pillow==11.0.0
 ultralytics==8.4.47
 transformers==4.46.3
 supervision==0.25.1
+rfdetr>=0.3.0            # RF-DETR detector (N/S/M/L); XL/2XL require: pip install "rfdetr[plus]"
 
 # UI
 PyQt6==6.7.1
