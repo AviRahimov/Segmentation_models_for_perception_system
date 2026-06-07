@@ -35,7 +35,11 @@ def main() -> int:
         level=args.log_level.upper(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    # getting the name of the segformer variant and logging it to make sure the correct weights are loaded.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("rf-detr").setLevel(logging.WARNING)
+    import transformers as _tf; _tf.logging.set_verbosity_error()
+
     logging.info(f"Using model: {args.config}")
 
     cfg = load_config(args.config)

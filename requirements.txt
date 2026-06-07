@@ -14,7 +14,7 @@ torchvision==0.26.0+cu128
 numpy==1.26.4
 
 # Vision / IO
-opencv-python==4.10.0.84
+opencv-python-headless==4.10.0.84  # headless avoids Qt plugin conflict with PyQt5/PyQt6
 Pillow==11.0.0
 
 # Models
@@ -30,7 +30,7 @@ supervision==0.25.1
 rfdetr>=0.3.0            # RF-DETR detector (N/S/M/L); XL/2XL require: pip install "rfdetr[plus]"
 
 # UI
-PyQt6==6.7.1
+PyQt5                    # PyQt6 incompatible with Jetson arm64; PyQt5 works on both platforms
 
 # Config / utilities
 PyYAML==6.0.2

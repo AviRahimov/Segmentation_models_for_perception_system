@@ -10,8 +10,8 @@
 models:
   instance:
     enabled: true               # set false to skip instance model entirely (semantic-only mode, ~2× faster)
-    name: "yolo26l"             # switch here: yolo26m, yolo12m, rfdetr-m, yoloe26l, etc.
-    weights: "weights/yolo26l.pt"
+    name: "rfdetr-m"            # switch here: yolo26m, yolo12m, rfdetr-m, yoloe26l, etc.
+    weights: ""
     confidence_threshold: 0.35
     prompt_mode: production            # production | discovery (only used by yoloe)
     discovery_vocabulary_path: "yoloe_discovery_vocab.example.txt"
@@ -26,19 +26,19 @@ models:
     # tta: false
 
     # ── OPTION B: SegFormer-B1 frozen backbone (ORFD) ──────────────────────
-    name: "segformer-b1"
-    weights: "weights/orfd/frozen_backbone/segformer-b1/best.pth"
-    num_classes: 3
-    tta: false
+    # name: "segformer-b1"
+    # weights: "weights/orfd/frozen_backbone/segformer-b1/best.pth"
+    # num_classes: 3
+    # tta: false
 
     # ── OPTION C: SegFormer-B2 frozen backbone (ORFD) — recommended ────────
     # 3-class head trained on ORFD: non_traversable, traversable, sky.
     # Classes below: non_traversable + road_ground + sky (no ade20k_indices needed).
     name: "segformer-b2"
-    weights: "weights/orfd/final_dataset/segformer-b2/best.pth"
+    weights: "weights/orfd/frozen_backbone/segformer-b2/best.pth"
     num_classes: 3
     processor_size: 256                # processor input size; 512 = default, 256 = ~2x faster, 384 = middle ground
-    trt_engine_path: "weights/orfd/final_dataset/segformer-b2/best-256x256.engine"
+    # trt_engine_path: "weights/orfd/final_dataset/segformer-b2/best-256x256.engine"
 
     # ── OPTION D: SegFormer-B4 fine-tuned (ORFD) ───────────────────────────
     # name: "segformer-b4"

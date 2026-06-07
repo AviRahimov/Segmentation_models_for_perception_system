@@ -43,6 +43,10 @@ def main() -> int:
         level=args.log_level.upper(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("rf-detr").setLevel(logging.WARNING)
+    import transformers as _tf; _tf.logging.set_verbosity_error()
 
     cfg = load_config(args.config)
     if args.source is not None or args.source_type is not None or args.camera is not None:

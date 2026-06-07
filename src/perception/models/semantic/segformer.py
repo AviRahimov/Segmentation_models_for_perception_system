@@ -31,6 +31,7 @@ smoother operates on and what the renderer argmaxes downstream.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Sequence
 
@@ -43,6 +44,60 @@ from ..backends.base import InferenceBackend
 from .base import SemanticModel
 
 logger = logging.getLogger(__name__)
+
+
+def _remap_segformer_keys(sd: dict) -> dict:
+    """Remap checkpoint keys from old transformers format to current format.
+
+    Handles the key renaming between transformers versions:
+      segformer.encoder.block/patch_embeddings/layer_norm → segformer.stages.*
+      attention.self.{query,key,value} → attention.{q,k,v}_proj
+      attention.output.dense → attention.o_proj
+      attention.self.sr → attention.sequence_reduction.sequence_reduction
+      layer_norm_{1,2} → layernorm_{before,after}
+      mlp.dense{1,2} → mlp.fc{1,2}
+      decode_head.linear_c.{i} → decode_head.linear_projections.{i}
+    """
+    if not any(k.startswith("segformer.encoder.") for k in sd):
+        return sd  # already in current format
+
+    logger.info("SegFormer checkpoint uses old key format — remapping to current transformers API.")
+    out: dict = {}
+    for k, v in sd.items():
+        nk = k
+
+        # decode_head.linear_c.{i}.* → decode_head.linear_projections.{i}.*
+        nk = re.sub(r"^decode_head\.linear_c\.(\d+)\.",
+                    r"decode_head.linear_projections.\1.", nk)
+
+        # segformer.encoder.patch_embeddings.{i}.* → segformer.stages.{i}.patch_embeddings.*
+        nk = re.sub(r"^segformer\.encoder\.patch_embeddings\.(\d+)\.",
+                    r"segformer.stages.\1.patch_embeddings.", nk)
+
+        # segformer.encoder.layer_norm.{i}.* → segformer.stages.{i}.layer_norm.*
+        nk = re.sub(r"^segformer\.encoder\.layer_norm\.(\d+)\.",
+                    r"segformer.stages.\1.layer_norm.", nk)
+
+        # segformer.encoder.block.{i}.{j}.* → segformer.stages.{i}.blocks.{j}.*
+        m = re.match(r"^segformer\.encoder\.block\.(\d+)\.(\d+)\.(.+)$", nk)
+        if m:
+            si, bj, rest = m.group(1), m.group(2), m.group(3)
+            rest = re.sub(r"^attention\.self\.query\.",  "attention.q_proj.", rest)
+            rest = re.sub(r"^attention\.self\.key\.",    "attention.k_proj.", rest)
+            rest = re.sub(r"^attention\.self\.value\.",  "attention.v_proj.", rest)
+            rest = re.sub(r"^attention\.output\.dense\.", "attention.o_proj.", rest)
+            rest = re.sub(r"^attention\.self\.sr\.",
+                          "attention.sequence_reduction.sequence_reduction.", rest)
+            rest = re.sub(r"^attention\.self\.layer_norm\.",
+                          "attention.sequence_reduction.layer_norm.", rest)
+            rest = re.sub(r"^layer_norm_1\.", "layernorm_before.", rest)
+            rest = re.sub(r"^layer_norm_2\.", "layernorm_after.", rest)
+            rest = re.sub(r"^mlp\.dense1\.", "mlp.fc1.", rest)
+            rest = re.sub(r"^mlp\.dense2\.", "mlp.fc2.", rest)
+            nk = f"segformer.stages.{si}.blocks.{bj}.{rest}"
+
+        out[nk] = v
+    return out
 
 # Maps config model name → canonical HuggingFace model ID.
 # Used when weights is a local .pth file: load the processor and architecture
@@ -95,6 +150,7 @@ class SegFormerSemanticModel(SemanticModel):
         if _is_local:
             ckpt = torch.load(weights, map_location="cpu", weights_only=True)
             state_dict = ckpt.get("net", ckpt) if isinstance(ckpt, dict) else ckpt
+            state_dict = _remap_segformer_keys(state_dict)
             # Auto-detect from checkpoint so old 2-class and new 3-class checkpoints
             # both load correctly regardless of what num_classes the caller passes.
             n_labels = state_dict["decode_head.classifier.weight"].shape[0]

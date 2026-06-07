@@ -48,8 +48,13 @@ class YOLOClosedInstanceModel(InstanceModel):
         discovery_max_det: Any = None,
         model_name: Any = None,
     ) -> None:
-        local_weights = resolve_instance_weights(weights)
-        self._weights = str(local_weights)
+        # Ultralytics handles auto-download for bare .pt names (e.g. "yolo26l.pt").
+        # Only run our resolver for explicit local paths (.engine, .onnx, or existing file).
+        from pathlib import Path as _Path
+        if weights and (_Path(weights).suffix in (".engine", ".onnx") or _Path(weights).exists()):
+            self._weights = str(resolve_instance_weights(weights))
+        else:
+            self._weights = weights
         self._device = device
         self._fp16 = fp16
         self._confidence_threshold = float(confidence_threshold)

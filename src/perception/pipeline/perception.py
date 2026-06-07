@@ -53,10 +53,11 @@ class PerceptionPipeline:
         """Run one-time setup on both models. Call once at startup."""
         self._inst.warmup(self._cfg.classes)
         self._sem.warmup(self._cfg.classes)
+        inst_label = type(self._inst).__name__ if self._has_instance else "disabled"
         logger.info(
-            "Pipeline warmed: YOLOE prompt_mode=%s, %d config instance classes, "
-            "%d semantic classes",
-            self._cfg.models.instance.prompt_mode,
+            "Pipeline warmed: instance=%s, semantic=%s, %d instance classes, %d semantic classes",
+            inst_label,
+            type(self._sem).__name__,
             len(self._cfg.instance_classes),
             len(self._cfg.semantic_classes),
         )

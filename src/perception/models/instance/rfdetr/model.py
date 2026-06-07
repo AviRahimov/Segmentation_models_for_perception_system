@@ -59,8 +59,8 @@ def _load_rfdetr(model_name: str, weights: str | None) -> Any:
             "For XL/2XL variants install: pip install 'rfdetr[plus]'"
         )
     if weights:
-        return cls(pretrained=False, checkpoint=weights)
-    return cls(pretrained=True)
+        return cls(pretrain_weights=weights)
+    return cls()  # downloads pretrained weights automatically
 
 
 class RFDETRInstanceModel(InstanceModel):
@@ -133,10 +133,12 @@ class RFDETRInstanceModel(InstanceModel):
         self._predict_conf_floor = min(thresholds) if thresholds else self._confidence_threshold
 
         if self._fp16:
-            logger.warning(
-                "RFDETRInstanceModel: FP16 requested. RF-DETR FP16 may degrade detection "
-                "quality on Jetson — validate results before deploying."
-            )
+            import platform
+            if platform.machine() == "aarch64":
+                logger.warning(
+                    "RFDETRInstanceModel: FP16 on Jetson — validate detection quality "
+                    "before deploying, DINOv2 backbone may degrade under FP16."
+                )
             self._model.optimize_for_inference(compile=False, dtype=torch.float16)
         else:
             self._model.optimize_for_inference(compile=False, dtype=torch.float32)
