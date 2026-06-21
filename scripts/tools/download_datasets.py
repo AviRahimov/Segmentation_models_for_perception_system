@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str((_HERE.parent / "src").resolve()))
+sys.path.insert(0, str((_HERE.parents[1] / "src").resolve()))
 
 from perception.datasets.orfd import download_orfd  # noqa: E402
 from perception.datasets.rugd import RUGD_SEQUENCES, download_rugd  # noqa: E402

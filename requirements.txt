@@ -41,6 +41,14 @@ gdown==5.2.0
 # Testing
 pytest==8.3.4
 
+# Optimization pipeline (Stages 0–6 in scripts/optimization/)
+# onnxruntime-gpu: x86 GPU EP for ONNX numerical validation. On Jetson,
+#   install onnxruntime (CPU) from the JetPack wheel instead.
+nvidia-modelopt[torch]   # QAT fake-quantization + 2:4 structured sparsity
+onnx>=1.16               # ONNX graph checker and manipulation
+onnxruntime-gpu          # ONNX numerical validation on dev PC
+onnxscript               # required by torch 2.x ONNX export internals
+
 # OPTIONAL — for TensorRT acceleration on Jetson AGX Orin:
 #   tensorrt is shipped with JetPack; on x86 install via NVIDIA's wheel.
 #   See src/perception/models/backends/tensorrt.py for the four

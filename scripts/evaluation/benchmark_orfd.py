@@ -52,7 +52,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "src"))
 
 from perception.datasets.orfd_torch import ORFDDataset, TRAIN_SIZE, _to_normalized_tensor

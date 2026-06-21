@@ -7,9 +7,9 @@ import logging
 import sys
 from pathlib import Path
 
-# Allow ``python scripts/run_player.py`` from a fresh checkout.
+# Allow ``python scripts/inference/run_player.py`` from a fresh checkout.
 _HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str((_HERE.parent / "src").resolve()))
+sys.path.insert(0, str((_HERE.parents[1] / "src").resolve()))
 
 from PyQt5.QtWidgets import QApplication  # noqa: E402
 

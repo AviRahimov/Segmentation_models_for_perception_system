@@ -1,0 +1,20 @@
+# Stage 2: QAT INT8 configuration.
+# Run: python scripts/optimization/train_qat.py --config config/optimization/qat.yaml
+#
+# Fill in 'resolution' after running Stage 0 (resolution_sweep.py).
+
+base_checkpoint: "weights/orfd/frozen_backbone/segformer-b2/best.pth"
+data:            "datasets/Final_Dataset"
+
+resolution: 256
+
+# Calibration: how many training batches to compute quantization scales.
+calibration_batches: 4
+
+# QAT fine-tune (only decode_head gets gradients — backbone stays frozen).
+qat_epochs: 8
+qat_lr:     1.0e-5
+batch_size: 8
+workers:    4
+
+output_dir: "weights/optimization"

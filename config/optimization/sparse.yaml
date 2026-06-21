@@ -1,0 +1,27 @@
+# Stage 3: 2:4 structured sparsity + QAT configuration.
+# Run: python scripts/optimization/train_sparse.py --config config/optimization/sparse.yaml
+#
+# Fill in 'resolution' after running Stage 0 (resolution_sweep.py).
+
+base_checkpoint: "weights/orfd/frozen_backbone/segformer-b2/best.pth"
+data:            "datasets/Final_Dataset"
+
+resolution: 256
+
+# Order: 'sparse_first' (recommended) or 'qat_first'.
+# Both produce separate .onnx files so both can be benchmarked on Jetson.
+order: "sparse_first"
+
+# Sparsity-aware fine-tune epochs (recovers accuracy lost to pruning).
+sparse_epochs: 4
+sparse_lr:     1.0e-5
+
+# QAT fine-tune epochs on top of sparsified model.
+qat_epochs:          6
+qat_lr:              5.0e-6
+calibration_batches: 4
+
+batch_size: 8
+workers:    4
+
+output_dir: "weights/optimization"

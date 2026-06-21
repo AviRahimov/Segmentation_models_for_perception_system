@@ -29,7 +29,7 @@ import cv2
 import torch
 
 _HERE = Path(__file__).resolve().parent
-_REPO_ROOT = _HERE.parent
+_REPO_ROOT = _HERE.parents[1]
 sys.path.insert(0, str((_REPO_ROOT / "src").resolve()))
 
 from perception.config.loader import load_config, override_source  # noqa: E402

@@ -41,7 +41,7 @@ import numpy as np
 import torch
 
 _HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str((_HERE.parent / "src").resolve()))
+sys.path.insert(0, str((_HERE.parents[1] / "src").resolve()))
 
 from perception.config.loader import load_config  # noqa: E402
 from perception.config.schema import ClassDef  # noqa: E402

@@ -110,7 +110,7 @@ colour with the **winning prompt string** on the bbox; the legend shows
 use `classes[*].text_prompt` again.
 
 ```bash
-python scripts/yoloe_discovery_dump.py --config config/config.yaml \
+python scripts/tools/yoloe_discovery_dump.py --config config/config.yaml \
   --source samples/recording.mp4 --max-frames 200 \
   --jsonl runs/discovery.jsonl --summary-tsv runs/discovery_summary.tsv
 ```
@@ -122,10 +122,10 @@ python scripts/yoloe_discovery_dump.py --config config/config.yaml \
 ### GUI player
 
 ```bash
-python scripts/run_player.py --config config/config.yaml
-python scripts/run_player.py --source samples/clip.mp4
-python scripts/run_player.py --source-type camera --camera 0
-python scripts/run_player.py --source-type image_dir --source datasets/rugd/images
+python scripts/inference/run_player.py --config config/config.yaml
+python scripts/inference/run_player.py --source samples/clip.mp4
+python scripts/inference/run_player.py --source-type camera --camera 0
+python scripts/inference/run_player.py --source-type image_dir --source datasets/rugd/images
 ```
 
 Keyboard shortcuts: `Space` play/pause, `Left`/`Right` seek 1 s,
@@ -136,7 +136,7 @@ Seeking automatically resets temporal buffers (EMA + tracker) because
 temporal context is broken.
 
 **Video player vs ORFD freespace strips:** The Qt player and
-`scripts/orfd_semantic_comparison.py` use the same SegFormer (and the same
+`scripts/evaluation/orfd_semantic_comparison.py` use the same SegFormer (and the same
 `config.yaml` weights / class merge rules). The comparison script’s strips
 show **binary traversable** predictions (road_ground vs GT path) for IoU;
 the player draws the full **argmax** terrain overlay, with each class’s
@@ -146,8 +146,8 @@ visibility controlled by `display_mode` and `player.draw_road_ground_semantic_la
 ### Headless inference
 
 ```bash
-python scripts/run_headless.py --source samples/clip.mp4 --output runs/clip_overlay.mp4
-python scripts/run_headless.py --source datasets/rugd/images --max-frames 1000
+python scripts/inference/run_headless.py --source samples/clip.mp4 --output runs/clip_overlay.mp4
+python scripts/inference/run_headless.py --source datasets/rugd/images --max-frames 1000
 ```
 
 Same pipeline, no Qt - useful for benchmarking and CI.
@@ -157,19 +157,19 @@ Same pipeline, no Qt - useful for benchmarking and CI.
 Writes one overlay MP4 per clip (models loaded once; temporal buffers reset per file):
 
 ```bash
-python scripts/render_samples.py --config config/config.yaml
+python scripts/tools/render_samples.py --config config/config.yaml
 # Default: scans ./samples/*.mp4 (etc.) -> ./samples/annotated/<name>_annotated.mp4
 
-python scripts/render_samples.py --samples-dir /data/clips --out-dir /data/out_overlays
-python scripts/render_samples.py --recursive --max-frames 300   # smoke test per clip
+python scripts/tools/render_samples.py --samples-dir /data/clips --out-dir /data/out_overlays
+python scripts/tools/render_samples.py --recursive --max-frames 300   # smoke test per clip
 ```
 
 ### Download test datasets
 
 ```bash
-python scripts/download_datasets.py                         # both
-python scripts/download_datasets.py --dataset rugd
-python scripts/download_datasets.py --dataset orfd --out /data
+python scripts/tools/download_datasets.py                         # both
+python scripts/tools/download_datasets.py --dataset rugd
+python scripts/tools/download_datasets.py --dataset orfd --out /data
 ```
 
 ORFD is hosted on Google Drive; if the upstream id changes set
@@ -274,6 +274,61 @@ SOLID is enforced by the import graph: `core` depends on nothing,
 `pipeline` only on the abstract bases of `models`+`temporal`, and `ui`
 only on `pipeline`+`render`+`io`. Adding a new model = subclass an ABC,
 register in `factory.py`, add a YAML entry. Done.
+
+---
+
+## Optimization Pipeline (Jetson deployment)
+
+A multi-stage pipeline in `scripts/optimization/` systematically optimizes the
+SegFormer-B2 checkpoint for Jetson AGX Orin deployment.
+
+| Stage | Script | What it does |
+|-------|--------|--------------|
+| 0 | `resolution_sweep.py` | mIoU + latency at 256 / 384 / 512 px — pick your input resolution |
+| 1 | `export_onnx.py` | FP16 ONNX export with ONNX-checker + onnxruntime numerical validation |
+| 2 | `train_qat.py` | INT8 QAT via NVIDIA modelopt (fake-quant → calibrate → fine-tune → QDQ ONNX) |
+| 3 | `train_sparse.py` | 2:4 structured sparsity + QAT (runtime speedup on Jetson with cuSPARSELt) |
+| 4 | `benchmark_jetson.py` | **Runs on Jetson** — TRT engine build, latency benchmark, mIoU re-validation, soak test |
+| 5 | `train_distill.py` | Knowledge distillation skeleton (conditional last-resort only) |
+| 6a | `compare_models.py` | Side-by-side image panels and split-screen video with independent FPS overlays |
+| 6b | `generate_report.py` | Markdown + colour-coded HTML table from `benchmark_results.csv` |
+
+### Quick start (dev PC → Jetson workflow)
+
+```bash
+# Stage 0: resolution sweep (choose resolution from table)
+python scripts/optimization/resolution_sweep.py \
+    --checkpoint weights/orfd/frozen_backbone/segformer-b2/best.pth \
+    --data datasets/Final_Dataset
+
+# Stage 1: FP16 baseline ONNX
+python scripts/optimization/export_onnx.py --resolution 256
+
+# Stage 2: QAT INT8
+python scripts/optimization/train_qat.py --config config/optimization/qat.yaml
+
+# Stage 3: 2:4 sparsity + QAT
+python scripts/optimization/train_sparse.py --config config/optimization/sparse.yaml
+
+# Transfer weights/optimization/*.onnx to Jetson, then on Jetson:
+# Stage 4 (Jetson only):
+python scripts/optimization/benchmark_jetson.py \
+    --onnx-dir weights/optimization/ --val-data datasets/Final_Dataset
+
+# Stage 6: reports and comparisons
+python scripts/optimization/generate_report.py
+python scripts/optimization/compare_models.py --mode images \
+    --model-a pytorch:weights/orfd/frozen_backbone/segformer-b2/best.pth \
+    --model-b onnx:weights/optimization/qat_int8_256x256.onnx \
+    --test-data datasets/Final_Dataset
+```
+
+New dependencies for the optimization pipeline:
+```bash
+pip install 'nvidia-modelopt[torch]' onnx>=1.16 onnxruntime-gpu
+```
+
+See `JETSON.md` for the full Jetson-side workflow and pre-flight checklist.
 
 ---
 

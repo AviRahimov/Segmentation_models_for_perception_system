@@ -50,7 +50,7 @@ import numpy as np
 import torch
 
 _HERE = Path(__file__).resolve().parent
-_REPO = _HERE.parent
+_REPO = _HERE.parents[1]
 
 
 _COMPARE_SEMANTIC_MOD: object | None = None

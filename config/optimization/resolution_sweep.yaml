@@ -1,0 +1,13 @@
+# Stage 0: Resolution sweep configuration.
+# Run: python scripts/optimization/resolution_sweep.py
+
+checkpoint: "weights/orfd/frozen_backbone/segformer-b2/best.pth"
+data:       "datasets/Final_Dataset"
+
+# Resolutions to evaluate. Choose the best tradeoff for downstream stages.
+resolutions: [256, 384, 512]
+
+batch_size: 8
+workers:    4
+
+output: "reports/optimization/resolution_sweep.json"

@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str((_HERE.parent / "src").resolve()))
+sys.path.insert(0, str((_HERE.parents[1] / "src").resolve()))
 
 logger = logging.getLogger("export_trt")
 
@@ -115,6 +115,8 @@ def export_segformer(cfg) -> Path:
     if _is_local:
         ckpt = torch.load(weights, map_location="cpu", weights_only=True)
         state_dict = ckpt.get("net", ckpt) if isinstance(ckpt, dict) else ckpt
+        from perception.models.semantic.segformer import _remap_segformer_keys
+        state_dict = _remap_segformer_keys(state_dict)
         n_labels = state_dict["decode_head.classifier.weight"].shape[0]
         model = SegformerForSemanticSegmentation.from_pretrained(
             hf_base, num_labels=n_labels, ignore_mismatched_sizes=True
@@ -152,12 +154,13 @@ def export_segformer(cfg) -> Path:
 
     torch.onnx.export(
         model,
-        {"pixel_values": sample},
+        (sample,),          # positional tuple — required in torch 2.x
         str(onnx_path),
         input_names=["pixel_values"],
         output_names=["logits"],
         opset_version=17,
         do_constant_folding=True,
+        dynamo=False,       # force TorchScript exporter (dict args broken in 2.11)
     )
     logger.info("ONNX export complete: %s", onnx_path)
 

@@ -26,7 +26,7 @@ from pathlib import Path
 import cv2
 
 _HERE = Path(__file__).resolve().parent
-_REPO_ROOT = _HERE.parent
+_REPO_ROOT = _HERE.parents[1]
 sys.path.insert(0, str((_REPO_ROOT / "src").resolve()))
 
 from perception.config.loader import load_config          # noqa: E402

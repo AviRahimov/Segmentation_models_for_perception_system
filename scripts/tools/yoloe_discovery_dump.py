@@ -14,7 +14,7 @@ from collections import defaultdict
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str((_HERE.parent / "src").resolve()))
+sys.path.insert(0, str((_HERE.parents[1] / "src").resolve()))
 
 from perception.config.loader import load_config, override_source  # noqa: E402
 from perception.io.factory import build_source  # noqa: E402

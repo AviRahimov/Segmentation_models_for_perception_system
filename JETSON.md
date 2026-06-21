@@ -28,7 +28,7 @@ cd /mnt/nvme/avi_ws/Segmentation_models_for_perception_system
 ls weights/orfd/frozen_backbone/segformer-b2/best.pth   # expected
 
 # The CLIP model used by YOLOE must be present in the repo root:
-ls mobileclip2_b.ts   # ~240 MB — downloaded during Docker build or copy manually
+ls weights/mobileclip2_b.ts   # ~240 MB — downloaded during Docker build or copy manually
 
 # HuggingFace models (SegFormer base) are cached in a Docker volume (hf_cache)
 # and downloaded automatically on first run.
@@ -86,17 +86,17 @@ docker compose -f docker-compose.jetson.yml up perception
 
 # Run on a specific video file
 docker compose -f docker-compose.jetson.yml run --rm perception \
-  scripts/run_headless.py --source samples/off_road_vid1.mp4
+  scripts/inference/run_headless.py --source samples/off_road_vid1.mp4
 
 # Save annotated output video
 docker compose -f docker-compose.jetson.yml run --rm perception \
-  scripts/run_headless.py \
+  scripts/inference/run_headless.py \
     --source samples/off_road_vid1.mp4 \
     --output /app/samples/annotated/off_road_vid1_annotated.mp4
 
 # Limit to first 200 frames (quick smoke test)
 docker compose -f docker-compose.jetson.yml run --rm perception \
-  scripts/run_headless.py --source samples/off_road_vid1.mp4 --max-frames 200
+  scripts/inference/run_headless.py --source samples/off_road_vid1.mp4 --max-frames 200
 ```
 
 ### GUI player (requires X11 forwarding over SSH)
@@ -121,18 +121,18 @@ source venv/bin/activate
 cd /mnt/nvme/avi_ws/Segmentation_models_for_perception_system
 
 # Headless — logs FPS at end
-python3 scripts/run_headless.py --source samples/off_road_vid1.mp4
+python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4
 
 # With output video
-python3 scripts/run_headless.py \
+python3 scripts/inference/run_headless.py \
   --source samples/off_road_vid1.mp4 \
   --output samples/annotated/out.mp4
 
 # GUI player (requires display)
-python3 scripts/run_player.py --source samples/off_road_vid1.mp4
+python3 scripts/inference/run_player.py --source samples/off_road_vid1.mp4
 
 # Override config file
-python3 scripts/run_headless.py \
+python3 scripts/inference/run_headless.py \
   --config config/config.yaml \
   --source samples/off_road_vid1.mp4
 ```
@@ -149,11 +149,11 @@ source venv/bin/activate
 cd /mnt/nvme/avi_ws/Segmentation_models_for_perception_system
 
 # Export both YOLOE and SegFormer (recommended)
-python3 scripts/export_trt.py --config config/config.yaml
+python3 scripts/tools/export_trt.py --config config/config.yaml
 
 # Export only one model
-python3 scripts/export_trt.py --config config/config.yaml --model yoloe
-python3 scripts/export_trt.py --config config/config.yaml --model segformer
+python3 scripts/tools/export_trt.py --config config/config.yaml --model yoloe
+python3 scripts/tools/export_trt.py --config config/config.yaml --model segformer
 ```
 
 Expected build times on Jetson AGX Orin:
@@ -177,6 +177,65 @@ hardware:
 
 ---
 
+## Optimization Pipeline (Jetson steps)
+
+The full optimization pipeline lives in `scripts/optimization/`. Stages 0–3 run
+on the **dev PC** (RTX 5090); Stage 4 runs on the **Jetson** because TRT engines
+are not portable between GPU architectures.
+
+### Pre-flight (run once before Stage 4)
+
+```bash
+sudo nvpmodel -m 0              # MAXN power mode (max performance)
+sudo jetson_clocks               # lock all clocks to maximum
+dpkg -l | grep tensorrt          # confirm TensorRT 10.x
+ls /usr/local/cuda/lib64/libcusparse_lt.so*  # check cuSPARSELt for 2:4 sparsity
+```
+
+### Stage 4: Engine build + authoritative benchmark
+
+Transfer all `.onnx` files from `weights/optimization/` on the dev PC to the Jetson,
+then run:
+
+```bash
+source venv/bin/activate
+cd /mnt/nvme/avi_ws/Segmentation_models_for_perception_system
+
+python3 scripts/optimization/benchmark_jetson.py \
+    --onnx-dir weights/optimization/ \
+    --val-data datasets/Final_Dataset \
+    --output reports/optimization/benchmark_results.csv
+
+# Optional: 30-minute soak test per variant (adds ~2h total):
+python3 scripts/optimization/benchmark_jetson.py \
+    --onnx-dir weights/optimization/ \
+    --val-data datasets/Final_Dataset \
+    --soak
+```
+
+This script:
+- Builds one TRT `.engine` per `.onnx` via `trtexec` (flags auto-detected from filename).
+- Benchmarks latency (p50, p99) and FPS via the real `TensorRTBackend`.
+- Re-validates mIoU from engine output (flags if engine drop > 1% vs PyTorch).
+- Writes `reports/optimization/benchmark_results.csv`.
+
+### Stage 6: Generate report + video comparison (on Jetson or dev PC)
+
+```bash
+# Generate Markdown + HTML table from benchmark CSV:
+python3 scripts/optimization/generate_report.py \
+    --csv reports/optimization/benchmark_results.csv
+
+# Side-by-side video comparison (engine vs baseline):
+python3 scripts/optimization/compare_models.py --mode video \
+    --model-a pytorch:weights/orfd/frozen_backbone/segformer-b2/best.pth \
+    --model-b engine:weights/optimization/qat_int8_256x256.engine \
+    --source samples/off_road_vid1.mp4 \
+    --output reports/optimization/video_compare_baseline_vs_qat.mp4
+```
+
+---
+
 ## FPS Benchmarking
 
 Use `run_headless.py` — it processes all frames and logs `Processed N frames in Xs (Y FPS)` at the end.
@@ -186,26 +245,26 @@ source venv/bin/activate
 cd /mnt/nvme/avi_ws/Segmentation_models_for_perception_system
 
 # ── Full pipeline: YOLOE + SegFormer-B2 frozen (PyTorch FP16) ──────────────
-python3 scripts/run_headless.py --source samples/off_road_vid1.mp4
+python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4
 
 # ── Semantic-only: disable YOLOE, SegFormer-B2 frozen (PyTorch FP16) ───────
 # Edit config.yaml first: models.instance.enabled: false
-python3 scripts/run_headless.py --source samples/off_road_vid1.mp4
+python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4
 
 # ── Semantic-only: SegFormer-B1 (faster, smaller model) ────────────────────
 # Edit config.yaml: OPTION B (segformer-b1) + models.instance.enabled: false
-python3 scripts/run_headless.py --source samples/off_road_vid1.mp4
+python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4
 
 # ── Semantic-only: SegFormer-B0 (fastest SegFormer) ────────────────────────
 # Edit config.yaml: OPTION A (segformer-b0) + models.instance.enabled: false
-python3 scripts/run_headless.py --source samples/off_road_vid1.mp4
+python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4
 
 # ── Full pipeline with TensorRT (after export_trt.py) ──────────────────────
 # Edit config.yaml: hardware.use_tensorrt: true + engine paths set
-python3 scripts/run_headless.py --source samples/off_road_vid1.mp4
+python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4
 
 # ── Limit frames for a quick check ─────────────────────────────────────────
-python3 scripts/run_headless.py --source samples/off_road_vid1.mp4 --max-frames 300
+python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4 --max-frames 300
 ```
 
 ---
@@ -214,16 +273,20 @@ python3 scripts/run_headless.py --source samples/off_road_vid1.mp4 --max-frames 
 
 | Script | Purpose | Example |
 |---|---|---|
-| `run_headless.py` | Headless inference, logs FPS | `python3 scripts/run_headless.py --source samples/video.mp4` |
-| `run_player.py` | PyQt5 GUI player | `python3 scripts/run_player.py --source samples/video.mp4` |
-| `export_trt.py` | Build TRT `.engine` files | `python3 scripts/export_trt.py --config config/config.yaml` |
-| `train_orfd.py` | Fine-tune segmentation model | `python3 scripts/train_orfd.py --model segformer-b2 --freeze-backbone ...` |
-| `benchmark_orfd.py` | Accuracy metrics on ORFD val set | `python3 scripts/benchmark_orfd.py --models segformer-b2-frozen` |
-| `orfd_semantic_comparison.py` | Side-by-side model comparison strips | `python3 scripts/orfd_semantic_comparison.py` |
-| `annotate_images.py` | Annotate a folder of images | `python3 scripts/annotate_images.py --input dir/` |
-| `render_samples.py` | Render annotated sample videos | `python3 scripts/render_samples.py` |
-| `download_datasets.py` | Download ORFD / GOOSE datasets | `python3 scripts/download_datasets.py` |
-| `yoloe_discovery_dump.py` | Dump YOLOE open-vocab detections | `python3 scripts/yoloe_discovery_dump.py` |
+| `run_headless.py` | Headless inference, logs FPS | `python3 scripts/inference/run_headless.py --source samples/video.mp4` |
+| `run_player.py` | PyQt5 GUI player | `python3 scripts/inference/run_player.py --source samples/video.mp4` |
+| `export_trt.py` | Build TRT `.engine` files (production) | `python3 scripts/tools/export_trt.py --config config/config.yaml` |
+| `train_orfd.py` | Fine-tune segmentation model | `python3 scripts/training/train_orfd.py --model segformer-b2 --freeze-backbone ...` |
+| `benchmark_orfd.py` | Accuracy metrics on ORFD val set | `python3 scripts/evaluation/benchmark_orfd.py --models segformer-b2-frozen` |
+| `orfd_semantic_comparison.py` | Side-by-side model comparison strips | `python3 scripts/evaluation/orfd_semantic_comparison.py` |
+| `annotate_images.py` | Annotate a folder of images | `python3 scripts/tools/annotate_images.py --input dir/` |
+| `render_samples.py` | Render annotated sample videos | `python3 scripts/tools/render_samples.py` |
+| `download_datasets.py` | Download ORFD / GOOSE datasets | `python3 scripts/tools/download_datasets.py` |
+| `yoloe_discovery_dump.py` | Dump YOLOE open-vocab detections | `python3 scripts/tools/yoloe_discovery_dump.py` |
+| **Optimization pipeline** | | |
+| `optimization/benchmark_jetson.py` | Stage 4 — TRT engine build + authoritative benchmark | `python3 scripts/optimization/benchmark_jetson.py --onnx-dir weights/optimization/ --val-data datasets/Final_Dataset` |
+| `optimization/compare_models.py` | Stage 6a — side-by-side image / video comparison | `python3 scripts/optimization/compare_models.py --mode video --model-a pytorch:... --model-b engine:...` |
+| `optimization/generate_report.py` | Stage 6b — Markdown + HTML results table | `python3 scripts/optimization/generate_report.py --csv reports/optimization/benchmark_results.csv` |
 
 ---
 
@@ -280,7 +343,7 @@ For headless benchmarking, always prefer `run_headless.py`.
 **TRT engine fails to load after JetPack upgrade**
 Engines are version-locked. After any JetPack / TensorRT upgrade:
 ```bash
-python3 scripts/export_trt.py --config config/config.yaml
+python3 scripts/tools/export_trt.py --config config/config.yaml
 # Update config.yaml with new engine paths
 ```
 
