@@ -4,7 +4,6 @@ import pytest
 from perception.config.schema import HardwareCfg, SemanticModelCfg
 from perception.models import factory as model_factory
 from perception.models.backends.pytorch import PyTorchBackend
-from perception.models.semantic.auriganet import AurigaNetSemanticModel
 from perception.models.semantic.segformer import SegFormerSemanticModel
 
 
@@ -91,25 +90,6 @@ def test_segformer_explicit_weights_override(patched_segformer):
     cfg = SemanticModelCfg(name="segformer-b2", weights="my-org/my-segformer")
     model_factory.build_semantic_model(cfg, _CPU_HW, backend=PyTorchBackend())
     assert patched_segformer["model_weights"] == "my-org/my-segformer"
-
-
-# --------------------------------------------------------------------------- #
-# AurigaNet                                                                    #
-# --------------------------------------------------------------------------- #
-
-
-def test_auriganet_dispatch_cpu():
-    """Factory dispatches 'auriganet' → AurigaNetSemanticModel on CPU."""
-    cfg = SemanticModelCfg(name="auriganet", weights="")
-    m = model_factory.build_semantic_model(cfg, _CPU_HW, backend=PyTorchBackend())
-    assert isinstance(m, AurigaNetSemanticModel)
-
-
-def test_auriganet_num_classes_propagated():
-    """num_classes kwarg reaches the model."""
-    cfg = SemanticModelCfg(name="auriganet", weights="", num_classes=3)
-    m = model_factory.build_semantic_model(cfg, _CPU_HW, backend=PyTorchBackend())
-    assert m._num_classes == 3
 
 
 # --------------------------------------------------------------------------- #

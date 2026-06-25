@@ -13,7 +13,6 @@ from .instance.base import InstanceModel
 from .instance.rfdetr.model import RFDETRInstanceModel
 from .instance.yolo.closed import YOLOClosedInstanceModel
 from .instance.yolo.open import YOLOEInstanceModel
-from .semantic.auriganet import AurigaNetSemanticModel
 from .semantic.base import SemanticModel
 from .semantic.segformer import SegFormerSemanticModel
 
@@ -76,7 +75,6 @@ SEMANTIC_REGISTRY: dict[str, Type[SemanticModel]] = {
     "segformer":    SegFormerSemanticModel,
     "segformer-b4": SegFormerSemanticModel,
     "segformer_b4": SegFormerSemanticModel,
-    "auriganet":    AurigaNetSemanticModel,
 }
 
 SEMANTIC_DEFAULT_WEIGHTS: dict[str, str] = {
@@ -89,7 +87,6 @@ SEMANTIC_DEFAULT_WEIGHTS: dict[str, str] = {
     "segformer":    "nvidia/segformer-b2-finetuned-ade-512-512",
     "segformer-b4": "nvidia/segformer-b4-finetuned-ade-512-512",
     "segformer_b4": "nvidia/segformer-b4-finetuned-ade-512-512",
-    "auriganet":    "",
 }
 
 

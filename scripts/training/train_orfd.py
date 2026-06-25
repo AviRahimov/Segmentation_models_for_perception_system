@@ -6,7 +6,6 @@ Supported models
   segformer-b1   Start from nvidia/segformer-b1-finetuned-ade-512-512
   segformer-b2   Start from nvidia/segformer-b2-finetuned-ade-512-512
   segformer-b4   Start from nvidia/segformer-b4-finetuned-ade-512-512
-  auriganet      Start from random init (no public BDD100K weights); train from scratch
 
 Usage
 -----
@@ -168,45 +167,6 @@ def _worker_init_fn(worker_id: int) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def build_auriganet(device: str, fp16: bool, weights: str = "") -> tuple[nn.Module, None]:
-    """Return (model, None) for AurigaNet fine-tuning on ORFD."""
-    sys.path.insert(0, str(_ROOT / "src"))
-    from perception.models.semantic._vendored.auriganet import AurigaNetArch
-
-    logger.info("Building AurigaNet (num_seg_classes=3, with_detection=False) ...")
-    model = AurigaNetArch(num_seg_classes=NUM_CLASSES, with_detection=False)
-
-    if weights and Path(weights).is_file():
-        ckpt = torch.load(weights, map_location="cpu", weights_only=True)
-        state_dict = ckpt.get("net", ckpt) if isinstance(ckpt, dict) else ckpt
-        missing, unexpected = model.load_state_dict(state_dict, strict=False)
-        if missing:
-            logger.warning("AurigaNet resume: %d missing keys", len(missing))
-        logger.info("AurigaNet loaded from %s", weights)
-
-    model = model.to(device)
-    return model, None
-
-
-def auriganet_forward(
-    model: nn.Module,
-    images_chw: torch.Tensor,  # (B, 3, H, W) float32, ImageNet-normalised
-    device: str,
-    fp16: bool,
-) -> torch.Tensor:
-    """Return (B, NUM_CLASSES, H, W) upsampled logits from AurigaNet."""
-    b, _, h, w = images_chw.shape
-    x = images_chw.to(device)
-
-    with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=fp16):
-        seg_logits, _embed, _det = model(x)  # (B, C, H/4, W/4)
-
-    seg_logits = torch.nn.functional.interpolate(
-        seg_logits.float(), size=(h, w), mode="bilinear", align_corners=False,
-    )
-    return seg_logits  # (B, C, H, W)
-
-
 def build_segformer(variant: str, device: str, fp16: bool) -> tuple[nn.Module, object]:
     """Return (model, processor) for SegFormer fine-tuning.
 
@@ -310,7 +270,6 @@ def train_one_epoch(
     device: str,
     fp16: bool,
     clip_norm: float,
-    is_auriganet: bool = False,
 ) -> float:
     model.train()
     total_loss = 0.0
@@ -320,10 +279,7 @@ def train_one_epoch(
 
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=fp16):
-            if is_auriganet:
-                logits = auriganet_forward(model, images, device, fp16=False)
-            else:
-                logits = segformer_forward(model, processor, images, device, fp16=False)
+            logits = segformer_forward(model, processor, images, device, fp16=False)
             loss = criterion(logits, labels)
 
         loss.backward()
@@ -342,7 +298,6 @@ def evaluate(
     criterion: nn.Module,
     device: str,
     fp16: bool,
-    is_auriganet: bool = False,
 ) -> tuple[float, float]:
     """Return (val_loss, mean_iou)."""
     model.eval()
@@ -355,10 +310,7 @@ def evaluate(
         labels = labels.to(device, non_blocking=True)
 
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=fp16):
-            if is_auriganet:
-                logits = auriganet_forward(model, images, device, fp16=False)
-            else:
-                logits = segformer_forward(model, processor, images, device, fp16=False)
+            logits = segformer_forward(model, processor, images, device, fp16=False)
             loss = criterion(logits, labels)
 
         total_loss += loss.item()
@@ -388,7 +340,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--config", default=str(_ROOT / "config" / "train.yaml"),
                    help="Path to train.yaml config file")
     p.add_argument("--model",   default=cfg.get("model", "segformer-b2"),
-                   choices=["segformer-b0", "segformer-b1", "segformer-b2", "segformer-b4", "auriganet"])
+                   choices=["segformer-b0", "segformer-b1", "segformer-b2", "segformer-b4"])
     p.add_argument("--data",    default=cfg.get("data",    "datasets/orfd"),
                    help="Path to dataset root (must contain training/ and validation/)")
     p.add_argument("--epochs",  type=int,   default=cfg.get("epochs",   100))
@@ -415,7 +367,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--freeze-backbone", action="store_true",
                    help="Freeze encoder; only train the segmentation head (and LoRA adapters if --lora)")
     p.add_argument("--lora", action="store_true",
-                   help="Apply LoRA to SegFormer encoder Q/V projections (ignored for AurigaNet)")
+                   help="Apply LoRA to SegFormer encoder Q/V projections")
     return p.parse_args()
 
 
@@ -460,15 +412,10 @@ def main() -> None:
     logger.info("Train: %d samples  Val: %d samples", len(train_ds), len(val_ds))
 
     # --- Model ---
-    is_auriganet = args.model == "auriganet"
-    if is_auriganet:
-        resume_weights = args.resume if args.resume and Path(args.resume).is_file() else ""
-        model, processor = build_auriganet(device, fp16, weights=resume_weights)
-    else:
-        model, processor = build_segformer(args.model, device, fp16)
+    model, processor = build_segformer(args.model, device, fp16)
 
     # --- Optional: LoRA for SegFormer encoder ---
-    if args.lora and not is_auriganet:
+    if args.lora:
         from peft import get_peft_model, LoraConfig
         lora_config = LoraConfig(
             r=16, lora_alpha=32, lora_dropout=0.1,
@@ -484,44 +431,27 @@ def main() -> None:
 
     # --- Optional: freeze backbone (encoder), train head (+ LoRA adapters) only ---
     if args.freeze_backbone:
-        if is_auriganet:
-            frozen = 0
-            for name, p in model.named_parameters():
-                if "Seg.area_fe" not in name:
-                    p.requires_grad_(False)
-                    frozen += p.numel()
-            logger.info("AurigaNet: backbone frozen (%dM params).", frozen // 1_000_000)
-        else:
-            frozen = 0
-            for name, p in model.named_parameters():
-                # Keep decode_head trainable; keep any LoRA adapter trainable.
-                if "decode_head" not in name and "lora_" not in name:
-                    p.requires_grad_(False)
-                    frozen += p.numel()
-            logger.info("SegFormer: backbone frozen (%dM params).", frozen // 1_000_000)
+        frozen = 0
+        for name, p in model.named_parameters():
+            # Keep decode_head trainable; keep any LoRA adapter trainable.
+            if "decode_head" not in name and "lora_" not in name:
+                p.requires_grad_(False)
+                frozen += p.numel()
+        logger.info("SegFormer: backbone frozen (%dM params).", frozen // 1_000_000)
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total     = sum(p.numel() for p in model.parameters())
     logger.info("Trainable params: %dM / %dM total.", trainable // 1_000_000, total // 1_000_000)
 
     # Rebuild param groups after freeze/LoRA (requires_grad may have changed).
-    if is_auriganet:
-        seg_params     = [p for p in model.Seg.area_fe.parameters() if p.requires_grad]
-        backbone_params = [p for p in model.parameters()
-                          if p.requires_grad and id(p) not in {id(q) for q in seg_params}]
-        param_groups = [
-            {"params": backbone_params, "lr": args.lr * 0.1},
-            {"params": seg_params,      "lr": args.lr},
-        ]
-    else:
-        head_params     = [p for p in model.decode_head.parameters() if p.requires_grad]
-        head_ids        = {id(p) for p in head_params}
-        backbone_params = [p for p in model.parameters()
-                          if p.requires_grad and id(p) not in head_ids]
-        param_groups = [
-            {"params": backbone_params, "lr": args.lr * 0.1},
-            {"params": head_params,      "lr": args.lr},
-        ]
+    head_params     = [p for p in model.decode_head.parameters() if p.requires_grad]
+    head_ids        = {id(p) for p in head_params}
+    backbone_params = [p for p in model.parameters()
+                      if p.requires_grad and id(p) not in head_ids]
+    param_groups = [
+        {"params": backbone_params, "lr": args.lr * 0.1},
+        {"params": head_params,      "lr": args.lr},
+    ]
 
     optimizer = AdamW(param_groups, weight_decay=args.wd)
     warmup_sched = LinearLR(optimizer, start_factor=0.1, end_factor=1.0,
@@ -540,9 +470,7 @@ def main() -> None:
     start_epoch = 1
     best_miou   = 0.0
 
-    if args.resume and not is_auriganet:
-        # AurigaNet model weights are already loaded in build_auriganet; only
-        # SegFormer needs the generic model.load_state_dict path.
+    if args.resume:
         resume_path = Path(args.resume)
         if not resume_path.exists():
             raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
@@ -558,20 +486,6 @@ def main() -> None:
             "Resumed from %s  (epoch %d, best mIoU %.4f)",
             resume_path, start_epoch - 1, best_miou,
         )
-    elif args.resume and is_auriganet:
-        resume_path = Path(args.resume)
-        if resume_path.exists():
-            ckpt = torch.load(str(resume_path), map_location="cpu", weights_only=False)
-            if "optimizer" in ckpt:
-                optimizer.load_state_dict(ckpt["optimizer"])
-            if "scheduler" in ckpt:
-                scheduler.load_state_dict(ckpt["scheduler"])
-            start_epoch = ckpt.get("epoch", 0) + 1
-            best_miou   = ckpt.get("best_miou", ckpt.get("miou", 0.0))
-            logger.info(
-                "AurigaNet resumed from %s  (epoch %d, best mIoU %.4f)",
-                resume_path, start_epoch - 1, best_miou,
-            )
 
     # --- Training loop ---
     patience_left = args.patience
@@ -590,11 +504,10 @@ def main() -> None:
 
         train_loss = train_one_epoch(
             model, processor, train_loader, optimizer, criterion,
-            device, fp16, args.clip_norm, is_auriganet=is_auriganet,
+            device, fp16, args.clip_norm,
         )
         val_loss, val_miou = evaluate(
             model, processor, val_loader, criterion, device, fp16,
-            is_auriganet=is_auriganet,
         )
         scheduler.step()
 
@@ -620,7 +533,7 @@ def main() -> None:
             patience_left = args.patience
             # best.pth: weights only (used by run_player.py).
             # If LoRA was used, merge adapters so the checkpoint is a plain state dict.
-            if args.lora and not is_auriganet:
+            if args.lora:
                 merged = model.merge_and_unload()
                 _save_checkpoint(merged, out_dir / "best.pth", epoch, val_miou)
             else:

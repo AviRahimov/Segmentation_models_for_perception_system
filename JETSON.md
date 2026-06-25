@@ -295,7 +295,7 @@ python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4 --m
 | Field | What it does |
 |---|---|
 | `models.instance.enabled` | `false` → skip YOLOE entirely (semantic-only, ~2× faster) |
-| `models.semantic.name` | `segformer-b0/b1/b2/b4` or `auriganet` (see OPTION A–F comments) |
+| `models.semantic.name` | `segformer-b0/b1/b2/b4` (see OPTION A–E comments in config.yaml) |
 | `models.semantic.weights` | Path to fine-tuned `.pth` checkpoint |
 | `models.semantic.processor_size` | `256` / `384` / `512` — lower = faster, coarser boundaries |
 | `models.semantic.trt_engine_path` | Path to TRT `.engine` file (requires `hardware.use_tensorrt: true`) |

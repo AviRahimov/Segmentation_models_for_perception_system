@@ -550,7 +550,7 @@ def main() -> int:
     p.add_argument(
         "--models",
         nargs="+",
-        default=("segformer-b2", "segformer-b4", "auriganet"),
+        default=("segformer-b2", "segformer-b4"),
         help="Semantic model keys.",
     )
     p.add_argument(

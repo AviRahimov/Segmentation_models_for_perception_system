@@ -50,11 +50,6 @@ models:
     # name: "segformer-b2"
     # weights: ""
 
-    # ── OPTION F: AurigaNet fine-tuned (ORFD) ──────────────────────────────
-    # name: "auriganet"
-    # weights: "weights/orfd/frozen_backbone/auriganet/best.pth"
-    # num_classes: 3
-
 # ---------------------------------------------------------------------------
 # Class definitions
 #

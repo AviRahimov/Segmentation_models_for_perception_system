@@ -142,12 +142,6 @@ def _default_model_defs() -> list[dict[str, Any]]:
             "hf_id": "nvidia/segformer-b4-finetuned-ade-512-512",
             "checkpoint": str(_ROOT / "weights" / "orfd" / "final_dataset" / "segformer-b4" / "best.pth"),
         },
-        {
-            "key": "auriganet-final",
-            "label": "AurigaNet\n(ORFD fine-tuned)",
-            "type": "auriganet-finetuned",
-            "checkpoint": str(_ROOT / "weights" / "orfd" / "auriganet" / "best.pth"),
-        },
     ]
     return defs
 
@@ -229,42 +223,6 @@ def load_segformer_finetuned(hf_id: str, checkpoint: str, device: str, fp16: boo
         # Class 1 = traversable in both 2-class and 3-class models;
         # sky (class 2) maps to 0 (non-traversable) automatically.
         return (out.argmax(0) == 1).byte().cpu().numpy()
-
-    params = sum(p.numel() for p in model.parameters()) / 1e6
-    size_mb = Path(checkpoint).stat().st_size / 1e6
-    return predict, params, size_mb
-
-
-def load_auriganet_finetuned(checkpoint: str, device: str, fp16: bool):
-    """Load fine-tuned AurigaNet from a training checkpoint."""
-    from perception.models.semantic._vendored.auriganet import AurigaNetArch
-
-    _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-    _STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-
-    ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
-    state_dict = ckpt.get("net", ckpt) if isinstance(ckpt, dict) else ckpt
-    model = AurigaNetArch(num_seg_classes=3, with_detection=False)
-    model.load_state_dict(state_dict, strict=False)
-    model.eval().to(device)
-    if fp16:
-        model = model.half()
-
-    @torch.no_grad()
-    def predict(frame_bgr: np.ndarray) -> np.ndarray:
-        h, w = frame_bgr.shape[:2]
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        resized = cv2.resize(rgb, (640, 640), interpolation=cv2.INTER_LINEAR)
-        x = resized.astype(np.float32) / 255.0
-        x = (x - _MEAN) / _STD
-        x = torch.from_numpy(x.transpose(2, 0, 1)).unsqueeze(0).to(device)
-        if fp16:
-            x = x.half()
-        seg_logits, _, _ = model(x)  # (1, 3, 160, 160)
-        seg_logits = F.interpolate(
-            seg_logits.float(), size=(h, w), mode="bilinear", align_corners=False
-        )[0]
-        return (seg_logits.argmax(0) == 1).byte().cpu().numpy()
 
     params = sum(p.numel() for p in model.parameters()) / 1e6
     size_mb = Path(checkpoint).stat().st_size / 1e6
@@ -601,8 +559,6 @@ def main() -> None:
             pfn, params, size = load_segformer_baseline(hf_id, device, fp16)
         elif mtype == "segformer-finetuned":
             pfn, params, size = load_segformer_finetuned(hf_id, ckpt, device, fp16)
-        elif mtype == "auriganet-finetuned":
-            pfn, params, size = load_auriganet_finetuned(ckpt, device, fp16)
         else:
             logger.warning("Unknown model type %s, skipping.", mtype)
             continue
