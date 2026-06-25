@@ -211,10 +211,16 @@ def _build_inferencer(spec: str, resolution: int, device: str) -> _Inferencer:
 # Rendering helpers                                                             #
 # --------------------------------------------------------------------------- #
 
-def _make_overlay(bgr: np.ndarray, mask: np.ndarray, alpha: float = 0.5) -> np.ndarray:
-    """Blend class-coloured mask onto bgr image (BGR)."""
+def _make_overlay(bgr: np.ndarray, mask: np.ndarray, alpha: float = 0.5,
+                  classes: list[int] | None = None) -> np.ndarray:
+    """Blend class-coloured mask onto bgr image (BGR).
+
+    classes: if given, only blend those class indices (None = all classes).
+    """
     out = bgr.copy()
     for cls_idx, color_bgr in enumerate(_CLASS_COLORS_BGR):
+        if classes is not None and cls_idx not in classes:
+            continue
         m = (mask == cls_idx)
         if m.any():
             from perception.render.overlay import blend_mask
@@ -269,8 +275,8 @@ def _mode_images(args) -> int:
     logger.info("Comparing %d test images ...", len(selected))
 
     # Output dir.
-    name_a = args.model_a.replace(":", "_").replace("/", "_").replace(".", "_")[:30]
-    name_b = args.model_b.replace(":", "_").replace("/", "_").replace(".", "_")[:30]
+    name_a = _variant_name(args.model_a)
+    name_b = _variant_name(args.model_b)
     out_dir = Path(args.output_dir or
                    _ROOT / "reports" / "optimization" / "qualitative" / f"compare_{name_a}_vs_{name_b}")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -386,8 +392,8 @@ def _mode_video(args) -> int:
         dt_b = time.perf_counter() - t0
         fps_b = _ALPHA_EMA * (1.0 / dt_b) + (1 - _ALPHA_EMA) * fps_b if fps_b > 0 else 1.0 / dt_b
 
-        left  = _make_overlay(bgr, mask_a)
-        right = _make_overlay(bgr, mask_b)
+        left  = _make_overlay(bgr, mask_a, classes=[1])   # traversable only
+        right = _make_overlay(bgr, mask_b, classes=[1])
 
         from perception.render.overlay import draw_fps
         draw_fps(left,  fps_a)
