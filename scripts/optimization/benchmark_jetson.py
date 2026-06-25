@@ -82,12 +82,42 @@ def _trtexec_path() -> str | None:
     return None
 
 
-def _parse_variant_flags(onnx_name: str) -> dict:
-    """Infer TRT flags and metadata from the ONNX filename."""
+def _has_qdq_nodes(onnx_path: Path) -> bool:
+    """Return True if the ONNX has QuantizeLinear nodes (embedded INT8 scale factors).
+
+    TRT requires either QDQ nodes or an external calibration cache to build an
+    INT8 engine.  Filenames may say 'int8' or 'qat' but the ONNX may lack the
+    nodes if the modelopt QDQ export failed and a plain torch.onnx fallback was
+    used (e.g. sparse model exported before QAT).
+    """
+    try:
+        import onnx  # type: ignore
+        model = onnx.load(str(onnx_path))
+        return any(n.op_type == "QuantizeLinear" for n in model.graph.node)
+    except Exception:
+        return False
+
+
+def _parse_variant_flags(onnx_name: str, onnx_path: Path | None = None) -> dict:
+    """Infer TRT flags and metadata from the ONNX filename (+ optional graph scan)."""
     name = onnx_name.lower()
-    is_int8   = "int8" in name or "qat" in name
     is_sparse = "sparse" in name
     is_fp16   = True  # always enable fp16 as a fallback layer
+
+    # Only use INT8 if the ONNX actually has embedded quantization scale nodes.
+    # Filename alone is unreliable: sparse model is exported before QAT so it
+    # has no QDQ nodes even though the name contains "int8".
+    name_suggests_int8 = "int8" in name or "qat" in name
+    if name_suggests_int8 and onnx_path is not None:
+        is_int8 = _has_qdq_nodes(onnx_path)
+        if not is_int8:
+            logger.warning(
+                "%s: filename suggests INT8 but ONNX has no QDQ nodes — "
+                "building FP16 engine to avoid calibration failure.",
+                onnx_path.name,
+            )
+    else:
+        is_int8 = name_suggests_int8
 
     # Resolution from filename e.g. baseline_fp16_256x256.onnx → 256
     resolution = 256
@@ -454,7 +484,7 @@ def main() -> int:
         hf_base = "nvidia/segformer-b2-finetuned-ade-512-512"
 
         for onnx_f in onnx_files:
-            flags = _parse_variant_flags(onnx_f.stem)
+            flags = _parse_variant_flags(onnx_f.stem, onnx_f)
             res = flags["resolution"]
             if res in pytorch_ref_miou:
                 continue
@@ -476,7 +506,7 @@ def main() -> int:
     # ---- Process each ONNX ----
     rows = []
     for onnx_path in onnx_files:
-        flags = _parse_variant_flags(onnx_path.stem)
+        flags = _parse_variant_flags(onnx_path.stem, onnx_path)
         engine_path = engine_dir / onnx_path.with_suffix(".engine").name
         res = flags["resolution"]
 
