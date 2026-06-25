@@ -227,6 +227,7 @@ def _load_trt_context(engine_path: Path):
     except Exception:
         out_dtype = torch.float16
     out_buf = torch.empty(out_shape, dtype=out_dtype, device="cuda")
+    logger.info("Engine output binding: shape=%s dtype=%s (trt=%s)", out_shape, out_dtype, trt_dt)
     return context, out_buf
 
 
@@ -356,6 +357,12 @@ def _engine_miou(engine_path: Path, val_data: str, resolution: int) -> float:
         # Input is always FP32 — matches the ONNX input binding.
         images_cuda = images.cuda().float()
         logits = _trt_infer(context, images_cuda, out_buf)
+        if not all_preds:  # log first batch only
+            logger.info(
+                "Engine logits [debug]: dtype=%s shape=%s min=%.4f max=%.4f mean=%.4f",
+                logits.dtype, tuple(logits.shape),
+                logits.min().item(), logits.max().item(), logits.mean().item(),
+            )
         logits = torch.nn.functional.interpolate(
             logits.float(), size=(resolution, resolution),
             mode="bilinear", align_corners=False,
