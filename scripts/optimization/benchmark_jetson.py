@@ -71,17 +71,15 @@ _TRT_WORKSPACE_GB = 8
 # Engine build                                                                  #
 # --------------------------------------------------------------------------- #
 
-def _trtexec_path() -> str:
+def _trtexec_path() -> str | None:
+    """Return path to trtexec binary, or None if not available."""
     p = shutil.which("trtexec")
-    if p is None:
-        for candidate in ["/usr/src/tensorrt/bin/trtexec", "/usr/local/bin/trtexec"]:
-            if Path(candidate).is_file():
-                return candidate
-        raise RuntimeError(
-            "trtexec not found. Ensure TensorRT is installed and on PATH.\n"
-            "On Jetson: sudo ln -s /usr/src/tensorrt/bin/trtexec /usr/local/bin/trtexec"
-        )
-    return p
+    if p:
+        return p
+    for candidate in ["/usr/src/tensorrt/bin/trtexec", "/usr/local/bin/trtexec"]:
+        if Path(candidate).is_file():
+            return candidate
+    return None
 
 
 def _parse_variant_flags(onnx_name: str) -> dict:
@@ -109,47 +107,101 @@ def _parse_variant_flags(onnx_name: str) -> dict:
 
 
 def _build_engine(onnx_path: Path, engine_path: Path, flags: dict) -> bool:
-    """Call trtexec to build a TRT engine.  Returns True on success."""
+    """Build a TRT engine from ONNX using the Python TensorRT API.
+
+    Falls back to trtexec subprocess if available, otherwise uses tensorrt Python
+    bindings directly (works when trtexec binary is absent, e.g. on Jetson where
+    only the runtime libraries are installed without the samples package).
+    """
     trtexec = _trtexec_path()
     res = flags["resolution"]
 
-    cmd = [
-        trtexec,
-        f"--onnx={onnx_path}",
-        f"--saveEngine={engine_path}",
-        f"--shapes=pixel_values:1x3x{res}x{res}",
-        f"--memPoolSize=workspace:{_TRT_WORKSPACE_GB * 1024}MiB",
-        "--useCudaGraph",
-        "--noDataTransfers",
-    ]
-    if flags["is_fp16"]:
-        cmd.append("--fp16")
-    if flags["is_int8"]:
-        cmd.append("--int8")
-    if flags["is_sparse"]:
-        cmd.append("--sparsity=enable")
+    if trtexec:
+        # Use trtexec when available — produces identical engines.
+        cmd = [
+            trtexec,
+            f"--onnx={onnx_path}",
+            f"--saveEngine={engine_path}",
+            f"--shapes=pixel_values:1x3x{res}x{res}",
+            f"--memPoolSize=workspace:{_TRT_WORKSPACE_GB * 1024}MiB",
+            "--useCudaGraph",
+            "--noDataTransfers",
+        ]
+        if flags["is_fp16"]:
+            cmd.append("--fp16")
+        if flags["is_int8"]:
+            cmd.append("--int8")
+        if flags["is_sparse"]:
+            cmd.append("--sparsity=enable")
+        logger.info("Building TRT engine via trtexec:\n  %s", " ".join(cmd))
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+        except subprocess.TimeoutExpired:
+            logger.error("trtexec timed out (30 min) for %s", onnx_path.name)
+            return False
+        for line in result.stderr.splitlines():
+            if "fallback" in line.lower() and "fp32" in line.lower():
+                logger.warning("TRT FALLBACK: %s", line.strip())
+        if result.returncode != 0:
+            logger.error("trtexec FAILED:\n%s", result.stderr[-3000:])
+            return False
+    else:
+        # trtexec not available — build via Python TensorRT API.
+        logger.info("trtexec not found; building engine via Python TRT API ...")
+        try:
+            import tensorrt as trt  # type: ignore
+        except ImportError:
+            logger.error("tensorrt Python package not found.")
+            return False
 
-    logger.info("Building TRT engine:\n  %s", " ".join(cmd))
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-    except subprocess.TimeoutExpired:
-        logger.error("trtexec timed out (30 min) for %s", onnx_path.name)
-        return False
+        trt_logger = trt.Logger(trt.Logger.WARNING)
+        builder = trt.Builder(trt_logger)
+        try:
+            # TRT < 10: EXPLICIT_BATCH flag required. TRT 10+: default, flag deprecated.
+            nf = 1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
+        except AttributeError:
+            nf = 0
+        network = builder.create_network(nf)
+        parser = trt.OnnxParser(network, trt_logger)
 
-    # Scan for FP32 fallback warnings — logged but not fatal.
-    for line in result.stderr.splitlines():
-        if "fallback" in line.lower() and "fp32" in line.lower():
-            logger.warning("TRT FALLBACK WARNING: %s", line.strip())
+        with open(str(onnx_path), "rb") as f:
+            if not parser.parse(f.read()):
+                for i in range(parser.num_errors):
+                    logger.error("ONNX parse error: %s", parser.get_error(i))
+                return False
 
-    if result.returncode != 0:
-        logger.error("trtexec FAILED:\n%s", result.stderr[-3000:])
-        return False
+        config = builder.create_builder_config()
+        config.set_memory_pool_limit(
+            trt.MemoryPoolType.WORKSPACE, _TRT_WORKSPACE_GB * (1 << 30)
+        )
+        if flags["is_fp16"]:
+            config.set_flag(trt.BuilderFlag.FP16)
+        if flags["is_int8"]:
+            config.set_flag(trt.BuilderFlag.INT8)
+        if flags["is_sparse"]:
+            try:
+                config.set_flag(trt.BuilderFlag.SPARSE_WEIGHTS)
+            except AttributeError:
+                logger.warning("SPARSE_WEIGHTS flag not available in this TRT version.")
+
+        logger.info(
+            "Building %s  fp16=%s int8=%s sparse=%s — may take 5-15 min ...",
+            onnx_path.name, flags["is_fp16"], flags["is_int8"], flags["is_sparse"],
+        )
+        serialized = builder.build_serialized_network(network, config)
+        if serialized is None:
+            logger.error("TRT engine build failed for %s", onnx_path.name)
+            return False
+
+        engine_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(str(engine_path), "wb") as f:
+            f.write(serialized)
 
     if not engine_path.is_file():
-        logger.error("trtexec succeeded but engine not found at %s", engine_path)
+        logger.error("Engine file not found after build: %s", engine_path)
         return False
 
-    logger.info("Engine built: %s  (%.1f MB)", engine_path, engine_path.stat().st_size / 1e6)
+    logger.info("Engine built: %s  (%.1f MB)", engine_path.name, engine_path.stat().st_size / 1e6)
     return True
 
 
@@ -160,6 +212,9 @@ def _build_engine(onnx_path: Path, engine_path: Path, flags: dict) -> bool:
 def _trtexec_latency(engine_path: Path, flags: dict) -> dict:
     """Run trtexec latency benchmark.  Returns p50/p99 dict from trtexec output."""
     trtexec = _trtexec_path()
+    if trtexec is None:
+        logger.info("trtexec not available — skipping trtexec latency (harness latency used).")
+        return {"latency_ms_p50_trtexec": None, "latency_ms_p99_trtexec": None}
     res = flags["resolution"]
     cmd = [
         trtexec,
