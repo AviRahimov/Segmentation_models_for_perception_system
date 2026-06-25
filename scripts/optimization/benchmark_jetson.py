@@ -349,7 +349,7 @@ def _engine_miou(engine_path: Path, val_data: str, resolution: int) -> float:
     from perception.datasets.orfd_torch import ORFDDataset
 
     val_ds = ORFDDataset(val_data, split="validation", augment=False, input_size=resolution)
-    loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=2)
+    loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=0)
 
     all_preds, all_labels = [], []
     for images, labels in loader:
