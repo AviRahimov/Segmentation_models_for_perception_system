@@ -207,6 +207,18 @@ def _export_onnx(model: torch.nn.Module, resolution: int, output_dir: Path,
     model.eval()
     dummy = torch.zeros(1, 3, resolution, resolution, device=device, dtype=torch.float32)
 
+    # Remove sparsity wrappers before ONNX export. torch.onnx.export cannot
+    # capture the sparse module wrappers correctly — the exported ONNX ends up
+    # with near-zero weight contributions and only the classifier bias survives,
+    # producing constant degenerate output. mts.export() strips the wrappers and
+    # bakes the 2:4 sparse weights as regular tensors in a standard nn.Module.
+    try:
+        import modelopt.torch.sparsity as mts  # type: ignore
+        model = mts.export(model)
+        logger.info("Sparse wrappers removed via mts.export() before ONNX export.")
+    except Exception as e:
+        logger.warning("mts.export() failed (%s) — ONNX weights may be degenerate.", e)
+
     try:
         import modelopt.torch.quantization as mtq  # type: ignore
         mtq.export_onnx(
