@@ -206,6 +206,41 @@ def _build_engine(onnx_path: Path, engine_path: Path, flags: dict) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# TRT engine helpers (shared by latency, soak, and mIoU sections)              #
+# --------------------------------------------------------------------------- #
+
+def _load_trt_context(engine_path: Path):
+    """Deserialize a TRT engine and return (context, out_buf).
+
+    out_buf dtype is inferred from the engine's logits binding;
+    defaults to FP16 if detection fails.
+    Input binding is always FP32 — matches the ONNX export dtype.
+    """
+    import tensorrt as trt  # type: ignore
+    runtime = trt.Runtime(trt.Logger(trt.Logger.WARNING))
+    engine = runtime.deserialize_cuda_engine(engine_path.read_bytes())
+    context = engine.create_execution_context()
+    out_shape = tuple(context.get_tensor_shape("logits"))
+    try:
+        trt_dt = engine.get_tensor_dtype("logits")
+        out_dtype = torch.float32 if trt_dt == trt.DataType.FLOAT else torch.float16
+    except Exception:
+        out_dtype = torch.float16
+    out_buf = torch.empty(out_shape, dtype=out_dtype, device="cuda")
+    return context, out_buf
+
+
+def _trt_infer(context, pixel_values: torch.Tensor, out_buf: torch.Tensor) -> torch.Tensor:
+    """Run one synchronous TRT inference pass; returns a clone of out_buf."""
+    stream = torch.cuda.current_stream().cuda_stream
+    context.set_tensor_address("pixel_values", pixel_values.data_ptr())
+    context.set_tensor_address("logits", out_buf.data_ptr())
+    context.execute_async_v3(stream)
+    torch.cuda.current_stream().synchronize()
+    return out_buf.clone()
+
+
+# --------------------------------------------------------------------------- #
 # Latency benchmark                                                             #
 # --------------------------------------------------------------------------- #
 
@@ -249,26 +284,22 @@ def _trtexec_latency(engine_path: Path, flags: dict) -> dict:
 
 
 def _harness_latency(engine_path: Path, resolution: int, n_frames: int = 300) -> dict:
-    """Real-harness latency via TensorRTBackend.  Returns p50/p99 in ms."""
+    """Real-harness latency via direct TRT API.  Returns p50/p99 in ms."""
     try:
-        from perception.models.backends.tensorrt import TensorRTBackend
-    except ImportError:
-        logger.warning("TensorRTBackend not importable — skipping harness latency.")
-        return {"latency_ms_p50": None, "latency_ms_p99": None}
+        context, out_buf = _load_trt_context(engine_path)
+    except Exception as e:
+        logger.warning("Failed to load TRT engine for harness latency: %s", e)
+        return {"latency_ms_p50": None, "latency_ms_p99": None, "fps": None}
 
-    backend = TensorRTBackend(str(engine_path))
-    dummy = torch.zeros(1, 3, resolution, resolution, dtype=torch.float32).cuda()
+    dummy = torch.zeros(1, 3, resolution, resolution, dtype=torch.float32, device="cuda")
 
-    # Warm-up
     for _ in range(20):
-        backend.infer(dummy)
-    torch.cuda.synchronize()
+        _trt_infer(context, dummy, out_buf)
 
     times = []
     for _ in range(n_frames):
         t0 = time.perf_counter()
-        backend.infer(dummy)
-        torch.cuda.synchronize()
+        _trt_infer(context, dummy, out_buf)
         times.append((time.perf_counter() - t0) * 1000)
 
     p50 = float(np.percentile(times, 50))
@@ -281,21 +312,19 @@ def _harness_latency(engine_path: Path, resolution: int, n_frames: int = 300) ->
 def _soak_test(engine_path: Path, resolution: int, duration_s: int = 1800) -> float:
     """Run sustained inference for duration_s seconds.  Returns sustained FPS."""
     try:
-        from perception.models.backends.tensorrt import TensorRTBackend
-    except ImportError:
-        logger.warning("TensorRTBackend not importable — skipping soak test.")
+        context, out_buf = _load_trt_context(engine_path)
+    except Exception as e:
+        logger.warning("Failed to load TRT engine for soak test: %s", e)
         return 0.0
 
     logger.info("Starting %d-minute soak test ...", duration_s // 60)
-    backend = TensorRTBackend(str(engine_path))
-    dummy = torch.zeros(1, 3, resolution, resolution, dtype=torch.float32).cuda()
+    dummy = torch.zeros(1, 3, resolution, resolution, dtype=torch.float32, device="cuda")
 
     t_end = time.perf_counter() + duration_s
     count = 0
     t_start = time.perf_counter()
     while time.perf_counter() < t_end:
-        backend.infer(dummy)
-        torch.cuda.synchronize()
+        _trt_infer(context, dummy, out_buf)
         count += 1
 
     elapsed = time.perf_counter() - t_start
@@ -312,26 +341,21 @@ def _soak_test(engine_path: Path, resolution: int, duration_s: int = 1800) -> fl
 def _engine_miou(engine_path: Path, val_data: str, resolution: int) -> float:
     """Validate mIoU from TRT engine output on the ORFD validation set."""
     try:
-        from perception.models.backends.tensorrt import TensorRTBackend
-    except ImportError:
-        logger.warning("TensorRTBackend not importable — skipping engine mIoU.")
+        context, out_buf = _load_trt_context(engine_path)
+    except Exception as e:
+        logger.warning("Failed to load TRT engine for mIoU: %s", e)
         return float("nan")
 
     from perception.datasets.orfd_torch import ORFDDataset
 
-    backend = TensorRTBackend(str(engine_path))
     val_ds = ORFDDataset(val_data, split="validation", augment=False, input_size=resolution)
     loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=2)
 
     all_preds, all_labels = [], []
     for images, labels in loader:
-        images_cuda = images.cuda()
-        # Engine output: (1, C, H/4, W/4) — upsample to label size.
-        raw = backend.infer(images_cuda)
-        if isinstance(raw, torch.Tensor):
-            logits = raw
-        else:
-            logits = torch.from_numpy(raw).cuda()
+        # Input is always FP32 — matches the ONNX input binding.
+        images_cuda = images.cuda().float()
+        logits = _trt_infer(context, images_cuda, out_buf)
         logits = torch.nn.functional.interpolate(
             logits.float(), size=(resolution, resolution),
             mode="bilinear", align_corners=False,
