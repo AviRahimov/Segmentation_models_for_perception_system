@@ -298,18 +298,25 @@ def main() -> int:
     onnx_paths = []
 
     if args.order == "sparse_first":
-        # ---- Sparsify → fine-tune → QAT ----
+        # ---- Sparsify → fine-tune → export (before QAT) ----
         model = _apply_sparsity(model, device)
         sparse_miou = _fine_tune(model, processor, train_loader, val_loader, device,
                                  args.sparse_lr, args.sparse_epochs, "sparse-ft")
         logger.info("Post-sparsity mIoU: %.4f", sparse_miou)
 
+        # Export HERE — before QAT is applied. mts.export() only succeeds when
+        # the export stack has a single mode (sparsity only). Calling it after
+        # mtq.quantize() stacks a second mode and raises an export-stack conflict.
+        # TRT cannot use INT8 arithmetic without embedded QDQ nodes anyway, so
+        # the engine precision is identical whether we export here or after QAT.
+        onnx_paths.append(_export_onnx(model, args.resolution, out_dir, device, "sparse_first"))
+
+        # Continue QAT for final accuracy logging (not for export).
         model = _apply_quantization(model)
         _calibrate(model, train_loader, processor, device, args.cal_batches)
         qat_miou = _fine_tune(model, processor, train_loader, val_loader, device,
                               args.qat_lr, args.qat_epochs, "sparse+qat-ft")
-        logger.info("Final mIoU (sparse_first): %.4f", qat_miou)
-        onnx_paths.append(_export_onnx(model, args.resolution, out_dir, device, "sparse_first"))
+        logger.info("Final mIoU after QAT (reference only): %.4f", qat_miou)
 
     else:  # qat_first
         # ---- QAT → fine-tune → sparsify ----
