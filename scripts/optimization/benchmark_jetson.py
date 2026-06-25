@@ -174,19 +174,31 @@ def _build_engine(onnx_path: Path, engine_path: Path, flags: dict) -> bool:
         config.set_memory_pool_limit(
             trt.MemoryPoolType.WORKSPACE, _TRT_WORKSPACE_GB * (1 << 30)
         )
-        if flags["is_fp16"]:
+        # FP16 is only safe alongside INT8: the fake-quant ops in the QAT ONNX
+        # force FP32 output, anchoring precision. Pure FP16 causes NaN in
+        # SegFormer's attention softmax (overflow on Jetson Ampere).
+        if flags["is_fp16"] and flags["is_int8"]:
             config.set_flag(trt.BuilderFlag.FP16)
+        elif flags["is_fp16"]:
+            logger.warning(
+                "Pure FP16 skipped in Python TRT path (NaN in SegFormer attention) "
+                "— building FP32 engine instead."
+            )
         if flags["is_int8"]:
             config.set_flag(trt.BuilderFlag.INT8)
+        # SPARSE_WEIGHTS via Python TRT API produces degenerate logits on this
+        # TRT build (all-class-0 predictions). The 2:4 pattern is already in the
+        # ONNX weights; TRT runs correct dense kernels without this flag.
         if flags["is_sparse"]:
-            try:
-                config.set_flag(trt.BuilderFlag.SPARSE_WEIGHTS)
-            except AttributeError:
-                logger.warning("SPARSE_WEIGHTS flag not available in this TRT version.")
+            logger.warning(
+                "SPARSE_WEIGHTS flag skipped in Python TRT path — causes degenerate "
+                "output. Sparse weight pattern in ONNX is preserved; dense kernels used."
+            )
 
         logger.info(
             "Building %s  fp16=%s int8=%s sparse=%s — may take 5-15 min ...",
-            onnx_path.name, flags["is_fp16"], flags["is_int8"], flags["is_sparse"],
+            onnx_path.name, flags["is_fp16"] and flags["is_int8"],
+            flags["is_int8"], False,
         )
         serialized = builder.build_serialized_network(network, config)
         if serialized is None:
