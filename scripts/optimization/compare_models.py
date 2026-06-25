@@ -149,8 +149,14 @@ class _ONNXInferencer:
 
 class _TRTInferencer:
     def __init__(self, engine_path: str, resolution: int) -> None:
-        from perception.models.backends.tensorrt import TensorRTBackend
-        self._backend = TensorRTBackend(engine_path)
+        import tensorrt as trt  # type: ignore
+        runtime = trt.Runtime(trt.Logger(trt.Logger.WARNING))
+        engine = runtime.deserialize_cuda_engine(Path(engine_path).read_bytes())
+        self._context = engine.create_execution_context()
+        out_shape = tuple(self._context.get_tensor_shape("logits"))
+        trt_dt = engine.get_tensor_dtype("logits")
+        out_dtype = torch.float32 if trt_dt == trt.DataType.FLOAT else torch.float16
+        self._out_buf = torch.empty(out_shape, dtype=out_dtype, device="cuda")
         self._resolution = resolution
 
         from transformers import SegformerImageProcessor
@@ -163,11 +169,15 @@ class _TRTInferencer:
         h, w = bgr.shape[:2]
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         inputs = self._processor(images=[rgb], return_tensors="pt")
-        pv = inputs["pixel_values"].cuda()
-        raw = self._backend.infer(pv)
-        logits = raw if isinstance(raw, torch.Tensor) else torch.from_numpy(raw).cuda()
+        pv = inputs["pixel_values"].cuda().float()
+        stream = torch.cuda.current_stream().cuda_stream
+        self._context.set_tensor_address("pixel_values", pv.data_ptr())
+        self._context.set_tensor_address("logits", self._out_buf.data_ptr())
+        self._context.execute_async_v3(stream)
+        torch.cuda.current_stream().synchronize()
+        logits = self._out_buf.clone().float()
         logits = torch.nn.functional.interpolate(
-            logits.float(), size=(h, w), mode="bilinear", align_corners=False,
+            logits, size=(h, w), mode="bilinear", align_corners=False,
         )
         return logits.argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
 
