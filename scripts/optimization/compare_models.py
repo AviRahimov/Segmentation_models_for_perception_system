@@ -185,6 +185,12 @@ class _TRTInferencer:
         pass
 
 
+def _variant_name(spec: str) -> str:
+    """Extract the model variant name (filename stem) from a spec like 'engine:path/to/model.engine'."""
+    path = spec.split(":", 1)[1] if ":" in spec else spec
+    return Path(path).stem
+
+
 def _build_inferencer(spec: str, resolution: int, device: str) -> _Inferencer:
     """Parse 'type:path' spec and return the appropriate inferencer."""
     if ":" not in spec:
@@ -283,22 +289,26 @@ def _mode_images(args) -> int:
         miou_a = _compute_miou_single(mask_a, gt_mask)
         miou_b = _compute_miou_single(mask_b, gt_mask)
 
-        overlay_a = _make_overlay(bgr, mask_a)
-        overlay_b = _make_overlay(bgr, mask_b)
+        overlay_a  = _make_overlay(bgr, mask_a)
+        overlay_b  = _make_overlay(bgr, mask_b)
+        overlay_gt = _make_overlay(bgr, gt_mask)
 
-        # 3-panel: original | model-A | model-B
-        panel_orig = _draw_text_label(bgr,       "Original")
-        panel_a    = _draw_text_label(overlay_a, f"Model-A ({args.model_a.split(':')[0]})", miou_a)
-        panel_b    = _draw_text_label(overlay_b, f"Model-B ({args.model_b.split(':')[0]})", miou_b)
+        # 4-panel: original | GT | model-A | model-B
+        panel_orig = _draw_text_label(bgr,        "Original")
+        panel_gt   = _draw_text_label(overlay_gt, "Ground Truth")
+        panel_a    = _draw_text_label(overlay_a,  _variant_name(args.model_a), miou_a)
+        panel_b    = _draw_text_label(overlay_b,  _variant_name(args.model_b), miou_b)
 
         # Ensure all panels have the same height.
-        max_h = max(panel_orig.shape[0], panel_a.shape[0], panel_b.shape[0])
-        for panel in [panel_orig, panel_a, panel_b]:
-            if panel.shape[0] < max_h:
-                pad = np.zeros((max_h - panel.shape[0], panel.shape[1], 3), dtype=np.uint8)
-                panel = np.vstack([panel, pad])
+        panels = [panel_orig, panel_gt, panel_a, panel_b]
+        max_h  = max(p.shape[0] for p in panels)
+        panels = [
+            np.vstack([p, np.zeros((max_h - p.shape[0], p.shape[1], 3), dtype=np.uint8)])
+            if p.shape[0] < max_h else p
+            for p in panels
+        ]
 
-        grid = np.hstack([panel_orig, panel_a, panel_b])
+        grid = np.hstack(panels)
         out_path = out_dir / f"compare_{i:04d}.png"
         cv2.imwrite(str(out_path), grid)
 
@@ -337,8 +347,8 @@ def _mode_video(args) -> int:
     fps_src = src.fps()
     logger.info("Video: %s  frames=%d  fps=%.1f", source_path.name, total, fps_src)
 
-    name_a = args.model_a.split(":")[0]
-    name_b = args.model_b.split(":")[0]
+    name_a = _variant_name(args.model_a)
+    name_b = _variant_name(args.model_b)
 
     out_path = Path(args.output or
                     _ROOT / "reports" / "optimization" /
