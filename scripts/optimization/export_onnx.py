@@ -84,7 +84,8 @@ def export_fp16_onnx(
     model, _ = _load_model(checkpoint, resolution, fp16, device)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    onnx_path = output_dir / f"baseline_fp16_{resolution}x{resolution}.onnx"
+    precision_tag = "fp16" if fp16 else "fp32"
+    onnx_path = output_dir / f"baseline_{precision_tag}_{resolution}x{resolution}.onnx"
 
     dtype = torch.float16 if fp16 else torch.float32
     dummy = torch.zeros(1, 3, resolution, resolution, device=device, dtype=dtype)

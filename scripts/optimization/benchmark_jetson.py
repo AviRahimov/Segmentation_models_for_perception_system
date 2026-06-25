@@ -375,6 +375,10 @@ def _engine_miou(engine_path: Path, val_data: str, resolution: int) -> float:
                 logits.dtype, tuple(logits.shape),
                 logits.min().item(), logits.max().item(), logits.mean().item(),
             )
+            for c in range(logits.shape[1]):
+                ch = logits[0, c]
+                logger.info("  channel %d: min=%.4f max=%.4f mean=%.4f", c,
+                            ch.min().item(), ch.max().item(), ch.mean().item())
         logits = torch.nn.functional.interpolate(
             logits.float(), size=(resolution, resolution),
             mode="bilinear", align_corners=False,
