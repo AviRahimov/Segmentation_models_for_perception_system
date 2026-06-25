@@ -459,8 +459,10 @@ def main() -> int:
 
         logger.info("=== Processing: %s ===", onnx_path.name)
 
-        # Build engine
-        if not _build_engine(onnx_path, engine_path, flags):
+        # Build engine (skip if already exists)
+        if engine_path.is_file():
+            logger.info("Engine already exists, skipping build: %s", engine_path.name)
+        elif not _build_engine(onnx_path, engine_path, flags):
             rows.append({
                 "variant_name": onnx_path.stem,
                 "backbone": "segformer-b2",
