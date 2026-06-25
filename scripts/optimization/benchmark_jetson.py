@@ -131,7 +131,7 @@ def _parse_variant_flags(onnx_name: str, onnx_path: Path | None = None) -> dict:
         "is_sparse":  is_sparse,
         "is_fp16":    is_fp16,
         "resolution": resolution,
-        "precision":  "INT8" if is_int8 else "FP16",
+        "precision":  "INT8" if is_int8 else "FP32",
         "sparsity":   "2:4" if is_sparse else "none",
     }
 
@@ -399,16 +399,6 @@ def _engine_miou(engine_path: Path, val_data: str, resolution: int) -> float:
         # Input is always FP32 — matches the ONNX input binding.
         images_cuda = images.cuda().float()
         logits = _trt_infer(context, images_cuda, out_buf)
-        if not all_preds:  # log first batch only
-            logger.info(
-                "Engine logits [debug]: dtype=%s shape=%s min=%.4f max=%.4f mean=%.4f",
-                logits.dtype, tuple(logits.shape),
-                logits.min().item(), logits.max().item(), logits.mean().item(),
-            )
-            for c in range(logits.shape[1]):
-                ch = logits[0, c]
-                logger.info("  channel %d: min=%.4f max=%.4f mean=%.4f", c,
-                            ch.min().item(), ch.max().item(), ch.mean().item())
         logits = torch.nn.functional.interpolate(
             logits.float(), size=(resolution, resolution),
             mode="bilinear", align_corners=False,
