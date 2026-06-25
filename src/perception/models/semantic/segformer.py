@@ -57,9 +57,26 @@ def _remap_segformer_keys(sd: dict) -> dict:
       layer_norm_{1,2} → layernorm_{before,after}
       mlp.dense{1,2} → mlp.fc{1,2}
       decode_head.linear_c.{i} → decode_head.linear_projections.{i}
+
+    NOTE: some builds of transformers 4.46 (e.g. Jetson aarch64) still use the
+    old 'segformer.encoder.*' key naming.  We detect this via the presence of
+    the 'SegformerStage' class, which only exists in the new API.  If the
+    installed transformers uses old naming, the checkpoint already matches and
+    no remapping is needed.
     """
     if not any(k.startswith("segformer.encoder.") for k in sd):
-        return sd  # already in current format
+        return sd  # already in current (stages) format
+
+    # Detect whether this transformers build uses new 'stages' or old 'encoder' naming.
+    try:
+        import transformers.models.segformer.modeling_segformer as _mseg
+        _uses_stages_api = hasattr(_mseg, "SegformerStage")
+    except Exception:
+        _uses_stages_api = True  # assume modern if detection fails
+
+    if not _uses_stages_api:
+        # This build uses 'segformer.encoder.*' naming — checkpoint already matches.
+        return sd
 
     logger.info("SegFormer checkpoint uses old key format — remapping to current transformers API.")
     out: dict = {}
