@@ -8,8 +8,8 @@ benchmark_jetson.py.
 Usage
 -----
     # Baseline FP16 export (dev PC):
-    python scripts/optimization/export_onnx.py \\
-        --checkpoint weights/orfd/frozen_backbone/segformer-b2/best.pth \\
+    python scripts/segmentation/optimization/export_onnx.py \\
+        --checkpoint weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \\
         --resolution 256
 
     # Also called internally by train_qat.py and train_sparse.py after
@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
 
 logging.basicConfig(
@@ -159,10 +159,10 @@ def _validate_onnx(
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Stage 1: FP16 ONNX export + validation")
-    p.add_argument("--checkpoint", default="weights/orfd/frozen_backbone/segformer-b2/best.pth")
+    p.add_argument("--checkpoint", default="weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth")
     p.add_argument("--resolution", type=int, default=256,
                    help="Input resolution (square). Choose from Stage 0 sweep.")
-    p.add_argument("--output-dir", default="weights/optimization",
+    p.add_argument("--output-dir", default="weights/segmentation/optimization",
                    help="Directory to save the .onnx file")
     p.add_argument("--no-fp16", dest="fp16", action="store_false", default=True)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -178,7 +178,7 @@ def main() -> int:
     onnx_path = export_fp16_onnx(str(ckpt), args.resolution, out_dir, args.device, args.fp16)
     print(f"\nONNX ready: {onnx_path}")
     print("Transfer this file to the Jetson, then run:")
-    print(f"  python scripts/optimization/benchmark_jetson.py --onnx-dir weights/optimization/")
+    print(f"  python scripts/segmentation/optimization/benchmark_jetson.py --onnx-dir weights/segmentation/optimization/")
     return 0
 
 

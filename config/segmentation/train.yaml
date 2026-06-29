@@ -9,19 +9,19 @@
 #   python scripts/train_orfd.py --lr 1e-4 --epochs 50
 #
 # Resume an interrupted run:
-#   python scripts/train_orfd.py --resume weights/orfd/segformer-b2/last.pth
+#   python scripts/train_orfd.py --resume weights/segmentation/orfd/segformer-b2/last.pth
 #   (or set resume_from below and just run python scripts/train_orfd.py)
 
 # ---------------------------------------------------------------------------
 dataset:
-  root: "datasets/Final_Dataset"
+  root: "datasets/Segmentation_Dataset"
   train_split: "training"
   val_split: "validation"
 
 # ---------------------------------------------------------------------------
 model:
   name: "segformer-b2"          # segformer-b2 | segformer-b4
-  out_dir: "weights/orfd/lora/segformer-b2/"                   # leave empty → weights/orfd/<model_name>/
+  out_dir: "weights/segmentation/orfd/lora/segformer-b2/"                   # leave empty → weights/segmentation/orfd/<model_name>/
 
 # ---------------------------------------------------------------------------
 training:

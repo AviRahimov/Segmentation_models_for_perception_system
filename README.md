@@ -110,7 +110,7 @@ colour with the **winning prompt string** on the bbox; the legend shows
 use `classes[*].text_prompt` again.
 
 ```bash
-python scripts/tools/yoloe_discovery_dump.py --config config/config.yaml \
+python scripts/detection/tools/yoloe_discovery_dump.py --config config/config.yaml \
   --source samples/recording.mp4 --max-frames 200 \
   --jsonl runs/discovery.jsonl --summary-tsv runs/discovery_summary.tsv
 ```
@@ -136,7 +136,7 @@ Seeking automatically resets temporal buffers (EMA + tracker) because
 temporal context is broken.
 
 **Video player vs ORFD freespace strips:** The Qt player and
-`scripts/evaluation/orfd_semantic_comparison.py` use the same SegFormer (and the same
+`scripts/segmentation/evaluation/orfd_semantic_comparison.py` use the same SegFormer (and the same
 `config.yaml` weights / class merge rules). The comparison script’s strips
 show **binary traversable** predictions (road_ground vs GT path) for IoU;
 the player draws the full **argmax** terrain overlay, with each class’s
@@ -279,7 +279,7 @@ register in `factory.py`, add a YAML entry. Done.
 
 ## Optimization Pipeline (Jetson deployment)
 
-A multi-stage pipeline in `scripts/optimization/` systematically optimizes the
+A multi-stage pipeline in `scripts/segmentation/optimization/` systematically optimizes the
 SegFormer-B2 checkpoint for Jetson AGX Orin deployment.
 
 | Stage | Script | What it does |
@@ -297,30 +297,30 @@ SegFormer-B2 checkpoint for Jetson AGX Orin deployment.
 
 ```bash
 # Stage 0: resolution sweep (choose resolution from table)
-python scripts/optimization/resolution_sweep.py \
-    --checkpoint weights/orfd/frozen_backbone/segformer-b2/best.pth \
-    --data datasets/Final_Dataset
+python scripts/segmentation/optimization/resolution_sweep.py \
+    --checkpoint weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \
+    --data datasets/Segmentation_Dataset
 
 # Stage 1: FP16 baseline ONNX
-python scripts/optimization/export_onnx.py --resolution 256
+python scripts/segmentation/optimization/export_onnx.py --resolution 256
 
 # Stage 2: QAT INT8
-python scripts/optimization/train_qat.py --config config/optimization/qat.yaml
+python scripts/segmentation/optimization/train_qat.py --config config/optimization/qat.yaml
 
 # Stage 3: 2:4 sparsity + QAT
-python scripts/optimization/train_sparse.py --config config/optimization/sparse.yaml
+python scripts/segmentation/optimization/train_sparse.py --config config/optimization/sparse.yaml
 
-# Transfer weights/optimization/*.onnx to Jetson, then on Jetson:
+# Transfer weights/segmentation/optimization/*.onnx to Jetson, then on Jetson:
 # Stage 4 (Jetson only):
-python scripts/optimization/benchmark_jetson.py \
-    --onnx-dir weights/optimization/ --val-data datasets/Final_Dataset
+python scripts/segmentation/optimization/benchmark_jetson.py \
+    --onnx-dir weights/segmentation/optimization/ --val-data datasets/Segmentation_Dataset
 
 # Stage 6: reports and comparisons
-python scripts/optimization/generate_report.py
-python scripts/optimization/compare_models.py --mode images \
-    --model-a pytorch:weights/orfd/frozen_backbone/segformer-b2/best.pth \
-    --model-b onnx:weights/optimization/qat_int8_256x256.onnx \
-    --test-data datasets/Final_Dataset
+python scripts/segmentation/optimization/generate_report.py
+python scripts/segmentation/optimization/compare_models.py --mode images \
+    --model-a pytorch:weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \
+    --model-b onnx:weights/segmentation/optimization/qat_int8_256x256.onnx \
+    --test-data datasets/Segmentation_Dataset
 ```
 
 New dependencies for the optimization pipeline:

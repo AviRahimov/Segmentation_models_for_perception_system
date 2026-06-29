@@ -9,7 +9,7 @@ Supported models
 
 Usage
 -----
-    # Use config/train.yaml (default):
+    # Use config/segmentation/train.yaml (default):
     python scripts/train_orfd.py
 
     # Override individual settings:
@@ -44,7 +44,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 
 # Make sure the src package is importable when running as a script.
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
 
 from perception.datasets.orfd_torch import ORFDDataset
@@ -332,12 +332,12 @@ def evaluate(
 def parse_args() -> argparse.Namespace:
     # Two-pass: first extract --config, then load its values as argparse defaults.
     pre = argparse.ArgumentParser(add_help=False)
-    pre.add_argument("--config", default=str(_ROOT / "config" / "train.yaml"))
+    pre.add_argument("--config", default=str(_ROOT / "config" / "segmentation" / "train.yaml"))
     known, _ = pre.parse_known_args()
     cfg = load_train_config(known.config)
 
     p = argparse.ArgumentParser(description="Fine-tune segmentation model on ORFD/custom dataset")
-    p.add_argument("--config", default=str(_ROOT / "config" / "train.yaml"),
+    p.add_argument("--config", default=str(_ROOT / "config" / "segmentation" / "train.yaml"),
                    help="Path to train.yaml config file")
     p.add_argument("--model",   default=cfg.get("model", "segformer-b2"),
                    choices=["segformer-b0", "segformer-b1", "segformer-b2", "segformer-b4"])

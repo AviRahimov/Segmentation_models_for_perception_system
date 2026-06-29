@@ -88,7 +88,7 @@ After running the optimization pipeline, point the config at the engine file:
 # config/config.yaml
 models:
   semantic:
-    trt_engine_path: "weights/optimization/qat_int8_256x256.engine"
+    trt_engine_path: "weights/segmentation/optimization/qat_int8_256x256.engine"
 hardware:
   use_tensorrt: true
 ```
@@ -97,9 +97,9 @@ Then run headless or player as above — no other changes needed.
 
 Available optimized engines (after Stage 4):
 ```
-weights/optimization/baseline_fp32_256x256.engine     — FP32, 107 FPS, mIoU 0.8633
-weights/optimization/qat_int8_256x256.engine          — INT8, 123 FPS, mIoU 0.8464  ← recommended
-weights/optimization/sparse_qat_int8_256x256_sparse_first.engine  — FP32, 116 FPS, mIoU 0.8549
+weights/segmentation/optimization/baseline_fp32_256x256.engine     — FP32, 107 FPS, mIoU 0.8633
+weights/segmentation/optimization/qat_int8_256x256.engine          — INT8, 123 FPS, mIoU 0.8464  ← recommended
+weights/segmentation/optimization/sparse_qat_int8_256x256_sparse_first.engine  — FP32, 116 FPS, mIoU 0.8549
 ```
 
 ---
@@ -111,12 +111,12 @@ Produces 4-panel images: Original | Ground Truth | Model A | Model B
 
 ```bash
 source venv/bin/activate
-python3 scripts/optimization/compare_models.py --mode images \
-    --model-a engine:weights/optimization/baseline_fp32_256x256.engine \
-    --model-b engine:weights/optimization/qat_int8_256x256.engine \
-    --test-data datasets/Final_Dataset \
+python3 scripts/segmentation/optimization/compare_models.py --mode images \
+    --model-a engine:weights/segmentation/optimization/baseline_fp32_256x256.engine \
+    --model-b engine:weights/segmentation/optimization/qat_int8_256x256.engine \
+    --test-data datasets/Segmentation_Dataset \
     --n-samples 20
-# Output: reports/optimization/qualitative/compare_baseline_fp32_256x256_vs_qat_int8_256x256/
+# Output: reports/segmentation/optimization/qualitative/compare_baseline_fp32_256x256_vs_qat_int8_256x256/
 ```
 
 ### Video comparison (side-by-side MP4, traversable overlay only)
@@ -124,18 +124,18 @@ Produces a split-screen video: left = Model A (green traversable overlay + FPS),
 
 ```bash
 source vcp/bin/activate
-python3 scripts/optimization/compare_models.py --mode video \
-    --model-a engine:weights/optimization/baseline_fp32_256x256.engine \
-    --model-b engine:weights/optimization/qat_int8_256x256.engine \
+python3 scripts/segmentation/optimization/compare_models.py --mode video \
+    --model-a engine:weights/segmentation/optimization/baseline_fp32_256x256.engine \
+    --model-b engine:weights/segmentation/optimization/qat_int8_256x256.engine \
     --source samples/off_road_vid5.mp4
-# Output: reports/optimization/video_compare_baseline_fp32_256x256_vs_qat_int8_256x256.mp4
+# Output: reports/segmentation/optimization/video_compare_baseline_fp32_256x256_vs_qat_int8_256x256.mp4
 ```
 
 ### Model spec format
 ```
-pytorch:weights/orfd/frozen_backbone/segformer-b2/best.pth  — PyTorch checkpoint
-onnx:weights/optimization/qat_int8_256x256.onnx             — ONNX (onnxruntime)
-engine:weights/optimization/qat_int8_256x256.engine         — TensorRT engine (Jetson only)
+pytorch:weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth  — PyTorch checkpoint
+onnx:weights/segmentation/optimization/qat_int8_256x256.onnx             — ONNX (onnxruntime)
+engine:weights/segmentation/optimization/qat_int8_256x256.engine         — TensorRT engine (Jetson only)
 ```
 
 ---
@@ -152,9 +152,9 @@ python3 scripts/tools/export_trt.py --config config/config.yaml
 For the optimized variants (output of the QAT/sparse pipeline), use `benchmark_jetson.py` — it builds engines from `.onnx` files automatically:
 
 ```bash
-python3 scripts/optimization/benchmark_jetson.py \
-    --onnx-dir weights/optimization/ \
-    --val-data datasets/Final_Dataset
+python3 scripts/segmentation/optimization/benchmark_jetson.py \
+    --onnx-dir weights/segmentation/optimization/ \
+    --val-data datasets/Segmentation_Dataset
 ```
 
 > **Note:** TRT engines are tied to the exact GPU + TensorRT version. Rebuild after any JetPack upgrade.
@@ -170,7 +170,7 @@ import torch, tensorrt as trt, numpy as np, cv2
 from pathlib import Path
 from transformers import SegformerImageProcessor
 
-ENGINE_PATH = "weights/optimization/qat_int8_256x256.engine"
+ENGINE_PATH = "weights/segmentation/optimization/qat_int8_256x256.engine"
 RESOLUTION  = 256
 
 runtime = trt.Runtime(trt.Logger(trt.Logger.WARNING))

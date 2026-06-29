@@ -52,7 +52,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
 
 from perception.datasets.orfd_torch import ORFDDataset, TRAIN_SIZE, _to_normalized_tensor
@@ -95,52 +95,52 @@ def _default_model_defs() -> list[dict[str, Any]]:
         },
         {
             "key": "segformer-b2-final",
-            "label": "SegFormer-B2\n(Final_Dataset)",
+            "label": "SegFormer-B2\n(Segmentation_Dataset)",
             "type": "segformer-finetuned",
             "hf_id": "nvidia/segformer-b2-finetuned-ade-512-512",
-            "checkpoint": str(_ROOT / "weights" / "orfd" / "final_dataset" / "segformer-b2" / "best.pth"),
+            "checkpoint": str(_ROOT / "weights" / "segmentation" / "orfd" / "segmentation_dataset" / "segformer-b2" / "best.pth"),
         },
         {
             "key": "segformer-b2-frozen",
             "label": "SegFormer-B2\n(frozen backbone)",
             "type": "segformer-finetuned",
             "hf_id": "nvidia/segformer-b2-finetuned-ade-512-512",
-            "checkpoint": str(_ROOT / "weights" / "orfd" / "frozen_backbone" / "segformer-b2" / "best.pth"),
+            "checkpoint": str(_ROOT / "weights" / "segmentation" / "orfd" / "frozen_backbone" / "segformer-b2" / "best.pth"),
         },
         {
             "key": "segformer-b0-frozen",
             "label": "SegFormer-B0\n(frozen backbone)",
             "type": "segformer-finetuned",
             "hf_id": "nvidia/segformer-b0-finetuned-ade-512-512",
-            "checkpoint": str(_ROOT / "weights" / "orfd" / "frozen_backbone" / "segformer-b0" / "best.pth"),
+            "checkpoint": str(_ROOT / "weights" / "segmentation" / "orfd" / "frozen_backbone" / "segformer-b0" / "best.pth"),
         },
         {
             "key": "segformer-b1-frozen",
             "label": "SegFormer-B1\n(frozen backbone)",
             "type": "segformer-finetuned",
             "hf_id": "nvidia/segformer-b1-finetuned-ade-512-512",
-            "checkpoint": str(_ROOT / "weights" / "orfd" / "frozen_backbone" / "segformer-b1" / "best.pth"),
+            "checkpoint": str(_ROOT / "weights" / "segmentation" / "orfd" / "frozen_backbone" / "segformer-b1" / "best.pth"),
         },
         {
             "key": "segformer-b2-lora",
             "label": "SegFormer-B2\n(LoRA)",
             "type": "segformer-finetuned",
             "hf_id": "nvidia/segformer-b2-finetuned-ade-512-512",
-            "checkpoint": str(_ROOT / "weights" / "orfd" / "lora" / "segformer-b2" / "best.pth"),
+            "checkpoint": str(_ROOT / "weights" / "segmentation" / "orfd" / "lora" / "segformer-b2" / "best.pth"),
         },
         {
             "key": "segformer-b2-frozen-lora",
             "label": "SegFormer-B2\n(frozen backbone + LoRA)",
             "type": "segformer-finetuned",
             "hf_id": "nvidia/segformer-b2-finetuned-ade-512-512",
-            "checkpoint": str(_ROOT / "weights" / "orfd" / "frozen_lora" / "segformer-b2" / "best.pth"),
+            "checkpoint": str(_ROOT / "weights" / "segmentation" / "orfd" / "frozen_lora" / "segformer-b2" / "best.pth"),
         },
         {
             "key": "segformer-b4-final",
-            "label": "SegFormer-B4\n(Final_Dataset)",
+            "label": "SegFormer-B4\n(Segmentation_Dataset)",
             "type": "segformer-finetuned",
             "hf_id": "nvidia/segformer-b4-finetuned-ade-512-512",
-            "checkpoint": str(_ROOT / "weights" / "orfd" / "final_dataset" / "segformer-b4" / "best.pth"),
+            "checkpoint": str(_ROOT / "weights" / "segmentation" / "orfd" / "segmentation_dataset" / "segformer-b4" / "best.pth"),
         },
     ]
     return defs
@@ -504,7 +504,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Benchmark models on ORFD")
     p.add_argument("--models", nargs="*", default=None,
                    help="Model keys to evaluate (default: all available)")
-    p.add_argument("--data",   default=str(_ROOT / "datasets" / "Final_Dataset"),
+    p.add_argument("--data",   default=str(_ROOT / "datasets" / "Segmentation_Dataset"),
                    help="Path to ORFD root")
     p.add_argument("--split",  default="validation",
                    choices=["validation", "testing"])

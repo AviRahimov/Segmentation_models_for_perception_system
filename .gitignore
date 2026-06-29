@@ -55,8 +55,13 @@ weights/
 checkpoints/
 
 # Datasets (heavy) — leading slash = root-level only, not src/perception/datasets/
-/datasets/
+# Use /datasets/* (not /datasets/) so subdirectory exceptions can work
+/datasets/*
 /data/
+# Track detection dataset placeholder README only (not the data files themselves)
+!/datasets/Detection_Dataset/
+/datasets/Detection_Dataset/*
+!/datasets/Detection_Dataset/README.md
 *.zip
 *.tar
 *.tar.gz
@@ -80,4 +85,12 @@ cache/
 # Environment / secrets
 .env
 .env.*
-/reports
+# Use /reports/* (not /reports) so subdirectory exceptions can work
+/reports/*
+# Track placeholder dirs so collaborators see intended structure
+!/reports/segmentation/
+/reports/segmentation/*
+!/reports/segmentation/.gitkeep
+!/reports/detection/
+/reports/detection/*
+!/reports/detection/.gitkeep

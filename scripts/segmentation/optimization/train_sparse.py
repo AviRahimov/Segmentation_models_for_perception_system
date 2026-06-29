@@ -21,11 +21,11 @@ is present.  On the dev machine this step improves compression only.
 
 Usage
 -----
-    python scripts/optimization/train_sparse.py \\
+    python scripts/segmentation/optimization/train_sparse.py \\
         --config config/optimization/sparse.yaml
 
-    python scripts/optimization/train_sparse.py \\
-        --checkpoint weights/orfd/frozen_backbone/segformer-b2/best.pth \\
+    python scripts/segmentation/optimization/train_sparse.py \\
+        --checkpoint weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \\
         --resolution 256 --sparse-epochs 4 --qat-epochs 6 --order sparse_first
 """
 from __future__ import annotations
@@ -39,9 +39,9 @@ from typing import Any
 import torch
 from torch.utils.data import DataLoader
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
-sys.path.insert(0, str(_ROOT / "scripts" / "training"))
+sys.path.insert(0, str(_ROOT / "scripts" / "segmentation" / "training"))
 
 import train_orfd as _t
 
@@ -68,15 +68,15 @@ def _load_sparse_config(path: str) -> dict[str, Any]:
 
 def _parse_args() -> argparse.Namespace:
     pre = argparse.ArgumentParser(add_help=False)
-    pre.add_argument("--config", default=str(_ROOT / "config" / "optimization" / "sparse.yaml"))
+    pre.add_argument("--config", default=str(_ROOT / "config" / "segmentation" / "optimization" / "sparse.yaml"))
     known, _ = pre.parse_known_args()
     cfg = _load_sparse_config(known.config)
 
     p = argparse.ArgumentParser(description="Stage 3: 2:4 sparsity + QAT")
     p.add_argument("--config",         default=known.config)
     p.add_argument("--checkpoint",     default=cfg.get("base_checkpoint",
-                   "weights/orfd/frozen_backbone/segformer-b2/best.pth"))
-    p.add_argument("--data",           default=cfg.get("data", "datasets/Final_Dataset"))
+                   "weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth"))
+    p.add_argument("--data",           default=cfg.get("data", "datasets/Segmentation_Dataset"))
     p.add_argument("--resolution",     type=int, default=cfg.get("resolution", 256))
     p.add_argument("--sparse-epochs",  type=int, default=cfg.get("sparse_epochs", 4))
     p.add_argument("--qat-epochs",     type=int, default=cfg.get("qat_epochs", 6))
@@ -85,7 +85,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--batch",          type=int, default=cfg.get("batch_size", 8))
     p.add_argument("--workers",        type=int, default=cfg.get("workers", 4))
     p.add_argument("--cal-batches",    type=int, default=cfg.get("calibration_batches", 4))
-    p.add_argument("--output-dir",     default=cfg.get("output_dir", "weights/optimization"))
+    p.add_argument("--output-dir",     default=cfg.get("output_dir", "weights/segmentation/optimization"))
     p.add_argument("--order",          choices=["sparse_first", "qat_first"],
                    default=cfg.get("order", "sparse_first"))
     p.add_argument("--device",         default="cuda" if torch.cuda.is_available() else "cpu")

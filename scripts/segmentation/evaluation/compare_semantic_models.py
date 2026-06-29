@@ -54,7 +54,7 @@ import torch
 import torch.nn.functional as F
 
 _HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str((_HERE.parents[1] / "src").resolve()))
+sys.path.insert(0, str((_HERE.parents[2] / "src").resolve()))
 
 from perception.config.loader import load_config  # noqa: E402
 from perception.config.schema import HardwareCfg, SemanticModelCfg, ClassDef  # noqa: E402

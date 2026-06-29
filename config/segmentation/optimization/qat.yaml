@@ -1,10 +1,10 @@
 # Stage 2: QAT INT8 configuration.
-# Run: python scripts/optimization/train_qat.py --config config/optimization/qat.yaml
+# Run: python scripts/segmentation/optimization/train_qat.py --config config/segmentation/optimization/qat.yaml
 #
 # Fill in 'resolution' after running Stage 0 (resolution_sweep.py).
 
-base_checkpoint: "weights/orfd/frozen_backbone/segformer-b2/best.pth"
-data:            "datasets/Final_Dataset"
+base_checkpoint: "weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth"
+data:            "datasets/Segmentation_Dataset"
 
 resolution: 256
 
@@ -17,4 +17,4 @@ qat_lr:     1.0e-5
 batch_size: 8
 workers:    4
 
-output_dir: "weights/optimization"
+output_dir: "weights/segmentation/optimization"

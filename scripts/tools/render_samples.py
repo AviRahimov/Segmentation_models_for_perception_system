@@ -54,7 +54,7 @@ def _render_model_registry() -> list[dict]:
         {
             "key":         "segformer-b2-final",
             "name":        "segformer-b2",
-            "weights":     str(_REPO_ROOT / "weights" / "orfd" / "final_dataset" / "segformer-b2" / "best.pth"),
+            "weights":     str(_REPO_ROOT / "weights" / "segmentation" / "orfd" / "segmentation_dataset" / "segformer-b2" / "best.pth"),
             "num_classes": 3,
         },
     ]

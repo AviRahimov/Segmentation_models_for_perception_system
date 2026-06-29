@@ -15,12 +15,12 @@ Pipeline
 
 Usage
 -----
-    python scripts/optimization/train_qat.py \\
+    python scripts/segmentation/optimization/train_qat.py \\
         --config config/optimization/qat.yaml
 
     # Or override individual settings:
-    python scripts/optimization/train_qat.py \\
-        --checkpoint weights/orfd/frozen_backbone/segformer-b2/best.pth \\
+    python scripts/segmentation/optimization/train_qat.py \\
+        --checkpoint weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \\
         --resolution 256 --epochs 8 --lr 1e-5
 """
 from __future__ import annotations
@@ -35,9 +35,9 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
-sys.path.insert(0, str(_ROOT / "scripts" / "training"))
+sys.path.insert(0, str(_ROOT / "scripts" / "segmentation" / "training"))
 
 import train_orfd as _t
 
@@ -64,15 +64,15 @@ def _load_qat_config(path: str) -> dict[str, Any]:
 
 def _parse_args() -> argparse.Namespace:
     pre = argparse.ArgumentParser(add_help=False)
-    pre.add_argument("--config", default=str(_ROOT / "config" / "optimization" / "qat.yaml"))
+    pre.add_argument("--config", default=str(_ROOT / "config" / "segmentation" / "optimization" / "qat.yaml"))
     known, _ = pre.parse_known_args()
     cfg = _load_qat_config(known.config)
 
     p = argparse.ArgumentParser(description="Stage 2: QAT INT8 fine-tuning")
     p.add_argument("--config",      default=known.config)
     p.add_argument("--checkpoint",  default=cfg.get("base_checkpoint",
-                   "weights/orfd/frozen_backbone/segformer-b2/best.pth"))
-    p.add_argument("--data",        default=cfg.get("data", "datasets/Final_Dataset"))
+                   "weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth"))
+    p.add_argument("--data",        default=cfg.get("data", "datasets/Segmentation_Dataset"))
     p.add_argument("--resolution",  type=int, default=cfg.get("resolution", 256),
                    help="Input resolution chosen from Stage 0 sweep")
     p.add_argument("--epochs",      type=int, default=cfg.get("qat_epochs", 8))
@@ -81,7 +81,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--workers",     type=int, default=cfg.get("workers", 4))
     p.add_argument("--cal-batches", type=int, default=cfg.get("calibration_batches", 4),
                    help="Number of training batches for MTQ calibration")
-    p.add_argument("--output-dir",  default=cfg.get("output_dir", "weights/optimization"))
+    p.add_argument("--output-dir",  default=cfg.get("output_dir", "weights/segmentation/optimization"))
     p.add_argument("--device",      default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()
 

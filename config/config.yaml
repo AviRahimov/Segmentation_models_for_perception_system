@@ -21,13 +21,13 @@ models:
   semantic:
     # ── OPTION A: SegFormer-B0 frozen backbone (ORFD) — fastest ───────────
     # name: "segformer-b0"
-    # weights: "weights/orfd/frozen_backbone/segformer-b0/best.pth"
+    # weights: "weights/segmentation/orfd/frozen_backbone/segformer-b0/best.pth"
     # num_classes: 3
     # tta: false
 
     # ── OPTION B: SegFormer-B1 frozen backbone (ORFD) ──────────────────────
     # name: "segformer-b1"
-    # weights: "weights/orfd/frozen_backbone/segformer-b1/best.pth"
+    # weights: "weights/segmentation/orfd/frozen_backbone/segformer-b1/best.pth"
     # num_classes: 3
     # tta: false
 
@@ -35,14 +35,14 @@ models:
     # 3-class head trained on ORFD: non_traversable, traversable, sky.
     # Classes below: non_traversable + road_ground + sky (no ade20k_indices needed).
     name: "segformer-b2"
-    weights: "weights/orfd/frozen_backbone/segformer-b2/best.pth"
+    weights: "weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth"
     num_classes: 3
     processor_size: 256                # processor input size; 512 = default, 256 = ~2x faster, 384 = middle ground
-    # trt_engine_path: "weights/orfd/final_dataset/segformer-b2/best-256x256.engine"
+    # trt_engine_path: "weights/segmentation/orfd/segmentation_dataset/segformer-b2/best-256x256.engine"
 
     # ── OPTION D: SegFormer-B4 fine-tuned (ORFD) ───────────────────────────
     # name: "segformer-b4"
-    # weights: "weights/orfd/final_dataset_many_data_augmentations/segformer-b4/best.pth"
+    # weights: "weights/segmentation/orfd/segmentation_dataset_many_data_augmentations/segformer-b4/best.pth"
     # num_classes: 3
 
     # ── OPTION E: SegFormer-B2 ADE20K pretrained (zero-shot, no fine-tuning) ─

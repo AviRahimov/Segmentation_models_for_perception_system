@@ -20,14 +20,14 @@ For each .onnx file found in --onnx-dir:
   4. Run 30-minute soak test to detect thermal throttling.
   5. Validate mIoU from engine output against the ORFD validation set.
 
-Results are written to reports/optimization/benchmark_results.csv.
+Results are written to reports/segmentation/optimization/benchmark_results.csv.
 
 Usage
 -----
-    python scripts/optimization/benchmark_jetson.py \\
-        --onnx-dir weights/optimization/ \\
-        --val-data datasets/Final_Dataset \\
-        --output reports/optimization/benchmark_results.csv
+    python scripts/segmentation/optimization/benchmark_jetson.py \\
+        --onnx-dir weights/segmentation/optimization/ \\
+        --val-data datasets/Segmentation_Dataset \\
+        --output reports/segmentation/optimization/benchmark_results.csv
 """
 from __future__ import annotations
 
@@ -44,9 +44,9 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
-sys.path.insert(0, str(_ROOT / "scripts" / "training"))
+sys.path.insert(0, str(_ROOT / "scripts" / "segmentation" / "training"))
 
 import train_orfd as _t
 
@@ -421,17 +421,17 @@ def _engine_miou(engine_path: Path, val_data: str, resolution: int) -> float:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Stage 4: Jetson TRT engine build + benchmark")
-    p.add_argument("--onnx-dir",     default="weights/optimization",
+    p.add_argument("--onnx-dir",     default="weights/segmentation/optimization",
                    help="Directory containing .onnx files to benchmark")
     p.add_argument("--engine-dir",   default=None,
                    help="Where to save .engine files (default: same as --onnx-dir)")
-    p.add_argument("--val-data",     default="datasets/Final_Dataset")
-    p.add_argument("--output",       default="reports/optimization/benchmark_results.csv")
+    p.add_argument("--val-data",     default="datasets/Segmentation_Dataset")
+    p.add_argument("--output",       default="reports/segmentation/optimization/benchmark_results.csv")
     p.add_argument("--soak",         action="store_true",
                    help="Run 30-minute soak test per variant (adds ~2h total)")
     p.add_argument("--soak-duration",type=int, default=1800,
                    help="Soak test duration in seconds (default: 1800 = 30 min)")
-    p.add_argument("--pytorch-ref",  default="weights/orfd/frozen_backbone/segformer-b2/best.pth",
+    p.add_argument("--pytorch-ref",  default="weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth",
                    help="PyTorch baseline for reference mIoU (optional)")
     args = p.parse_args()
 

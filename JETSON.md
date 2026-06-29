@@ -25,7 +25,7 @@ cd /mnt/nvme/avi_ws/Segmentation_models_for_perception_system
 
 # Weights are mounted at runtime — not baked into the image.
 # Make sure your trained checkpoints are in the weights/ directory:
-ls weights/orfd/frozen_backbone/segformer-b2/best.pth   # expected
+ls weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth   # expected
 
 # The CLIP model used by YOLOE must be present in the repo root:
 ls weights/mobileclip2_b.ts   # ~240 MB — downloaded during Docker build or copy manually
@@ -166,10 +166,10 @@ After the script prints the engine paths, update `config/config.yaml`:
 ```yaml
 models:
   instance:
-    weights: "weights/yoloe-26l-seg.engine"   # printed by export_trt.py
+    weights: "weights/detection/yoloe-26l-seg.engine"   # printed by export_trt.py
 
   semantic:
-    trt_engine_path: "weights/orfd/frozen_backbone/segformer-b2/best-512x512.engine"
+    trt_engine_path: "weights/segmentation/orfd/frozen_backbone/segformer-b2/best-512x512.engine"
 
 hardware:
   use_tensorrt: true
@@ -179,7 +179,7 @@ hardware:
 
 ## Optimization Pipeline (Jetson steps)
 
-The full optimization pipeline lives in `scripts/optimization/`. Stages 0–3 run
+The full optimization pipeline lives in `scripts/segmentation/optimization/`. Stages 0–3 run
 on the **dev PC** (RTX 5090); Stage 4 runs on the **Jetson** because TRT engines
 are not portable between GPU architectures.
 
@@ -194,22 +194,22 @@ ls /usr/local/cuda/lib64/libcusparse_lt.so*  # check cuSPARSELt for 2:4 sparsity
 
 ### Stage 4: Engine build + authoritative benchmark
 
-Transfer all `.onnx` files from `weights/optimization/` on the dev PC to the Jetson,
+Transfer all `.onnx` files from `weights/segmentation/optimization/` on the dev PC to the Jetson,
 then run:
 
 ```bash
 source venv/bin/activate
 cd /mnt/nvme/avi_ws/Segmentation_models_for_perception_system
 
-python3 scripts/optimization/benchmark_jetson.py \
-    --onnx-dir weights/optimization/ \
-    --val-data datasets/Final_Dataset \
-    --output reports/optimization/benchmark_results.csv
+python3 scripts/segmentation/optimization/benchmark_jetson.py \
+    --onnx-dir weights/segmentation/optimization/ \
+    --val-data datasets/Segmentation_Dataset \
+    --output reports/segmentation/optimization/benchmark_results.csv
 
 # Optional: 30-minute soak test per variant (adds ~2h total):
-python3 scripts/optimization/benchmark_jetson.py \
-    --onnx-dir weights/optimization/ \
-    --val-data datasets/Final_Dataset \
+python3 scripts/segmentation/optimization/benchmark_jetson.py \
+    --onnx-dir weights/segmentation/optimization/ \
+    --val-data datasets/Segmentation_Dataset \
     --soak
 ```
 
@@ -217,21 +217,21 @@ This script:
 - Builds one TRT `.engine` per `.onnx` via `trtexec` (flags auto-detected from filename).
 - Benchmarks latency (p50, p99) and FPS via the real `TensorRTBackend`.
 - Re-validates mIoU from engine output (flags if engine drop > 1% vs PyTorch).
-- Writes `reports/optimization/benchmark_results.csv`.
+- Writes `reports/segmentation/optimization/benchmark_results.csv`.
 
 ### Stage 6: Generate report + video comparison (on Jetson or dev PC)
 
 ```bash
 # Generate Markdown + HTML table from benchmark CSV:
-python3 scripts/optimization/generate_report.py \
-    --csv reports/optimization/benchmark_results.csv
+python3 scripts/segmentation/optimization/generate_report.py \
+    --csv reports/segmentation/optimization/benchmark_results.csv
 
 # Side-by-side video comparison (engine vs baseline):
-python3 scripts/optimization/compare_models.py --mode video \
-    --model-a pytorch:weights/orfd/frozen_backbone/segformer-b2/best.pth \
-    --model-b engine:weights/optimization/qat_int8_256x256.engine \
+python3 scripts/segmentation/optimization/compare_models.py --mode video \
+    --model-a pytorch:weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \
+    --model-b engine:weights/segmentation/optimization/qat_int8_256x256.engine \
     --source samples/off_road_vid1.mp4 \
-    --output reports/optimization/video_compare_baseline_vs_qat.mp4
+    --output reports/segmentation/optimization/video_compare_baseline_vs_qat.mp4
 ```
 
 ---
@@ -276,17 +276,17 @@ python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4 --m
 | `run_headless.py` | Headless inference, logs FPS | `python3 scripts/inference/run_headless.py --source samples/video.mp4` |
 | `run_player.py` | PyQt5 GUI player | `python3 scripts/inference/run_player.py --source samples/video.mp4` |
 | `export_trt.py` | Build TRT `.engine` files (production) | `python3 scripts/tools/export_trt.py --config config/config.yaml` |
-| `train_orfd.py` | Fine-tune segmentation model | `python3 scripts/training/train_orfd.py --model segformer-b2 --freeze-backbone ...` |
-| `benchmark_orfd.py` | Accuracy metrics on ORFD val set | `python3 scripts/evaluation/benchmark_orfd.py --models segformer-b2-frozen` |
-| `orfd_semantic_comparison.py` | Side-by-side model comparison strips | `python3 scripts/evaluation/orfd_semantic_comparison.py` |
+| `train_orfd.py` | Fine-tune segmentation model | `python3 scripts/segmentation/training/train_orfd.py --model segformer-b2 --freeze-backbone ...` |
+| `benchmark_orfd.py` | Accuracy metrics on ORFD val set | `python3 scripts/segmentation/evaluation/benchmark_orfd.py --models segformer-b2-frozen` |
+| `orfd_semantic_comparison.py` | Side-by-side model comparison strips | `python3 scripts/segmentation/evaluation/orfd_semantic_comparison.py` |
 | `annotate_images.py` | Annotate a folder of images | `python3 scripts/tools/annotate_images.py --input dir/` |
 | `render_samples.py` | Render annotated sample videos | `python3 scripts/tools/render_samples.py` |
 | `download_datasets.py` | Download ORFD / GOOSE datasets | `python3 scripts/tools/download_datasets.py` |
-| `yoloe_discovery_dump.py` | Dump YOLOE open-vocab detections | `python3 scripts/tools/yoloe_discovery_dump.py` |
+| `yoloe_discovery_dump.py` | Dump YOLOE open-vocab detections | `python3 scripts/detection/tools/yoloe_discovery_dump.py` |
 | **Optimization pipeline** | | |
-| `optimization/benchmark_jetson.py` | Stage 4 — TRT engine build + authoritative benchmark | `python3 scripts/optimization/benchmark_jetson.py --onnx-dir weights/optimization/ --val-data datasets/Final_Dataset` |
-| `optimization/compare_models.py` | Stage 6a — side-by-side image / video comparison | `python3 scripts/optimization/compare_models.py --mode video --model-a pytorch:... --model-b engine:...` |
-| `optimization/generate_report.py` | Stage 6b — Markdown + HTML results table | `python3 scripts/optimization/generate_report.py --csv reports/optimization/benchmark_results.csv` |
+| `optimization/benchmark_jetson.py` | Stage 4 — TRT engine build + authoritative benchmark | `python3 scripts/segmentation/optimization/benchmark_jetson.py --onnx-dir weights/segmentation/optimization/ --val-data datasets/Segmentation_Dataset` |
+| `optimization/compare_models.py` | Stage 6a — side-by-side image / video comparison | `python3 scripts/segmentation/optimization/compare_models.py --mode video --model-a pytorch:... --model-b engine:...` |
+| `optimization/generate_report.py` | Stage 6b — Markdown + HTML results table | `python3 scripts/segmentation/optimization/generate_report.py --csv reports/segmentation/optimization/benchmark_results.csv` |
 
 ---
 
@@ -313,12 +313,12 @@ models:
   semantic:
     # OPTION A — fastest
     # name: "segformer-b0"
-    # weights: "weights/orfd/frozen_backbone/segformer-b0/best.pth"
+    # weights: "weights/segmentation/orfd/frozen_backbone/segformer-b0/best.pth"
     # num_classes: 3
 
     # OPTION C — best accuracy
     name: "segformer-b2"
-    weights: "weights/orfd/frozen_backbone/segformer-b2/best.pth"
+    weights: "weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth"
     num_classes: 3
 ```
 

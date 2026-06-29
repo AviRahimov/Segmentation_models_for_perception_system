@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Stage 6b: Generate Markdown and HTML comparison reports from benchmark CSV.
 
-Reads reports/optimization/benchmark_results.csv (produced by benchmark_jetson.py)
+Reads reports/segmentation/optimization/benchmark_results.csv (produced by benchmark_jetson.py)
 and writes:
-  - reports/optimization/RESULTS.md   — Markdown table
-  - reports/optimization/RESULTS.html — styled HTML with colour-coding
+  - reports/segmentation/optimization/RESULTS.md   — Markdown table
+  - reports/segmentation/optimization/RESULTS.html — styled HTML with colour-coding
 
 Colour coding in HTML:
   Green  — best FPS in the table
@@ -13,8 +13,8 @@ Colour coding in HTML:
 
 Usage
 -----
-    python scripts/optimization/generate_report.py \\
-        --csv reports/optimization/benchmark_results.csv
+    python scripts/segmentation/optimization/generate_report.py \\
+        --csv reports/segmentation/optimization/benchmark_results.csv
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import csv
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 
 
 # --------------------------------------------------------------------------- #
@@ -199,7 +199,7 @@ def _write_html(rows: list[dict], out: Path) -> None:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Stage 6b: generate Markdown/HTML report from CSV")
-    p.add_argument("--csv", default="reports/optimization/benchmark_results.csv")
+    p.add_argument("--csv", default="reports/segmentation/optimization/benchmark_results.csv")
     p.add_argument("--out-dir", default=None,
                    help="Output directory (default: same as CSV directory)")
     args = p.parse_args()

@@ -23,10 +23,10 @@ Planned approach
 
 Usage (once implemented)
 ------------------------
-    python scripts/optimization/train_distill.py \\
+    python scripts/segmentation/optimization/train_distill.py \\
         --teacher weights/orfd/final_dataset_many_data_augmentations/segformer-b4/best.pth \\
         --student-variant segformer-b0 \\
-        --data datasets/Final_Dataset \\
+        --data datasets/Segmentation_Dataset \\
         --epochs 60
 """
 from __future__ import annotations
@@ -35,7 +35,7 @@ import logging
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s")

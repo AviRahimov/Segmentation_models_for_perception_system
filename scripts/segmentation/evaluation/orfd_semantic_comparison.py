@@ -50,7 +50,7 @@ import numpy as np
 import torch
 
 _HERE = Path(__file__).resolve().parent
-_REPO = _HERE.parents[1]
+_REPO = _HERE.parents[2]
 
 
 _COMPARE_SEMANTIC_MOD: object | None = None
@@ -540,7 +540,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     p.add_argument(
         "--training-root",
-        default="datasets/Final_Dataset/training",
+        default="datasets/Segmentation_Dataset/training",
         help="ORFD folder containing image_data/ and gt_image/",
     )
     p.add_argument("--config", default="config/config.yaml")

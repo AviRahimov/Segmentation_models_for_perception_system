@@ -19,18 +19,18 @@ Model spec format (same for --model-a and --model-b)
 Usage
 -----
     # Image comparison (20 random test images):
-    python scripts/optimization/compare_models.py --mode images \\
-        --model-a pytorch:weights/orfd/frozen_backbone/segformer-b2/best.pth \\
-        --model-b onnx:weights/optimization/qat_int8_256x256.onnx \\
-        --test-data datasets/Final_Dataset \\
+    python scripts/segmentation/optimization/compare_models.py --mode images \\
+        --model-a pytorch:weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \\
+        --model-b onnx:weights/segmentation/optimization/qat_int8_256x256.onnx \\
+        --test-data datasets/Segmentation_Dataset \\
         --n-samples 20
 
     # Video comparison:
-    python scripts/optimization/compare_models.py --mode video \\
-        --model-a pytorch:weights/orfd/frozen_backbone/segformer-b2/best.pth \\
-        --model-b onnx:weights/optimization/qat_int8_256x256.onnx \\
+    python scripts/segmentation/optimization/compare_models.py --mode video \\
+        --model-a pytorch:weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \\
+        --model-b onnx:weights/segmentation/optimization/qat_int8_256x256.onnx \\
         --source samples/desert_video.mp4 \\
-        --output reports/optimization/video_compare_baseline_vs_qat.mp4
+        --output reports/segmentation/optimization/video_compare_baseline_vs_qat.mp4
 """
 from __future__ import annotations
 
@@ -45,9 +45,9 @@ import cv2
 import numpy as np
 import torch
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
-sys.path.insert(0, str(_ROOT / "scripts" / "training"))
+sys.path.insert(0, str(_ROOT / "scripts" / "segmentation" / "training"))
 
 import train_orfd as _t
 
@@ -438,7 +438,7 @@ def main() -> int:
                    help="Input resolution for both models")
 
     # Image mode
-    p.add_argument("--test-data",  default="datasets/Final_Dataset",
+    p.add_argument("--test-data",  default="datasets/Segmentation_Dataset",
                    help="ORFD root (must contain testing/ split)")
     p.add_argument("--n-samples",  type=int, default=20)
     p.add_argument("--output-dir", default=None,

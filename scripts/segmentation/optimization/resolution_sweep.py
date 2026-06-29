@@ -2,13 +2,13 @@
 """Stage 0: Resolution sweep for SegFormer-B2 ORFD checkpoint.
 
 Evaluates mIoU and median latency at 256, 384, and 512 px on the ORFD
-validation set.  Writes reports/optimization/resolution_sweep.json.
+validation set.  Writes reports/segmentation/optimization/resolution_sweep.json.
 
 Usage
 -----
-    python scripts/optimization/resolution_sweep.py \\
-        --checkpoint weights/orfd/frozen_backbone/segformer-b2/best.pth \\
-        --data datasets/Final_Dataset
+    python scripts/segmentation/optimization/resolution_sweep.py \\
+        --checkpoint weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \\
+        --data datasets/Segmentation_Dataset
 
 Choose the resolution for downstream stages based on the printed table.
 """
@@ -26,9 +26,9 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
-sys.path.insert(0, str(_ROOT / "scripts" / "training"))
+sys.path.insert(0, str(_ROOT / "scripts" / "segmentation" / "training"))
 
 import train_orfd as _t
 
@@ -151,13 +151,13 @@ def _sweep_resolution(
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Stage 0: resolution mIoU + latency sweep")
-    p.add_argument("--checkpoint", default="weights/orfd/frozen_backbone/segformer-b2/best.pth")
-    p.add_argument("--data",        default="datasets/Final_Dataset",
+    p.add_argument("--checkpoint", default="weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth")
+    p.add_argument("--data",        default="datasets/Segmentation_Dataset",
                    help="ORFD root (must contain validation/)")
     p.add_argument("--resolutions", nargs="+", type=int, default=[256, 384, 512])
     p.add_argument("--batch",       type=int, default=8)
     p.add_argument("--workers",     type=int, default=4)
-    p.add_argument("--output",      default="reports/optimization/resolution_sweep.json")
+    p.add_argument("--output",      default="reports/segmentation/optimization/resolution_sweep.json")
     p.add_argument("--device",      default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
 
