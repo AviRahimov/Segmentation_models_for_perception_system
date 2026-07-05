@@ -58,6 +58,8 @@ def main() -> int:
     pipeline.warmup()
 
     counts: dict[str, list[float | int]] = defaultdict(lambda: [0, 0.0])  # n, max_conf
+    if args.jsonl:
+        args.jsonl.parent.mkdir(parents=True, exist_ok=True)
     jsonl_f = args.jsonl.open("a", encoding="utf-8") if args.jsonl else None
     try:
         n = 0

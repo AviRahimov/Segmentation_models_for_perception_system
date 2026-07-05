@@ -1,0 +1,58 @@
+# YOLOE discovery vocabulary — military vehicle + person prompt sweep
+# Format: one prompt per line, bare noun/compound phrase (no "a photo of" prefix)
+# Run via scripts/detection/tools/yoloe_discovery_dump.py
+
+# ── Military Vehicles ────────────────────────────────────────────────────────
+military vehicle
+military truck
+armored vehicle
+armored personnel carrier
+APC
+IFV
+infantry fighting vehicle
+tactical vehicle
+military jeep
+HMMWV
+Humvee
+military 4x4
+military transport vehicle
+military convoy vehicle
+camouflage vehicle
+military supply truck
+armored car
+military off-road vehicle
+
+# ── Persons — Civilian ───────────────────────────────────────────────────────
+person
+human
+pedestrian
+man
+woman
+individual
+civilian
+worker
+bystander
+person walking
+person standing
+
+# ── Persons — Military ──────────────────────────────────────────────────────
+soldier
+military personnel
+combatant
+armed soldier
+military officer
+person in military uniform
+person in tactical gear
+person in combat gear
+armed person
+
+# ── Civilian Vehicles (false-positive candidates to identify) ────────────────
+car
+pickup truck
+SUV
+van
+civilian truck
+delivery truck
+bus
+off-road vehicle
+ATV
