@@ -13,16 +13,16 @@ https://github.com/chaytonmin/Off-Road-Freespace-Detection
 
 Writes (default):
 
-* ``<output-dir>/strips/orfd_<stem>.png`` and ``goose_<scenario>_<stem>.png``
-  — one horizontal strip per frame with traversable-binary IoU in the band.
+* ``<output-dir>/strips/orfd_<stem>.png`` — one horizontal strip per frame with
+  traversable-binary IoU in the band.
 * ``<output-dir>/README.txt`` — run summary.
 * ``<output-dir>/performance_summary.json`` and ``performance_summary.md`` —
-  per-dataset (ORFD vs GOOSE) binary-traversable metrics (mean/std/median IoU,
-  micro precision/recall/F1), unless ``--no-performance-summary`` is set.
+  binary-traversable metrics (mean/std/median IoU, micro precision/recall/F1),
+  unless ``--no-performance-summary`` is set.
 
 Optional ``--single-mosaic`` concatenates strips into ``orfd_mosaic.png``.
-Extra GOOSE val sampling, ORFD gray value, and optional YOLOE mask subtraction
-are configured under ``orfd_semantic_comparison`` in ``config.yaml``.
+ORFD gray value and optional YOLOE mask subtraction are configured under
+``orfd_semantic_comparison`` in ``config.yaml``.
 
 Examples::
 
@@ -57,7 +57,7 @@ _COMPARE_SEMANTIC_MOD: object | None = None
 
 
 def _compare_semantic_module():
-    """Load ``compare_semantic_models.py`` once (render_panel + GOOSE helpers)."""
+    """Load ``compare_semantic_models.py`` once (render_panel helper)."""
     global _COMPARE_SEMANTIC_MOD
     if _COMPARE_SEMANTIC_MOD is None:
         sys.path.insert(0, str(_REPO / "src"))
@@ -147,11 +147,6 @@ class FreespaceFrame:
     valid: np.ndarray  # bool — exclude sky/ambiguous from IoU/scoring
 
 
-def freespace_strip_dataset_tag(fr: FreespaceFrame) -> str:
-    """``goose`` vs ``orfd`` from strip filename prefix (see ``_fs_name_key``)."""
-    return "goose" if fr.strip_name.startswith("goose_") else "orfd"
-
-
 def _micro_precision_recall_f1(
     tp: int,
     fp: int,
@@ -204,11 +199,9 @@ def _write_freespace_performance_artifacts(
         }
 
     orfd_metrics = {m: row_metrics("orfd", m) for m in models}
-    goose_metrics = {m: row_metrics("goose", m) for m in models}
     payload = {
         "config_snapshot": config_snapshot,
         "orfd": orfd_metrics,
-        "goose": goose_metrics,
     }
     jp = out_dir / "performance_summary.json"
     jp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -224,7 +217,7 @@ def _write_freespace_performance_artifacts(
         "Micro P/R/F1 pool TP/FP/FN across all labelled pixels in the split.",
         "",
     ]
-    for ds_title, block in (("ORFD", orfd_metrics), ("GOOSE", goose_metrics)):
+    for ds_title, block in (("ORFD", orfd_metrics),):
         md_lines.append(f"## {ds_title}")
         md_lines.append("")
         md_lines.append(
@@ -248,65 +241,6 @@ def _write_freespace_performance_artifacts(
     mp = out_dir / "performance_summary.md"
     mp.write_text("\n".join(md_lines), encoding="utf-8")
     logger.info("wrote %s", mp)
-
-
-def gather_goose_scenario_pairs(
-    goose_root: Path,
-    scenario_dir_name: str,
-) -> list[tuple[Path, Path]]:
-    csm = _compare_semantic_module()
-    scenario = goose_root / "images" / "val" / scenario_dir_name
-    if not scenario.is_dir():
-        logger.warning("GOOSE val scenario folder missing: %s", scenario)
-        return []
-    out = [
-        pair
-        for pair in csm.goose_ex_val_pairs(goose_root)
-        if pair[0].parent.name == scenario_dir_name
-    ]
-    logger.info(
-        "GOOSE %s: %d image/label pairs under %s",
-        scenario_dir_name,
-        len(out),
-        goose_root,
-    )
-    return out
-
-
-def goose_freespace_masks(
-    label_u8: np.ndarray,
-    fine_to_cat: np.ndarray,
-    *,
-    trav_cat_idxs: tuple[int, ...],
-    sky_cat_idx: int,
-    void_cat_idx: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """GOOSE fine labelids → binary traversable GT + valid mask (sky/void excluded).
-
-    ``spot_scenario03`` (and much off-road footage) annotates gravel/dirt as
-    category **terrain**, not **road**; ``road`` may be absent in every pixel.
-    Default traversable categories come from ``config.yaml`` →
-    ``orfd_semantic_comparison.goose.traversable_categories``.
-    """
-    lbl = label_u8.astype(np.int32, copy=False)
-    max_f = int(fine_to_cat.shape[0])
-    oob = (lbl < 0) | (lbl >= max_f)
-    goose_cat = np.full(lbl.shape, -1, dtype=np.int16)
-    goose_cat[~oob] = fine_to_cat[lbl[~oob]].astype(np.int16, copy=False)
-
-    t_idx = np.array(trav_cat_idxs, dtype=np.int16)
-    gt_trav = np.isin(goose_cat, t_idx)
-    valid = (goose_cat >= 0) & (goose_cat != int(sky_cat_idx)) & (goose_cat != int(void_cat_idx))
-    return gt_trav, valid
-
-
-def goose_trav_category_indices(
-    goose_12_names: tuple[str, ...],
-    categories: tuple[str, ...],
-) -> tuple[int, ...]:
-    """Map validated GOOSE coarse names (order as in config) to channel indices."""
-    m = {n: i for i, n in enumerate(goose_12_names)}
-    return tuple(m[c] for c in categories)
 
 
 def _fs_name_key(prefix: str, stem: str) -> str:
@@ -675,73 +609,6 @@ def main() -> int:
             gu = orfd_gt_to_user_indices(gt_gray, class_names)
             frames_legacy.append((img_path, img_bgr, gu))
 
-    if freespace_binary and occ.goose.samples > 0:
-        g_root = Path(occ.goose.ex_root).resolve()
-        csv_p = Path(occ.goose.label_csv)
-        if not csv_p.is_file():
-            logger.warning("GOOSE CSV missing (%s); skipping extra samples.", csv_p)
-        else:
-            csm_mod = _compare_semantic_module()
-            g_names = csm_mod.GOOSE_CATEGORY_NAMES
-            fine_lut = csm_mod.build_fine_to_category_lut(csv_p.resolve())
-            trav_idx = goose_trav_category_indices(
-                g_names,
-                occ.goose.traversable_categories,
-            )
-            sky_ix = g_names.index("sky")
-            void_ix = g_names.index("void")
-            gpairs = gather_goose_scenario_pairs(g_root, occ.goose.scenario_dir)
-            if gpairs:
-                gs = min(occ.goose.samples, len(gpairs))
-                goose_picks = rng.sample(gpairs, k=gs)
-                pref = f"goose_{occ.goose.scenario_dir}"
-                for img_path, lbl_path in goose_picks:
-                    ib = cv2.imread(str(img_path))
-                    lbl_raw = cv2.imread(str(lbl_path), cv2.IMREAD_UNCHANGED)
-                    if ib is None or lbl_raw is None:
-                        logger.warning(
-                            "GOOSE read failed %s / %s; skip.",
-                            img_path,
-                            lbl_path,
-                        )
-                        continue
-                    if lbl_raw.ndim == 3:
-                        lbl_u = lbl_raw[..., 0].astype(np.uint8, copy=False)
-                    else:
-                        lbl_u = lbl_raw.astype(np.uint8, copy=False)
-                    if lbl_u.shape[:2] != ib.shape[:2]:
-                        lbl_u = cv2.resize(
-                            lbl_u,
-                            (ib.shape[1], ib.shape[0]),
-                            interpolation=cv2.INTER_NEAREST,
-                        )
-                    gt_tr_g, vm_g = goose_freespace_masks(
-                        lbl_u,
-                        fine_lut,
-                        trav_cat_idxs=trav_idx,
-                        sky_cat_idx=sky_ix,
-                        void_cat_idx=void_ix,
-                    )
-                    frames_freespace.append(
-                        FreespaceFrame(
-                            strip_name=_fs_name_key(pref, img_path.stem),
-                            img_path=img_path,
-                            img_bgr=ib,
-                            gt_trav=gt_tr_g,
-                            valid=vm_g,
-                        ),
-                    )
-            else:
-                logger.warning(
-                    "No GOOSE image/label pairs under scenario %r.",
-                    occ.goose.scenario_dir,
-                )
-    elif occ.goose.samples > 0 and not freespace_binary:
-        logger.warning(
-            "orfd_semantic_comparison.goose.samples=%d ignored (--legacy-multiclass).",
-            occ.goose.samples,
-        )
-
     primary = frames_freespace if freespace_binary else frames_legacy
 
     if not primary:
@@ -859,8 +726,7 @@ def main() -> int:
                     )
                 pred_vis = np.where(pred_bool, np.int8(0), np.int8(-1))
 
-                tag_ds = freespace_strip_dataset_tag(fr)
-                pk = (tag_ds, sem_key)
+                pk = ("orfd", sem_key)
                 perf_n_frames[pk] += 1
                 # Copy: np.logical_and(x, y, z) treats z as `out=` and would
                 # clobber fr.valid (often the same buffer as asarray(..., bool)).
@@ -934,16 +800,7 @@ def main() -> int:
             gt_tr = fr.gt_trav
             gt_vis = np.where(gt_tr, 0, -1).astype(np.int8)
 
-            if fr.strip_name.startswith("goose_"):
-                subtitle = (
-                    "binary GOOSE GT ("
-                    + ",".join(occ.goose.traversable_categories)
-                    + "; sky|void excl)"
-                )
-            else:
-                subtitle = (
-                    f"binary traversable (ORFD path gray={occ.orfd_trav_gray})"
-                )
+            subtitle = f"binary traversable (ORFD path gray={occ.orfd_trav_gray})"
 
             chunks = []
             for kname in models_ran:
@@ -1032,8 +889,6 @@ def main() -> int:
         "Generated by scripts/orfd_semantic_comparison.py",
         f"training_root={Path(args.training_root).resolve()}",
         f"orfd_trav_gray={occ.orfd_trav_gray}",
-        f"goose.samples={occ.goose.samples} scenario={occ.goose.scenario_dir} "
-        f"trav_categories={list(occ.goose.traversable_categories)}",
         (
             "instance_mask_subtraction="
             f"{im_sub.subtract_from_traversable}"
@@ -1048,7 +903,7 @@ def main() -> int:
     ]
     if freespace_binary:
         readme_lines.append(
-            "performance_summary.json/md: ORFD vs GOOSE binary metrics "
+            "performance_summary.json/md: ORFD binary metrics "
             "(omit with --no-performance-summary).",
         )
     readme_lines += [

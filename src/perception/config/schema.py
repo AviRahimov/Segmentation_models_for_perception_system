@@ -174,7 +174,6 @@ class HardwareCfg:
     device: str = "cuda"
     fp16: bool = True
     use_tensorrt: bool = False
-    text_embed_cache: bool = True
     #: GPU memory (GB) reserved for the TRT engine build workspace.
     #: Only used by scripts/export_trt.py; ignored at inference time.
     trt_workspace_gb: int = 4
@@ -196,11 +195,6 @@ class SourceCfg:
     camera_index: int = 0
     image_dir_glob: str = "*.png"
     fps_hint: float = 30.0  # used for image_dir / camera fallback
-
-
-@dataclass(frozen=True)
-class DatasetsCfg:
-    download_dir: str = "./datasets"
 
 
 @dataclass(frozen=True)
@@ -245,7 +239,6 @@ class AppConfig:
     hardware: HardwareCfg
     player: PlayerCfg
     source: SourceCfg
-    datasets: DatasetsCfg
     orfd_semantic_comparison: OrfdSemanticComparisonCfg = field(
         default_factory=OrfdSemanticComparisonCfg,
     )

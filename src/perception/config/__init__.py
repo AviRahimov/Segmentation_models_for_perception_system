@@ -2,7 +2,6 @@
 from .schema import (
     AppConfig,
     ClassDef,
-    DatasetsCfg,
     HardwareCfg,
     InstanceModelCfg,
     InstancePromptMode,
@@ -18,7 +17,6 @@ from .loader import load_config, override_source, resolve_path_relative_config
 __all__ = [
     "AppConfig",
     "ClassDef",
-    "DatasetsCfg",
     "HardwareCfg",
     "InstanceModelCfg",
     "InstancePromptMode",

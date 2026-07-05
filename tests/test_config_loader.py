@@ -41,9 +41,6 @@ player:
 source:
   type: "video"
   path: "x.mp4"
-
-datasets:
-  download_dir: "./d"
 """
 
 

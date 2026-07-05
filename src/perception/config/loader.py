@@ -17,7 +17,6 @@ from ..models.semantic._class_catalogues import CATALOGUE_SIZES
 from .schema import (
     AppConfig,
     ClassDef,
-    DatasetsCfg,
     HardwareCfg,
     InstanceModelCfg,
     InstancePromptMode,
@@ -111,7 +110,6 @@ def _build_app_config(raw: dict[str, Any], *, config_file: Path) -> AppConfig:
         hardware=_build_hardware(_require_dict(raw.get("hardware"), "hardware")),
         player=_build_player(_require_dict(raw.get("player"), "player")),
         source=_build_source(_require_dict(raw.get("source"), "source")),
-        datasets=_build_datasets(_require_dict(raw.get("datasets"), "datasets")),
         orfd_semantic_comparison=_build_orfd_semantic_comparison(
             _require_dict(raw.get("orfd_semantic_comparison"), "orfd_semantic_comparison"),
         ),
@@ -566,7 +564,6 @@ def _build_hardware(raw: dict[str, Any]) -> HardwareCfg:
         device=str(raw.get("device", "cuda")),
         fp16=bool(raw.get("fp16", True)),
         use_tensorrt=bool(raw.get("use_tensorrt", False)),
-        text_embed_cache=bool(raw.get("text_embed_cache", True)),
         trt_workspace_gb=trt_ws,
     )
 
@@ -602,5 +599,3 @@ def _build_source(raw: dict[str, Any]) -> SourceCfg:
     return cfg
 
 
-def _build_datasets(raw: dict[str, Any]) -> DatasetsCfg:
-    return DatasetsCfg(download_dir=str(raw.get("download_dir", "./datasets")))
