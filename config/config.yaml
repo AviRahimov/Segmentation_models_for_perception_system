@@ -1,111 +1,67 @@
 # Off-Road Robotics Perception — main configuration
-#
-# HOW TO SWITCH MODELS
-# --------------------
-# 1. In the `semantic:` section, comment/uncomment the block you want.
-# 2. In the `classes:` section, comment/uncomment the matching semantic class block.
-# 3. No other files need to change.
 
-# ---------------------------------------------------------------------------
 models:
+  # To revert to Round 1 yolo11m:
+  #   name: "yolo11m"  weights: "weights/detection/yolo11m/round1/best.pt"
+  #   prompt_mode: production  imgsz: 640
+  #   person.coco_classes: [2]  vehicle.coco_classes: [1]
   instance:
-    enabled: true               # set false to skip instance model entirely (semantic-only mode, ~2× faster)
-    name: "rfdetr-m"            # switch here: yolo26m, yolo12m, rfdetr-m, yoloe26l, etc.
-    weights: ""
-    confidence_threshold: 0.35
-    prompt_mode: production            # production | discovery (only used by yoloe)
+    enabled: true
+    name: "yolo11m"
+    weights: "weights/detection/yolo11m/exp/freeze10_aug_clean/best.pt"
+    prompt_mode: production             # production | discovery
     discovery_vocabulary_path: "yoloe_discovery_vocab.example.txt"
     discovery_conf_floor: 0.05
-    imgsz: 512                         # inference image size; ignored by rfdetr (fixed per variant)
+    imgsz: 640
 
+  # Other options: segformer-b0 (fastest), segformer-b1, segformer-b4
   semantic:
-    # ── OPTION A: SegFormer-B0 frozen backbone (ORFD) — fastest ───────────
-    # name: "segformer-b0"
-    # weights: "weights/segmentation/orfd/frozen_backbone/segformer-b0/best.pth"
-    # num_classes: 3
-    # tta: false
-
-    # ── OPTION B: SegFormer-B1 frozen backbone (ORFD) ──────────────────────
-    # name: "segformer-b1"
-    # weights: "weights/segmentation/orfd/frozen_backbone/segformer-b1/best.pth"
-    # num_classes: 3
-    # tta: false
-
-    # ── OPTION C: SegFormer-B2 frozen backbone (ORFD) — recommended ────────
-    # 3-class head trained on ORFD: non_traversable, traversable, sky.
-    # Classes below: non_traversable + road_ground + sky (no ade20k_indices needed).
     name: "segformer-b2"
-    weights: "weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth"
+    weights: "weights/orfd/frozen_backbone/segformer-b2/best.pth"
     num_classes: 3
-    processor_size: 256                # processor input size; 512 = default, 256 = ~2x faster, 384 = middle ground
-    # trt_engine_path: "weights/segmentation/orfd/segmentation_dataset/segformer-b2/best-256x256.engine"
+    processor_size: 256
 
-    # ── OPTION D: SegFormer-B4 fine-tuned (ORFD) ───────────────────────────
-    # name: "segformer-b4"
-    # weights: "weights/segmentation/orfd/segmentation_dataset_many_data_augmentations/segformer-b4/best.pth"
-    # num_classes: 3
-
-    # ── OPTION E: SegFormer-B2 ADE20K pretrained (zero-shot, no fine-tuning) ─
-    # Requires semantic classes below to have ade20k_indices.
-    # name: "segformer-b2"
-    # weights: ""
-
-# ---------------------------------------------------------------------------
-# Class definitions
-#
-# Instance classes (`is_semantic: false`):
-#   text_prompt   — open-vocab prompt used by YOLOE only.
-#   coco_classes  — standard COCO IDs (1-indexed) used by YOLO11/12/26 and RF-DETR.
-#                   Empty list = this class is skipped by closed-vocab models.
-# Semantic classes (`is_semantic: true`): output of the semantic model.
-#   Fine-tuned mode: no ade20k_indices — model outputs user classes directly.
-#   ADE20K mode:     ade20k_indices required — maps native channels to user class.
 # ---------------------------------------------------------------------------
 classes:
 
-  # ── Instance classes ─────────────────────────────────────────────────────
-
+  # coco_classes are 1-indexed (wrapper subtracts 1): model classes are
+  # 0='Military Vehicle', 1='person' → config values [1]=vehicle, [2]=person
   - name: "person"
     text_prompt: "person"
-    coco_classes: [1]                  # COCO: person (1)
+    coco_classes: [2]
     display_mode: "both"
     color: "#00ff80"
     is_semantic: false
-    confidence_threshold: 0.37
+    confidence_threshold: 0.80
 
   - name: "vehicle"
     text_prompt: >-
-      passenger car, driving car, SUV, pickup truck, van, minivan, jeep,
-      off-road truck, ATV, UTV, motorcycle, motorbike, farm tractor, trailer,
-      military truck, military vehicle, tactical vehicle, HMMWV, Humvee,
-      armored personnel carrier, APC, IFV, infantry fighting vehicle
-    coco_classes: [3, 4, 6, 8]        # COCO: car (3), motorcycle (4), bus (6), truck (8)
+      cargo truck, car barrier, military supply truck, military convoy vehicle, armored personnel carrier,
+      military transport vehicle, delivery truck
+    coco_classes: [1]
     display_mode: "both"
     color: "#ffc800"
     is_semantic: false
-    confidence_threshold: 0.35
+    confidence_threshold: 0.94
 
   - name: "obstacle"
     text_prompt: >-
       rock, log, debris, boulder, large rock, fallen tree, tree stump,
       deep rut, ditch, berm, earthwork
-    coco_classes: []                   # no COCO equivalent — skipped by closed-vocab models
+    coco_classes: []
     display_mode: "bbox_only"
     color: "#ff4040"
     is_semantic: false
 
   - name: "unnecessary_detection"
-    text_prompt: "truck, trash, container, barrier, traffic cone, traffic light, traffic sign, traffic block, boom barrier, road block, street light, pole"
-    coco_classes: []                   # YOLOE-only suppression — skipped by closed-vocab models
+    text_prompt: "RV. bridge-laying tank, motorhome, gazebo, truck, trash, container, barrier, traffic cone, traffic light, traffic sign, boom barrier, road block, street light, pole, mobile generator, box truck"
+    coco_classes: []
     display_mode: "none"
     color: "#000000"
     is_semantic: false
     confidence_threshold: 0.05
 
-  # ── Semantic classes — MUST match the semantic model option above ─────────
-
-  # For OPTION A/B/C (fine-tuned 3-class, num_classes: 3):
-  # Class order must match model output: 0 = non_traversable, 1 = road_ground, 2 = sky
+  # Semantic classes — order must match model output: 0=non_traversable, 1=road_ground, 2=sky
   - name: "non_traversable"
     text_prompt: "obstacle or non-drivable area"
     display_mode: "none"
@@ -120,49 +76,9 @@ classes:
 
   - name: "sky"
     text_prompt: "sky"
-    display_mode: "none"      # predicted but not rendered — prevents sky-as-traversable artifact
+    display_mode: "none"
     color: "#c8c8c8"
     is_semantic: true
-
-  # For OPTION D (ADE20K pretrained), replace the two above with:
-  # - name: "road_ground"
-  #   display_mode: "mask_only"
-  #   color: "#6464ff"
-  #   is_semantic: true
-  #   ade20k_indices: [52, 91]        # path (#52) + dirt-track (#91)
-  #   native_indices:
-  #     goose_12: [5]
-  #
-  # - name: "grass"
-  #   display_mode: "none"
-  #   color: "#00c850"
-  #   is_semantic: true
-  #   ade20k_indices: [9]
-  #   native_indices:
-  #     goose_12: [0]
-  #
-  # - name: "vegetation"
-  #   display_mode: "none"
-  #   is_semantic: true
-  #   ade20k_indices: [4, 16]
-  #   native_indices:
-  #     goose_12: [0]
-  #
-  # - name: "sand_gravel"
-  #   display_mode: "mask_only"
-  #   color: "#c2b280"
-  #   is_semantic: true
-  #   ade20k_indices: [46]
-  #   native_indices:
-  #     goose_12: [1]
-  #
-  # - name: "sky"
-  #   display_mode: "none"
-  #   color: "#c8c8c8"
-  #   is_semantic: true
-  #   ade20k_indices: [2]
-  #   native_indices:
-  #     goose_12: [8]
 
 # ---------------------------------------------------------------------------
 temporal:
@@ -172,19 +88,18 @@ temporal:
     scene_cut_threshold: 0.45
 
   instance_tracker:
-    iou_threshold: 0.30       # min IoU to match detection to previous track
-    max_hold_frames: 0        # frames a missed track is re-emitted (0 = no hold)
-    hold_score_decay: 0.85    # per-missed-frame score decay (0.85^2 ≈ 0.72)
-    bbox_alpha: 0.95          # EMA weight for bbox smoothing (lower = smoother)
-    score_alpha: 0.40         # EMA weight for confidence display
+    iou_threshold: 0.30
+    max_hold_frames: 5
+    hold_score_decay: 0.85
+    bbox_alpha: 0.95
+    score_alpha: 0.40
 
 # ---------------------------------------------------------------------------
 hardware:
   device: "cuda"
   fp16: true
   use_tensorrt: false
-  text_embed_cache: true
-  trt_workspace_gb: 4        # GB workspace for TRT engine build (export time only)
+  trt_workspace_gb: 4
 
 player:
   mask_alpha: 0.45
@@ -201,22 +116,11 @@ source:
   image_dir_glob: "*.png"
   fps_hint: 30.0
 
-datasets:
-  download_dir: "./datasets"
-
 # ---------------------------------------------------------------------------
-# ORFD / GOOSE freespace strip comparison
-# Consumed only by scripts/orfd_semantic_comparison.py
-# ---------------------------------------------------------------------------
+# Used only by scripts/segmentation/evaluation/orfd_semantic_comparison.py
 orfd_semantic_comparison:
   orfd_trav_gray: 255
   freespace_merged_prob_floor: 0.25
-  goose:
-    ex_root: "datasets/goose/gooseEx_2d_val/gooseEx_2d_val"
-    label_csv: "datasets/goose/gooseEx_2d_val/gooseEx_2d_val/goose_label_mapping.csv"
-    scenario_dir: "spot_scenario03"
-    samples: 5
-    traversable_categories: [terrain, road]
   instance_mask_subtraction:
     subtract_from_traversable: true
     dilate_px: 5
