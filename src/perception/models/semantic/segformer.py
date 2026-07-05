@@ -116,6 +116,13 @@ def _remap_segformer_keys(sd: dict) -> dict:
         out[nk] = v
     return out
 
+# Repo-local cache of HF processor/model config JSONs (a few KB per model),
+# created once by scripts/tools/cache_hf_assets.py. When present, loading a
+# fine-tuned .pth checkpoint makes zero network calls: no HF Hub freshness
+# checks and no ADE base-weight download (those weights are fully replaced by
+# the local state dict anyway).
+_HF_ASSETS_DIR = Path("weights") / "hf_assets"
+
 # Maps config model name → canonical HuggingFace model ID.
 # Used when weights is a local .pth file: load the processor and architecture
 # from HuggingFace, then overlay the local state dict.
@@ -145,6 +152,7 @@ class SegFormerSemanticModel(SemanticModel):
     ) -> None:
         # Lazy import for environments without transformers (e.g. unit tests).
         from transformers import (  # type: ignore
+            SegformerConfig,
             SegformerForSemanticSegmentation,
             SegformerImageProcessor,
         )
@@ -158,7 +166,14 @@ class SegFormerSemanticModel(SemanticModel):
         # the local state dict on top.
         _is_local = Path(weights).suffix == ".pth"
         hf_base = _HF_BASES.get(name, _HF_BASES["segformer-b2"])
-        processor_source = hf_base if _is_local else weights
+        # Prefer the repo-local asset copy (weights/hf_assets/<model>/) so
+        # startup never touches the network. Fall back to the HF Hub when the
+        # assets haven't been cached yet (scripts/tools/cache_hf_assets.py).
+        local_assets = _HF_ASSETS_DIR / hf_base.split("/")[-1]
+        if _is_local and (local_assets / "preprocessor_config.json").exists():
+            processor_source = str(local_assets)
+        else:
+            processor_source = hf_base if _is_local else weights
         self._processor = SegformerImageProcessor.from_pretrained(processor_source)
         if processor_size is not None:
             self._processor.size = {"height": processor_size, "width": processor_size}
@@ -177,11 +192,25 @@ class SegFormerSemanticModel(SemanticModel):
                     "using checkpoint value.",
                     num_classes, n_labels,
                 )
-            self._model = SegformerForSemanticSegmentation.from_pretrained(
-                hf_base,
-                num_labels=n_labels,
-                ignore_mismatched_sizes=True,
-            )
+            if (local_assets / "config.json").exists():
+                # Offline path: the checkpoint carries every weight (strict
+                # load below), so only the architecture config is needed —
+                # skip downloading the ADE base weights entirely.
+                # Pass only the label maps (num_labels is derived from them):
+                # passing num_labels alongside the base config's 150-entry
+                # id2label triggers a spurious incompatibility warning.
+                arch_cfg = SegformerConfig.from_pretrained(
+                    str(local_assets),
+                    id2label={i: str(i) for i in range(n_labels)},
+                    label2id={str(i): i for i in range(n_labels)},
+                )
+                self._model = SegformerForSemanticSegmentation(arch_cfg)
+            else:
+                self._model = SegformerForSemanticSegmentation.from_pretrained(
+                    hf_base,
+                    num_labels=n_labels,
+                    ignore_mismatched_sizes=True,
+                )
             self._model.load_state_dict(state_dict, strict=True)
             logger.info("SegFormer loaded from local checkpoint %s (%d classes, strict)",
                         weights, n_labels)

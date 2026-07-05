@@ -51,7 +51,10 @@ logs/
 *.engine
 *.trt
 *.plan
-weights/
+# Use weights/* (not weights/) so the hf_assets exception below can work
+weights/*
+# Track tiny HF config JSONs for offline SegFormer startup (cache_hf_assets.py)
+!weights/hf_assets/
 checkpoints/
 
 # Datasets (heavy) — leading slash = root-level only, not src/perception/datasets/
