@@ -46,6 +46,28 @@ python scripts/detection/tools/yoloe_discovery_dump.py --config config/config.ya
     --source samples/recording.mp4 --max-frames 200 \
     --jsonl runs/discovery.jsonl --summary-tsv runs/discovery_summary.tsv
 
+# Detection training — Round 1 (YOLO26 and YOLOE-26, scales s/m/l)
+python scripts/detection/training/train_round1.py --model yolo26m
+python scripts/detection/training/train_round1.py --model yoloe-26m
+# Output: weights/detection/{model_name}/round1/best.pt
+
+# Detection evaluation
+python scripts/detection/evaluation/eval_detection.py \
+    --weights weights/detection/yolo26m/round1/best.pt
+
+# Detection model comparison (paper-style — table / images / video)
+python scripts/detection/evaluation/compare_detection_models.py --mode table \
+    --models pytorch:weights/detection/yolo26s/round1/best.pt \
+             pytorch:weights/detection/yolo26m/round1/best.pt \
+             pytorch:weights/detection/yoloe-26m/round1/best.pt
+python scripts/detection/evaluation/compare_detection_models.py --mode images \
+    --models pytorch:weights/detection/yolo26m/round1/best.pt \
+             pytorch:weights/detection/yoloe-26m/round1/best.pt \
+    --test-data datasets/Detection_Dataset/valid/images --n-samples 20
+python scripts/detection/evaluation/compare_detection_models.py --mode video \
+    --models pytorch:weights/detection/yolo26m/round1/best.pt \
+    --source samples/clip.mp4
+
 # Dataset download
 python scripts/tools/download_datasets.py  # both RUGD + ORFD
 ```

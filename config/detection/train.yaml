@@ -1,0 +1,40 @@
+dataset:
+  # Path to YOLO data.yaml (relative to project root or absolute)
+  path: "datasets/Detection_Dataset/data.yaml"
+
+model:
+  # Override on CLI: --model yolo26s / yolo26m / yolo26l / yoloe-26s / yoloe-26m / yoloe-26l
+  name: "yolo26m"
+  # Output dir; {model_name} is substituted at runtime
+  out_dir: "weights/detection/{model_name}/round1"
+
+training:
+  epochs: 300
+  imgsz: 640
+  # RTX 5090 32GB: batch=32 is safe for s/m, 16 for l
+  batch: 16
+  # Scale-aware freeze (YOLO26 only; YOLOEPETrainer manages its own freeze logic):
+  #   s → 8,  m → 6,  l → 4
+  # Set explicitly to override the auto-detected default.
+  freeze: null
+  lr0: 2.0e-4
+  lrf: 0.01
+  weight_decay: 5.0e-4
+  warmup_epochs: 5
+  close_mosaic: 50
+  optimizer: "AdamW"
+  patience: 80
+  seed: 42
+  save_period: 20
+  workers: 8
+  device: "0"
+  # Augmentation — heavy for small datasets
+  mosaic: 1.0
+  mixup: 0.2
+  copy_paste: 0.15
+  degrees: 10.0
+  translate: 0.2
+  scale: 0.6
+  flipud: 0.15
+  fliplr: 0.5
+  erasing: 0.4
