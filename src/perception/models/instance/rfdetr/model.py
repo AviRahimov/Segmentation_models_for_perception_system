@@ -80,11 +80,13 @@ class RFDETRInstanceModel(InstanceModel):
         *,
         model_name: str = "rfdetr-m",
         imgsz: int = 640,
-        # ignored open-vocab / discovery kwargs
+        # ignored open-vocab / discovery / recovery kwargs (factory passes
+        # these universally across all model types)
         prompt_mode: Any = None,
         discovery_vocab_path: Any = None,
         discovery_conf_floor: Any = None,
         discovery_max_det: Any = None,
+        recovery_conf_floor: Any = None,
     ) -> None:
         self._model_name = model_name
         self._weights = weights

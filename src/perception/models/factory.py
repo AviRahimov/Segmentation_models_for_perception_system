@@ -118,6 +118,10 @@ def build_instance_model(
         discovery_conf_floor=cfg.discovery_conf_floor,
         discovery_max_det=cfg.discovery_max_det,
         imgsz=cfg.imgsz,
+        recovery_conf_floor=(
+            cfg.low_conf_recovery.recovery_conf_floor
+            if cfg.low_conf_recovery.enabled else None
+        ),
         model_name=name,
     )
 

@@ -17,6 +17,7 @@ from ..config.schema import AppConfig
 from ..core.types import FrameResult, SemanticPrediction
 from ..models.instance.base import InstanceModel
 from ..models.semantic.base import SemanticModel
+from ..postprocess import filter_duplicates
 from ..temporal.base import InstanceTracker, LogitsSmoother, SceneCutDetector
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,8 @@ class PerceptionPipeline:
         self._has_semantic = bool(config.semantic_classes)
         self._has_instance = config.runs_yoloe_instance_inference
         self._reset_on_cut = config.temporal.semantic_ema.reset_on_scene_cut
+        self._dedup = config.postprocess.duplicate_filter
+        self._tracker_enabled = config.temporal.instance_tracker.enabled
         # Persistent thread pool for parallel model inference. Only created when
         # both models are active; otherwise the sequential else-branch is used.
         self._executor: concurrent.futures.ThreadPoolExecutor | None = (
@@ -80,6 +83,9 @@ class PerceptionPipeline:
         if self._executor is not None:
             def _run_instance() -> list:
                 raw = self._inst.predict(frame_bgr)
+                raw = self._dedup_detections(raw)
+                if not self._tracker_enabled:
+                    return raw
                 return self._tracker.update(frame_bgr, raw)
 
             def _run_semantic() -> SemanticPrediction:
@@ -94,7 +100,9 @@ class PerceptionPipeline:
         else:
             if self._has_instance:
                 raw = self._inst.predict(frame_bgr)
-                detections = self._tracker.update(frame_bgr, raw)
+                raw = self._dedup_detections(raw)
+                detections = (raw if not self._tracker_enabled
+                             else self._tracker.update(frame_bgr, raw))
             if self._has_semantic:
                 logits = self._sem.predict_logits(frame_bgr)
                 smoothed = self._smoother.update(logits)
@@ -108,6 +116,18 @@ class PerceptionPipeline:
             frame_idx=frame_idx,
             inference_ms=dt_ms,
             scene_cut=cut,
+        )
+
+    # ------------------------------------------------------------------ #
+    def _dedup_detections(self, detections: list) -> list:
+        """Drop same-class nested/overlapping duplicates before tracking."""
+        if not self._dedup.enabled or len(detections) < 2:
+            return detections
+        return filter_duplicates(
+            detections,
+            iou_threshold=self._dedup.iou_threshold,
+            containment_threshold=self._dedup.containment_threshold,
+            score_margin=self._dedup.score_margin,
         )
 
     # ------------------------------------------------------------------ #

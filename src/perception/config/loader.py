@@ -20,14 +20,17 @@ from ..models.semantic._class_catalogues import CATALOGUE_SIZES
 from .schema import (
     AppConfig,
     ClassDef,
+    DuplicateFilterCfg,
     HardwareCfg,
     InstanceModelCfg,
     InstancePromptMode,
+    LowConfRecoveryCfg,
     ModelsCfg,
     OrfdSemanticComparisonCfg,
     OrfdSemanticComparisonGooseCfg,
     OrfdSemanticComparisonInstanceMaskCfg,
     PlayerCfg,
+    PostprocessCfg,
     InstanceTrackerCfg,
     SemanticEMACfg,
     SemanticModelCfg,
@@ -137,6 +140,7 @@ def _build_app_config(raw: dict[str, Any], *, config_file: Path) -> AppConfig:
         orfd_semantic_comparison=_build_orfd_semantic_comparison(
             _require_dict(raw.get("orfd_semantic_comparison"), "orfd_semantic_comparison"),
         ),
+        postprocess=_build_postprocess(raw.get("postprocess") or {}),
     )
 
 
@@ -526,6 +530,18 @@ def _build_models(raw: dict[str, Any], *, config_file: Path) -> ModelsCfg:
     ipm: InstancePromptMode = "discovery" if pm == "discovery" else "production"
 
     profile_raw = inst_raw.get("profile")
+    lcr_raw = inst_raw.get("low_conf_recovery") or {}
+    if not isinstance(lcr_raw, dict):
+        raise ConfigError("models.instance.low_conf_recovery must be a mapping")
+    lcr = LowConfRecoveryCfg(
+        enabled=bool(lcr_raw.get("enabled", False)),
+        recovery_conf_floor=float(lcr_raw.get("recovery_conf_floor", 0.15)),
+    )
+    if not 0.0 <= lcr.recovery_conf_floor <= 1.0:
+        raise ConfigError(
+            "models.instance.low_conf_recovery.recovery_conf_floor must be in "
+            f"[0, 1], got {lcr.recovery_conf_floor}"
+        )
 
     inst = InstanceModelCfg(
         enabled=bool(inst_raw.get("enabled", True)),
@@ -538,6 +554,7 @@ def _build_models(raw: dict[str, Any], *, config_file: Path) -> ModelsCfg:
         discovery_max_det=discovery_max_det,
         imgsz=inst_imgsz,
         profile=str(profile_raw) if profile_raw else None,
+        low_conf_recovery=lcr,
     )
     num_classes_raw = sem_raw.get("num_classes", None)
     sem_num_classes: int | None
@@ -604,12 +621,19 @@ def _build_temporal(raw: dict[str, Any]) -> TemporalCfg:
 
     trk = raw.get("instance_tracker", {}) or {}
     trk_cfg = InstanceTrackerCfg(
+        enabled=bool(trk.get("enabled", True)),
         iou_threshold=float(trk.get("iou_threshold", 0.30)),
         max_hold_frames=int(trk.get("max_hold_frames", 2)),
         hold_score_decay=float(trk.get("hold_score_decay", 0.85)),
         bbox_alpha=float(trk.get("bbox_alpha", 0.50)),
         score_alpha=float(trk.get("score_alpha", 0.40)),
+        use_hungarian_matching=bool(trk.get("use_hungarian_matching", False)),
+        min_hits=int(trk.get("min_hits", 1)),
     )
+    if trk_cfg.min_hits < 1:
+        raise ConfigError(
+            f"temporal.instance_tracker.min_hits must be >= 1, got {trk_cfg.min_hits}"
+        )
     for name, val in (
         ("iou_threshold", trk_cfg.iou_threshold),
         ("hold_score_decay", trk_cfg.hold_score_decay),
@@ -673,5 +697,32 @@ def _build_source(raw: dict[str, Any]) -> SourceCfg:
         fps_hint=float(raw.get("fps_hint", 30.0)),
     )
     return cfg
+
+
+def _build_postprocess(raw: dict[str, Any]) -> PostprocessCfg:
+    """Optional section — missing keys fall back to schema defaults."""
+    if not isinstance(raw, dict):
+        raise ConfigError("postprocess must be a mapping")
+    df_raw = raw.get("duplicate_filter") or {}
+    if not isinstance(df_raw, dict):
+        raise ConfigError("postprocess.duplicate_filter must be a mapping")
+    defaults = DuplicateFilterCfg()
+    df = DuplicateFilterCfg(
+        enabled=bool(df_raw.get("enabled", defaults.enabled)),
+        iou_threshold=float(df_raw.get("iou_threshold", defaults.iou_threshold)),
+        containment_threshold=float(
+            df_raw.get("containment_threshold", defaults.containment_threshold)
+        ),
+        score_margin=float(df_raw.get("score_margin", defaults.score_margin)),
+    )
+    for name in ("iou_threshold", "containment_threshold"):
+        v = getattr(df, name)
+        if not 0.0 < v <= 1.0:
+            raise ConfigError(f"postprocess.duplicate_filter.{name} must be in (0, 1], got {v}")
+    if df.score_margin < 0.0:
+        raise ConfigError(
+            f"postprocess.duplicate_filter.score_margin must be >= 0, got {df.score_margin}"
+        )
+    return PostprocessCfg(duplicate_filter=df)
 
 

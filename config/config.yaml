@@ -18,6 +18,12 @@ models:
     # 1280 = upscale inference for low-res sources (kaggle-trained models are
     # near-blind on 640x360 video at imgsz 640: small-object domain gap)
     imgsz: 1280
+    # An already-confirmed track may accept a sub-threshold detection to keep
+    # following the object's real position, instead of freezing/fading via
+    # hold. Never creates or (re)confirms a track on its own.
+    low_conf_recovery:
+      enabled: false
+      recovery_conf_floor: 0.15   # below a class's own threshold, above this -> recovery-only
 
   # Other options: segformer-b0 (fastest), segformer-b1, segformer-b4
   semantic:
@@ -187,11 +193,31 @@ temporal:
     scene_cut_threshold: 0.45
 
   instance_tracker:
+    enabled: true                 # false = bypass tracking entirely (raw per-frame detections, no smoothing)
     iou_threshold: 0.30
-    max_hold_frames: 5
+    max_hold_frames: 3
     hold_score_decay: 0.85
     bbox_alpha: 0.95
     score_alpha: 0.40
+    # Optimal one-to-one assignment (scipy Hungarian) instead of greedy
+    # best-IoU-first matching. Only changes behavior in genuine multi-overlap
+    # ambiguity (rare with few objects/frame) — safe to enable.
+    use_hungarian_matching: false
+    # A new track must match for this many STRICTLY CONSECUTIVE frames before
+    # it is ever displayed. 1 = no gating (today's behavior). 2-3 suppresses
+    # one-off false-positive flicker at the cost of ~1-2 frames of latency
+    # (~33-66ms @30fps) before a real object's box first appears.
+    min_hits: 3
+
+# ---------------------------------------------------------------------------
+# Drop same-class duplicate detections (a box nested inside, or heavily
+# overlapping, another box of the same class). Runs before the tracker.
+postprocess:
+  duplicate_filter:
+    enabled: true
+    iou_threshold: 0.55          # same-class overlap ratio -> duplicate
+    containment_threshold: 0.85  # intersection/min-area -> nested duplicate
+    score_margin: 0.05           # prefer the tighter box within this score gap
 
 # ---------------------------------------------------------------------------
 hardware:

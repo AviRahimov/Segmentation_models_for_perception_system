@@ -98,6 +98,18 @@ class ClassDef:
 
 
 @dataclass(frozen=True)
+class LowConfRecoveryCfg:
+    """Low-confidence recovery: an already-confirmed track may accept a
+    sub-threshold detection to keep following the object's real position
+    (instead of the tracker's hold/decay fallback); never creates or
+    (re)confirms a track."""
+
+    enabled: bool = False
+    #: Below a class's own threshold, above this -> recovery-only.
+    recovery_conf_floor: float = 0.15
+
+
+@dataclass(frozen=True)
 class InstanceModelCfg:
     enabled: bool = True   # set False in config.yaml to skip YOLOE (semantic-only mode)
     name: str = "yoloe26l"
@@ -117,6 +129,7 @@ class InstanceModelCfg:
     #: active instance class list (e.g. "2class" | "6class" | "yoloe").
     #: None = classic mode: instance classes live directly in ``classes``.
     profile: str | None = None
+    low_conf_recovery: LowConfRecoveryCfg = field(default_factory=LowConfRecoveryCfg)
 
 
 @dataclass(frozen=True)
@@ -160,17 +173,42 @@ class SemanticEMACfg:
 
 @dataclass(frozen=True)
 class InstanceTrackerCfg:
+    enabled: bool = True             # false = bypass tracking entirely (pass-through, no smoothing)
     iou_threshold: float = 0.30
     max_hold_frames: int = 2        # frames to re-emit a missed track (0 = disabled)
     hold_score_decay: float = 0.85  # per-missed-frame score multiplier
     bbox_alpha: float = 0.50        # EMA weight for bbox coords (1=raw, 0=frozen)
     score_alpha: float = 0.40       # EMA weight for displayed confidence
+    #: Optimal one-to-one assignment (scipy Hungarian) instead of greedy
+    #: best-IoU-first matching. Only diverges from greedy in genuine
+    #: multi-overlap ambiguity; safe default keeps today's exact behavior.
+    use_hungarian_matching: bool = False
+    #: A new track must match for this many STRICTLY CONSECUTIVE frames
+    #: before it is ever displayed (suppresses one-off FP flicker at the
+    #: source). 1 = no gating, today's behavior: every detection is shown
+    #: immediately.
+    min_hits: int = 1
 
 
 @dataclass(frozen=True)
 class TemporalCfg:
     semantic_ema: SemanticEMACfg = field(default_factory=SemanticEMACfg)
     instance_tracker: InstanceTrackerCfg = field(default_factory=InstanceTrackerCfg)
+
+
+@dataclass(frozen=True)
+class DuplicateFilterCfg:
+    """Same-class nested/overlapping duplicate suppression (postprocess)."""
+
+    enabled: bool = True
+    iou_threshold: float = 0.55          # same-class overlap → duplicate
+    containment_threshold: float = 0.85  # inter/min-area → nested duplicate
+    score_margin: float = 0.05           # prefer tighter box within this score gap
+
+
+@dataclass(frozen=True)
+class PostprocessCfg:
+    duplicate_filter: DuplicateFilterCfg = field(default_factory=DuplicateFilterCfg)
 
 
 @dataclass(frozen=True)
@@ -246,6 +284,7 @@ class AppConfig:
     orfd_semantic_comparison: OrfdSemanticComparisonCfg = field(
         default_factory=OrfdSemanticComparisonCfg,
     )
+    postprocess: PostprocessCfg = field(default_factory=PostprocessCfg)
 
     @property
     def instance_classes(self) -> tuple[ClassDef, ...]:

@@ -451,3 +451,52 @@ def test_instance_class_in_classes_rejected_in_profile_mode(tmp_path):
     )
     with pytest.raises(ConfigError, match="only.*semantic"):
         _load(tmp_path, bad)
+
+
+# --------------------------------------------------------------------------- #
+# models.instance.low_conf_recovery                                           #
+# --------------------------------------------------------------------------- #
+
+_LCR_YAML = """
+models:
+  instance:
+    name: "yoloe26l"
+    low_conf_recovery: {{{lcr_body}}}
+  semantic:
+    name: "segformer-b2"
+classes:
+  - name: "person"
+    text_prompt: "person"
+    display_mode: "both"
+    color: "green"
+    is_semantic: false
+temporal: {{}}
+hardware: {{device: "cpu", fp16: false}}
+player: {{}}
+source: {{type: "video", path: "x.mp4"}}
+"""
+
+
+def test_low_conf_recovery_defaults_when_absent(tmp_path):
+    p = tmp_path / "cfg.yaml"
+    p.write_text(_LCR_YAML.format(lcr_body=""))
+    cfg = load_config(p)
+    lcr = cfg.models.instance.low_conf_recovery
+    assert lcr.enabled is False
+    assert lcr.recovery_conf_floor == pytest.approx(0.15)
+
+
+def test_low_conf_recovery_parses_explicit_values(tmp_path):
+    p = tmp_path / "cfg.yaml"
+    p.write_text(_LCR_YAML.format(lcr_body="enabled: true, recovery_conf_floor: 0.1"))
+    cfg = load_config(p)
+    lcr = cfg.models.instance.low_conf_recovery
+    assert lcr.enabled is True
+    assert lcr.recovery_conf_floor == pytest.approx(0.1)
+
+
+def test_low_conf_recovery_floor_out_of_range_rejected(tmp_path):
+    p = tmp_path / "cfg.yaml"
+    p.write_text(_LCR_YAML.format(lcr_body="recovery_conf_floor: 1.5"))
+    with pytest.raises(ConfigError, match="recovery_conf_floor"):
+        load_config(p)

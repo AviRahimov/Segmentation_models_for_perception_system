@@ -17,6 +17,7 @@ import numpy as np
 
 from ....config.schema import ClassDef
 from ....core.types import Detection
+from .._threshold_gate import gate_confidence
 from ..._weights import resolve_instance_weights
 from ...backends.base import InferenceBackend
 from ..base import InstanceModel
@@ -41,6 +42,7 @@ class YOLOClosedInstanceModel(InstanceModel):
         fp16: bool = True,
         *,
         imgsz: int = 640,
+        recovery_conf_floor: float | None = None,
         # ignored kwargs (factory passes these universally across all model types)
         prompt_mode: Any = None,
         discovery_vocab_path: Any = None,
@@ -59,6 +61,9 @@ class YOLOClosedInstanceModel(InstanceModel):
         self._fp16 = fp16
         self._confidence_threshold = float(confidence_threshold)
         self._imgsz = int(imgsz)
+        self._recovery_floor = (
+            float(recovery_conf_floor) if recovery_conf_floor is not None else None
+        )
         self._model = _load_ultralytics_model(self._weights)
         # Filled at warmup(): {yolo_0indexed_id: (class_name, threshold)}
         self._coco_to_user: dict[int, tuple[str, float]] = {}
@@ -94,14 +99,19 @@ class YOLOClosedInstanceModel(InstanceModel):
             self._ready = True
             return
 
-        self._predict_conf_floor = min(thresholds) if thresholds else self._confidence_threshold
+        base_floor = min(thresholds) if thresholds else self._confidence_threshold
+        self._predict_conf_floor = (
+            base_floor if self._recovery_floor is None
+            else min(base_floor, self._recovery_floor)
+        )
         active_classes = sorted({name for name, _ in self._coco_to_user.values()})
         logger.info(
             "YOLOClosed warmed up: %d COCO→user mappings for classes %s; "
-            "predict conf floor=%.2f (device=%s, fp16=%s)",
+            "predict conf floor=%.2f%s (device=%s, fp16=%s)",
             len(self._coco_to_user),
             active_classes,
             self._predict_conf_floor,
+            f" (recovery floor={self._recovery_floor:.2f})" if self._recovery_floor is not None else "",
             self._device,
             self._fp16,
         )
@@ -135,7 +145,7 @@ class YOLOClosedInstanceModel(InstanceModel):
                 continue
             class_name, threshold = self._coco_to_user[yolo_cls]
             score = float(box.conf.item())
-            if score < threshold:
+            if not gate_confidence(score, threshold, self._recovery_floor):
                 continue
             x1, y1, x2, y2 = (int(v) for v in box.xyxy[0])
             out.append(
@@ -144,6 +154,7 @@ class YOLOClosedInstanceModel(InstanceModel):
                     score=score,
                     bbox_xyxy=(x1, y1, x2, y2),
                     mask=None,
+                    display_threshold=threshold,
                 )
             )
         return out

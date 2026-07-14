@@ -22,6 +22,7 @@ import numpy as np
 
 from ....config.schema import ClassDef, InstancePromptMode
 from ....core.types import Detection
+from .._threshold_gate import gate_confidence
 from ..._weights import resolve_instance_weights
 from ...backends.base import InferenceBackend
 from ..base import InstanceModel
@@ -60,6 +61,7 @@ class YOLOEInstanceModel(InstanceModel):
         discovery_conf_floor: float = 0.05,
         discovery_max_det: int | None = None,
         imgsz: int = 640,
+        recovery_conf_floor: float | None = None,
         model_name: Any = None,  # ignored; factory passes it universally
     ) -> None:
         local_weights = resolve_instance_weights(weights)
@@ -67,6 +69,9 @@ class YOLOEInstanceModel(InstanceModel):
         self._device = device
         self._fp16 = fp16
         self._conf = float(confidence_threshold)
+        self._recovery_floor = (
+            float(recovery_conf_floor) if recovery_conf_floor is not None else None
+        )
         self._backend = backend
         self._model = _load_ultralytics_model(self._weights)
         self._instance_classes: list[ClassDef] = []
@@ -121,8 +126,10 @@ class YOLOEInstanceModel(InstanceModel):
             else self._conf
             for i, c in enumerate(self._instance_classes)
         }
-        self._predict_conf_floor = min(
-            [self._conf, *self._cls_idx_to_threshold.values()]
+        base_floor = min([self._conf, *self._cls_idx_to_threshold.values()])
+        self._predict_conf_floor = (
+            base_floor if self._recovery_floor is None
+            else min(base_floor, self._recovery_floor)
         )
         per_class_msgs = [
             f"{c.name}={self._cls_idx_to_threshold[i]:.2f}"
@@ -130,8 +137,9 @@ class YOLOEInstanceModel(InstanceModel):
             for i, c in enumerate(self._instance_classes)
         ]
         logger.info(
-            "YOLOE per-class confidence thresholds: %s; predict floor=%.2f",
+            "YOLOE per-class confidence thresholds: %s; predict floor=%.2f%s",
             ", ".join(per_class_msgs), self._predict_conf_floor,
+            f" (recovery floor={self._recovery_floor:.2f})" if self._recovery_floor is not None else "",
         )
         self._apply_set_classes(prompts)
         self._yoloe_ready = True
@@ -148,6 +156,15 @@ class YOLOEInstanceModel(InstanceModel):
                 "'set_classes' method. Use a YOLOE-seg checkpoint "
                 "(e.g. 'yoloe-26l-seg.pt') with a recent ultralytics version."
             )
+        # Head nc BEFORE set_classes: PE-fine-tuned checkpoints (YOLOEPETrainer,
+        # e.g. round1) carry their training classes FUSED into the head.
+        # set_classes() optimistically rewrites head.nc afterwards, so the
+        # pre-call value is the only honest one.
+        try:
+            nc_before = int(self._model.model.model[-1].nc)
+        except (AttributeError, IndexError, TypeError):
+            nc_before = -1
+
         get_text_pe = _resolve_method(self._model, "get_text_pe")
         if get_text_pe is not None:
             text_pe = get_text_pe(prompts)
@@ -158,6 +175,28 @@ class YOLOEInstanceModel(InstanceModel):
                 "(YOLOWorld-style API)."
             )
             set_classes(prompts)
+
+        # Smoke forward: a PE-fused head silently accepts a wrong prompt count
+        # and then crashes mid-video with a cryptic tensor-size error. Fail at
+        # warmup with an actionable message instead.
+        try:
+            import numpy as _np
+            self._model.predict(
+                _np.zeros((160, 160, 3), dtype=_np.uint8),
+                imgsz=160, conf=0.99, verbose=False,
+                device=self._device, half=self._fp16,
+            )
+        except RuntimeError as exc:
+            if nc_before <= 0 or nc_before == len(prompts):
+                raise  # not the fused-head mismatch — surface the real error
+            raise RuntimeError(
+                f"Checkpoint {self._weights!r} appears PE fine-tuned with a fixed "
+                f"{nc_before}-class head, but the active profile defines "
+                f"{len(prompts)} classes — this combination cannot run. Use a "
+                f"profile with exactly {nc_before} classes for this checkpoint, "
+                "or the pretrained open-vocabulary checkpoint "
+                "(weights: \"\" → yoloe-26l-seg.pt) for this profile."
+            ) from exc
 
     # ------------------------------------------------------------------ #
 
@@ -197,9 +236,10 @@ class YOLOEInstanceModel(InstanceModel):
 
         for i, (box, sc, ci) in enumerate(zip(xyxy, scores, cls_ids, strict=True)):
             ci_int = int(ci)
+            cls_thr: float | None = None
             if not self._discovery_mode:
                 cls_thr = self._cls_idx_to_threshold.get(ci_int, self._conf)
-                if float(sc) < cls_thr:
+                if not gate_confidence(float(sc), cls_thr, self._recovery_floor):
                     continue
             cname = self._cls_idx_to_name.get(ci_int, "unknown")
             mask: np.ndarray | None = None
@@ -219,6 +259,7 @@ class YOLOEInstanceModel(InstanceModel):
                     score=float(sc),
                     bbox_xyxy=(x1, y1, x2, y2),
                     mask=mask,
+                    display_threshold=cls_thr,
                 )
             )
         return out

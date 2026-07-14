@@ -30,4 +30,6 @@ def build_instance_tracker(
         hold_score_decay=tc.hold_score_decay,
         bbox_alpha=tc.bbox_alpha,
         score_alpha=tc.score_alpha,
+        use_hungarian_matching=tc.use_hungarian_matching,
+        min_hits=tc.min_hits,
     )

@@ -24,6 +24,14 @@ class Detection:
         mask:       Optional binary uint8 mask, shape (H, W), values 0/1.
         track_id:   Integer track identifier assigned by the InstanceTracker;
                     ``None`` if no tracker is in use.
+        display_threshold: The per-class confidence threshold that gated this
+                    box at the model wrapper. ``None`` when not populated by
+                    the wrapper. Used by the tracker's low-confidence-recovery
+                    step to tell a normal, confirmable detection
+                    (``score >= display_threshold``) apart from a
+                    recovery-only one (``score < display_threshold``, which
+                    can extend an already-confirmed track but never create
+                    or confirm one).
     """
 
     class_name: str
@@ -31,6 +39,7 @@ class Detection:
     bbox_xyxy: tuple[int, int, int, int]
     mask: Optional[np.ndarray] = None
     track_id: Optional[int] = None
+    display_threshold: Optional[float] = None
 
 
 @dataclass

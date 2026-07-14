@@ -106,6 +106,7 @@ src/perception/
     semantic/  SegFormer wrapper (segformer.py) + _class_catalogues.py for ADE20K LUT
     factory.py registry-based dispatch keyed on YAML model name
   temporal/    LogitsEMA (ema_logits.py), SceneCutDetector (scene_cut.py), IoUTracker
+  postprocess/ pure per-frame detection filters — duplicate_filter.py (same-class nested/overlap suppression)
   pipeline/    PerceptionPipeline — DI container; owns nothing, consumes ABCs
   render/      overlay.py primitives + renderer.py (display-mode-aware, z-order)
   ui/          PyQt5 main_window, video_widget, controls; decode + inference QThread workers
@@ -150,6 +151,11 @@ Key fields in `config/config.yaml` to know about:
 | `models.semantic.trt_engine_path` | Path to `.engine` (requires `hardware.use_tensorrt: true`) |
 | `models.instance.prompt_mode` | `production` (text_prompt per class) or `discovery` (vocab file) |
 | `temporal.semantic_ema.alpha` | EMA weight on current frame's logits (default 0.35) |
+| `postprocess.duplicate_filter.enabled` | Drop same-class nested/overlapping duplicate boxes before tracking |
+| `temporal.instance_tracker.enabled` | `false` → bypass tracking entirely (raw per-frame detections, no smoothing/hold) |
+| `temporal.instance_tracker.use_hungarian_matching` | `true` → globally-optimal one-to-one IoU assignment instead of greedy best-first |
+| `temporal.instance_tracker.min_hits` | `N>1` → a track must match N consecutive frames before display (suppresses single-frame FP flicker) |
+| `models.instance.low_conf_recovery.enabled` | `true` → an already-confirmed track may accept a sub-threshold detection to keep following the real position instead of freezing via hold |
 | `player.draw_road_ground_semantic_last` | z-order: render road_ground on top of other semantic classes |
 
 ## Jetson / Production Notes
