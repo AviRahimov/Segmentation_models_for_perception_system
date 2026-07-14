@@ -113,6 +113,10 @@ class InstanceModelCfg:
     #: Ultralytics inference image size (square). Lower = faster at cost of small-object recall.
     #: 640 is the YOLOE-26L default; 512 saves ~25% with negligible quality loss for large objects.
     imgsz: int = 640
+    #: Selects an entry from the top-level ``instance_profiles`` mapping as the
+    #: active instance class list (e.g. "2class" | "6class" | "yoloe").
+    #: None = classic mode: instance classes live directly in ``classes``.
+    profile: str | None = None
 
 
 @dataclass(frozen=True)

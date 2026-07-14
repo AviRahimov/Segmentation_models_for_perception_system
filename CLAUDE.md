@@ -51,6 +51,25 @@ python scripts/detection/training/train_round1.py --model yolo26m
 python scripts/detection/training/train_round1.py --model yoloe-26m
 # Output: weights/detection/{model_name}/round1/best.pt
 
+# Detection training — general (interactive survey: scans datasets/, Enter = defaults)
+python scripts/detection/training/train_detector.py
+# Classic hyperparameter-sweep CLI (former train_exp.py):
+python scripts/detection/training/train_detector.py --model yolo11m --variants freeze10_aug_clean
+# Output: weights/detection/{model}/{dataset_slug}/{recipe}/ (interactive)
+#         weights/detection/{model}/exp/{variant}/ (CLI sweep)
+# Every run is appended to reports/detection/experiments.jsonl (provenance)
+
+# Merged dataset builds — manifest-driven, reproducible (manifests in git)
+python scripts/detection/tools/build_dataset.py --manifest config/detection/datasets/merged_2class.yaml
+python scripts/detection/tools/build_dataset.py --manifest config/detection/datasets/merged_6class.yaml
+
+# Leaderboard — every checkpoint (any class scheme) ranked on the real val
+# benchmark via collapsed AP50 + P/R/FP-per-image at conf 0.40; cached
+python scripts/detection/evaluation/leaderboard.py
+python scripts/detection/evaluation/leaderboard.py --tta          # + test-time-aug rows
+python scripts/detection/evaluation/leaderboard.py --thresholds   # best-F1 per-class conf recommendations
+python scripts/detection/evaluation/leaderboard.py --fp-gallery   # annotated false-positive crops
+
 # Detection evaluation
 python scripts/detection/evaluation/eval_detection.py \
     --weights weights/detection/yolo26m/round1/best.pt
@@ -126,6 +145,7 @@ Key fields in `config/config.yaml` to know about:
 | Field | Effect |
 |---|---|
 | `models.instance.enabled` | `false` → skip YOLOE (~2× faster, semantic-only) |
+| `models.instance.profile` | Selects the active class block from `instance_profiles:` (`2class` / `6class` / `yoloe`) — must match the checkpoint's scheme |
 | `models.semantic.processor_size` | `256`/`384`/`512` — lower = faster, coarser boundaries |
 | `models.semantic.trt_engine_path` | Path to `.engine` (requires `hardware.use_tensorrt: true`) |
 | `models.instance.prompt_mode` | `production` (text_prompt per class) or `discovery` (vocab file) |

@@ -1,0 +1,60 @@
+# Merged 6-class (fine-grained) training set — same sources as merged_2class,
+# split into vehicle/person subtypes to test whether granularity helps.
+# Eval on the 2-class real benchmark via the leaderboard collapse map:
+#   tank/truck/armored_vehicle -> Military Vehicle, soldier/civilian -> person,
+#   civilian_vehicle -> dropped.
+# Build: python scripts/detection/tools/build_dataset.py --manifest config/detection/datasets/merged_6class.yaml
+name: merged_6class
+output: datasets/merged_6class
+classes: [tank, truck, armored_vehicle, civilian_vehicle, soldier, civilian]
+min_box_px: 8
+resplit:
+  val_fraction: 0.05
+  seed: 42
+
+sources:
+  # Manual real data: GT has no subtypes — 'Military Vehicle' goes to
+  # armored_vehicle (the dominant content: APCs/tanks in the footage).
+  - path: datasets/Detection_Dataset
+    format: yolo_splits
+    include_splits: {train: train, valid: val}
+    oversample_train: 10
+    map:
+      Military Vehicle: armored_vehicle
+      person: soldier
+
+  - path: datasets/military_object_dataset_kaggle
+    format: yolo_splits
+    include_splits: {train: train, val: val}
+    map:
+      military_tank: tank
+      military_truck: truck
+      military_vehicle: armored_vehicle
+      civilian_vehicle: civilian_vehicle   # real class here, not just negatives
+      camouflage_soldier: soldier
+      soldier: soldier
+      civilian: civilian
+    negatives:
+      from_classes: [military_artillery]
+      fraction: 0.04
+
+  - path: datasets/military-vehicle.v2i.yolo26
+    format: yolo_splits
+    include_splits: {train: pool, valid: pool, test: pool}
+    map:                  # rstvv 'person' is ambiguous -> soldier (user decision)
+      tank: tank
+      truck: truck
+      amoured-vehicle: armored_vehicle
+      person: soldier
+
+  - path: datasets/verrckter_military_vehicle/ready_to_use_dataset/ready_to_use_dataset
+    format: class_dirs
+    alias: verrckter
+    filename_exclude: [destr, aband]
+    map:
+      Tanks: tank
+      Trucks: truck
+      APC: armored_vehicle
+      IFV: armored_vehicle
+      IMV: armored_vehicle
+      ENG: armored_vehicle

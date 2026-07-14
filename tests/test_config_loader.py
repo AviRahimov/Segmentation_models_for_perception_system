@@ -373,3 +373,81 @@ def test_coco_classes_non_int_rejected(tmp_path):
     )
     with pytest.raises(ConfigError, match="coco_classes must be a list of ints"):
         load_config(_write(tmp_path, body))
+
+
+# --------------------------------------------------------------------------- #
+# instance_profiles                                                            #
+# --------------------------------------------------------------------------- #
+
+_PROFILE_YAML = """
+models:
+  instance:
+    name: "yolo11m"
+    profile: "6class"
+  semantic:
+    name: "segformer-b2"
+    num_classes: 3
+
+instance_profiles:
+  2class:
+    - {name: "vehicle", text_prompt: "vehicle", coco_classes: [1], display_mode: "both", color: "green", is_semantic: false}
+    - {name: "person",  text_prompt: "person", coco_classes: [2], display_mode: "both", color: "blue",  is_semantic: false}
+  6class:
+    - {name: "tank",    text_prompt: "tank", coco_classes: [1], display_mode: "both", color: "green", is_semantic: false, confidence_threshold: 0.5}
+    - {name: "soldier", text_prompt: "soldier", coco_classes: [5], display_mode: "both", color: "blue",  is_semantic: false, confidence_threshold: 0.3}
+
+classes:
+  - name: "road_ground"
+    text_prompt: "road"
+    display_mode: "mask_only"
+    color: "blue"
+    is_semantic: true
+
+temporal: {}
+hardware: {device: "cpu", fp16: false}
+player: {}
+source: {type: "video", path: "x.mp4"}
+"""
+
+
+def _load(tmp_path, text):
+    p = tmp_path / "cfg.yaml"
+    p.write_text(text)
+    return load_config(p)
+
+
+def test_profile_selects_instance_classes(tmp_path):
+    cfg = _load(tmp_path, _PROFILE_YAML)
+    inst = [c.name for c in cfg.classes if not c.is_semantic]
+    sem = [c.name for c in cfg.classes if c.is_semantic]
+    assert inst == ["tank", "soldier"]
+    assert sem == ["road_ground"]
+    tank = next(c for c in cfg.classes if c.name == "tank")
+    assert tank.confidence_threshold == pytest.approx(0.5)
+    assert cfg.models.instance.profile == "6class"
+
+
+def test_profile_switch_changes_classes(tmp_path):
+    cfg = _load(tmp_path, _PROFILE_YAML.replace('profile: "6class"', 'profile: "2class"'))
+    inst = [c.name for c in cfg.classes if not c.is_semantic]
+    assert inst == ["vehicle", "person"]
+
+
+def test_unknown_profile_rejected(tmp_path):
+    with pytest.raises(ConfigError, match="Unknown instance profile"):
+        _load(tmp_path, _PROFILE_YAML.replace('profile: "6class"', 'profile: "9class"'))
+
+
+def test_missing_profile_key_rejected_when_profiles_exist(tmp_path):
+    with pytest.raises(ConfigError, match="must select one of"):
+        _load(tmp_path, _PROFILE_YAML.replace('profile: "6class"', 'enabled: true'))
+
+
+def test_instance_class_in_classes_rejected_in_profile_mode(tmp_path):
+    bad = _PROFILE_YAML.replace(
+        'classes:\n  - name: "road_ground"',
+        'classes:\n  - {name: "stray", text_prompt: "stray", coco_classes: [9], display_mode: "both", '
+        'color: "red", is_semantic: false}\n  - name: "road_ground"',
+    )
+    with pytest.raises(ConfigError, match="only.*semantic"):
+        _load(tmp_path, bad)

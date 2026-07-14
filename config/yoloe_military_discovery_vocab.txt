@@ -1,58 +1,215 @@
-# YOLOE discovery vocabulary — military vehicle + person prompt sweep
-# Format: one prompt per line, bare noun/compound phrase (no "a photo of" prefix)
-# Run via scripts/detection/tools/yoloe_discovery_dump.py
+# Example YOLOE discovery vocabulary (one prompt per line).
+# Copy or symlink and list candidate phrases to see which indices fire on your footage.
+# Duplicate lines are ignored after the first occurrence.
 
-# ── Military Vehicles ────────────────────────────────────────────────────────
-military vehicle
-military truck
-armored vehicle
-armored personnel carrier
-APC
-IFV
-infantry fighting vehicle
-tactical vehicle
-military jeep
-HMMWV
-Humvee
-military 4x4
-military transport vehicle
-military convoy vehicle
-camouflage vehicle
-military supply truck
-armored car
-military off-road vehicle
+# Humans
+# person
+# pedestrian
+# human
+# adult
+# child
+# worker
+# cyclist
+# motorcyclist
 
-# ── Persons — Civilian ───────────────────────────────────────────────────────
-person
-human
-pedestrian
-man
-woman
-individual
-civilian
-worker
-bystander
-person walking
-person standing
-
-# ── Persons — Military ──────────────────────────────────────────────────────
-soldier
-military personnel
-combatant
-armed soldier
-military officer
-person in military uniform
-person in tactical gear
-person in combat gear
-armed person
-
-# ── Civilian Vehicles (false-positive candidates to identify) ────────────────
+# Passenger Vehicles
 car
-pickup truck
+sedan
+hatchback
+liftback
+fastback
+wagon
+estate car
+coupe
+convertible
+roadster
+targa
+limousine
 SUV
+compact SUV
+mid-size SUV
+full-size SUV
+crossover
+pickup truck
+single-cab pickup
+double-cab pickup
+truck
 van
-civilian truck
-delivery truck
-bus
+cargo van
+passenger van
+minivan
+microvan
+jeep
 off-road vehicle
+4x4
 ATV
+UTV
+golf cart
+
+# Commercial Vehicles
+box truck
+delivery truck
+flatbed truck
+dump truck
+tow truck
+garbage truck
+cement mixer
+fuel tanker
+water tanker
+semi-truck
+tractor unit
+articulated truck
+logging truck
+car carrier
+refrigerated truck
+utility truck
+service truck
+postal vehicle
+
+# Heavy / Construction Vehicles
+tractor
+bulldozer
+excavator
+mini excavator
+wheel loader
+loader
+backhoe loader
+skid steer loader
+forklift
+telehandler
+road roller
+motor grader
+scraper
+paver
+asphalt paver
+trencher
+crane
+mobile crane
+crawler crane
+drilling rig
+construction vehicle
+heavy duty vehicle
+
+# Agricultural Vehicles
+farm tractor
+harvester
+combine harvester
+forage harvester
+sprayer
+baler
+seed drill
+cultivator
+plow
+grain cart
+manure spreader
+
+# Two-Wheel / Small Vehicles
+# motorcycle
+# sport bike
+# cruiser motorcycle
+# touring motorcycle
+# dirt bike
+# enduro motorcycle
+# scooter
+# moped
+# electric scooter
+# bicycle
+# mountain bike
+# road bike
+# cargo bike
+
+# Military Wheeled Vehicles
+military truck
+cargo truck
+troop transport
+light tactical vehicle
+armored car
+armored personnel carrier
+mine-resistant vehicle
+MRAP
+infantry mobility vehicle
+reconnaissance vehicle
+command vehicle
+engineering vehicle
+bridgelayer
+recovery vehicle
+fuel truck
+ammunition truck
+radar vehicle
+surface-to-air missile launcher
+multiple rocket launcher
+self-propelled artillery
+
+# Military Tracked Vehicles
+main battle tank
+light tank
+infantry fighting vehicle
+armored personnel carrier
+armored engineering vehicle
+combat engineering vehicle
+armored bulldozer
+mine-clearing vehicle
+bridge-laying tank
+armored recovery vehicle
+self-propelled howitzer
+air defense vehicle
+
+# Popular Israeli Military Vehicles
+Merkava Mk 4
+Merkava Mk 3
+Namer
+Eitan APC
+Achzarit
+Nagmachon
+Puma CEV
+D9 armored bulldozer
+M113 Zelda
+Ro'em SPH
+Sholef
+Pereh
+Wolf APC
+SandCat
+David light armored vehicle
+RAM Mk3
+
+# Special Vehicles
+snowplow
+snow groomer
+street sweeper
+airport tug
+aircraft tug
+mobile generator vehicle
+camper van
+motorhome
+RV
+hearse
+
+# Terrain / Natural Obstacles
+# rock
+# boulder
+# stone
+# tree
+# bush
+# shrub
+# branch
+# log
+# stump
+# fallen tree
+# vegetation
+# grass
+# mud
+# sand
+# gravel
+# water puddle
+# ditch
+# pit
+# hole
+# rench
+# slope
+# berm
+
+# Animals
+
+# Traffic / Navigation Objects
+
+# Generic Hazards / Obstacles

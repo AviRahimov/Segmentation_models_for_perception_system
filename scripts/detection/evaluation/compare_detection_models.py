@@ -109,8 +109,17 @@ def _parse_spec(spec: str) -> _ModelSpec:
     weights = Path(path_str)
     if not weights.is_absolute():
         weights = _ROOT / weights
-    # derive a short label from the path: .../yolo26m/round1/best.pt → "yolo26m"
-    label = weights.parent.parent.name
+    # Derive a unique label from the path parts after "detection":
+    #   .../detection/yolo26m/round1/best.pt            → "yolo26m/round1"
+    #   .../detection/yolo11m/exp/freeze10_aug_clean/best.pt
+    #                                                    → "yolo11m/exp/freeze10_aug_clean"
+    # (parent.parent.name alone collapses all exp variants to the label "exp",
+    #  which breaks table rows and per-model threshold lookups)
+    parts = weights.parts
+    if "detection" in parts:
+        label = "/".join(parts[parts.index("detection") + 1 : -1])
+    else:
+        label = weights.parent.parent.name
     return _ModelSpec(label=label, weights=weights)
 
 

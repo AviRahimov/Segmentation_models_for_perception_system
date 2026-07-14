@@ -1,18 +1,23 @@
 # Off-Road Robotics Perception — main configuration
 
 models:
-  # To revert to Round 1 yolo11m:
-  #   name: "yolo11m"  weights: "weights/detection/yolo11m/round1/best.pt"
-  #   prompt_mode: production  imgsz: 640
-  #   person.coco_classes: [2]  vehicle.coco_classes: [1]
+  # Model + profile must match: 2-class checkpoints -> profile 2class,
+  # merged_6class checkpoints -> profile 6class, YOLOE -> profile yoloe.
+  # Previous production pair: profile 2class +
+  #   weights: "weights/detection/yolo11m/exp/freeze10_aug_clean/best.pt"
   instance:
     enabled: true
-    name: "yolo11m"
-    weights: "weights/detection/yolo11m/exp/freeze10_aug_clean/best.pt"
+    # name: "yolo26m"                     # <-- switch here: yolo11m | yolo26m
+    name: "yolo11s"
+    profile: 6class                     # <-- switch here: 2class | 6class | yoloe
+    # weights: "weights/detection/yolo26m/merged_6class/noaug/best.pt"
+    weights: "weights/detection/yolo11s/merged_6class/noaug/best.pt"
     prompt_mode: production             # production | discovery
     discovery_vocabulary_path: "yoloe_discovery_vocab.example.txt"
     discovery_conf_floor: 0.05
-    imgsz: 640
+    # 1280 = upscale inference for low-res sources (kaggle-trained models are
+    # near-blind on 640x360 video at imgsz 640: small-object domain gap)
+    imgsz: 1280
 
   # Other options: segformer-b0 (fastest), segformer-b1, segformer-b4
   semantic:
@@ -21,47 +26,141 @@ models:
     num_classes: 3
     processor_size: 256
 
+# ===========================================================================
+# INSTANCE PROFILES — one block per model family; switch via
+# models.instance.profile above. coco_classes are 1-INDEXED (wrapper
+# subtracts 1 before matching the model's 0-indexed outputs).
+# ===========================================================================
+instance_profiles:
+
+  # ── 2class ── for checkpoints trained on the 2-class scheme
+  #    (Detection_Dataset, merged_2class, kaggle_2class, auto-labeled)
+  #    model classes: 0='Military Vehicle', 1='person'
+  2class:
+    - name: "mil vehicle"
+      text_prompt: "military vehicle"
+      coco_classes: [1]
+      display_mode: "both"
+      color: "#ffc800"
+      is_semantic: false
+      confidence_threshold: 0.50
+    - name: "person"
+      text_prompt: "person"
+      coco_classes: [2]
+      display_mode: "both"
+      color: "#00ff80"
+      is_semantic: false
+      confidence_threshold: 0.20      # best-F1 for yolo11m/exp/freeze10_aug_clean
+
+  # ── 6class ── for merged_6class checkpoints; every object type has its own
+  #    threshold + color. model classes: 0=tank 1=truck 2=armored_vehicle
+  #    3=civilian_vehicle 4=soldier 5=civilian
+  #    (to group into vehicle/person instead: two classes with
+  #     coco_classes [1,2,3] and [5,6])
+  6class:
+    - name: "tank"
+      text_prompt: "tank"
+      coco_classes: [1]
+      display_mode: "both"
+      color: "#ffc800"
+      is_semantic: false
+      confidence_threshold: 0.50
+    - name: "truck"
+      text_prompt: "military truck"
+      coco_classes: [2]
+      display_mode: "none"
+      color: "#ff7800"
+      is_semantic: false
+      confidence_threshold: 0.50
+    - name: "armored_vehicle"
+      text_prompt: "armored vehicle"
+      coco_classes: [3]
+      display_mode: "both"
+      color: "#ffe000"
+      is_semantic: false
+      confidence_threshold: 0.45
+    - name: "civilian_vehicle"       # FP sink: detected, never displayed
+      text_prompt: "civilian car"
+      coco_classes: [4]
+      display_mode: "none"
+      color: "#888888"
+      is_semantic: false
+      confidence_threshold: 0.30
+    - name: "soldier"
+      text_prompt: "soldier"
+      coco_classes: [5]
+      display_mode: "both"
+      color: "#00ff80"
+      is_semantic: false
+      confidence_threshold: 0.30
+    - name: "civilian"
+      text_prompt: "civilian person"
+      coco_classes: [6]
+      display_mode: "both"
+      color: "#00c8ff"
+      is_semantic: false
+      confidence_threshold: 0.30
+
+  # ── yoloe ── open-vocabulary text prompts (kept pending the YOLOE verdict)
+  yoloe:
+    # - name: "vehicle"
+    #   text_prompt: >-
+    #     cargo truck, car barrier, military supply truck, military convoy vehicle,
+    #     armored personnel carrier, military transport vehicle, delivery truck, mine-resistant vehicle, engineering vehicle
+    #   coco_classes: []
+    #   display_mode: "both"
+    #   color: "#ffc800"
+    #   is_semantic: false
+    #   confidence_threshold: 0.30
+
+    - name: "military vehicle"
+      text_prompt: >-
+        mine-resistant vehicle, engineering vehicle
+      coco_classes: []
+      display_mode: "both"
+      color: "#ffc800"
+      is_semantic: false
+      confidence_threshold: 0.50
+
+    # - name: "building"
+    #   text_prompt: >-
+    #     destroyed building, building, smoked building, black building, high-rise building
+    #   coco_classes: []
+    #   display_mode: "both"
+    #   color: "#ff4040"
+    #   is_semantic: false
+    #   confidence_threshold: 0.50
+
+    - name: "person"
+      text_prompt: "person"
+      coco_classes: []
+      display_mode: "both"
+      color: "#00ff80"
+      is_semantic: false
+      confidence_threshold: 0.50
+
+    - name: "obstacle"
+      text_prompt: >-
+        rock, log, debris, boulder, large rock, fallen tree, tree stump,
+        deep rut, ditch, berm, earthwork
+      coco_classes: []
+      display_mode: "bbox_only"
+      color: "#ff4040"
+      is_semantic: false
+      
+    - name: "unnecessary_detection"   # false-positive sink for display
+      text_prompt: "portacabin, building, high-rise building, tower, destroyed building, RV, bridge-laying tank, motorhome, gazebo, truck, trash, container, barrier, traffic cone, traffic light, traffic sign, boom barrier, road block, street light, pole, mobile generator, box truck"
+      coco_classes: []
+      display_mode: "none"
+      color: "#000000"
+      is_semantic: false
+      confidence_threshold: 0.10
+
 # ---------------------------------------------------------------------------
+# Semantic classes only (instance classes live in instance_profiles above).
+# Order must match model output: 0=non_traversable, 1=road_ground, 2=sky
 classes:
 
-  # coco_classes are 1-indexed (wrapper subtracts 1): model classes are
-  # 0='Military Vehicle', 1='person' → config values [1]=vehicle, [2]=person
-  - name: "person"
-    text_prompt: "person"
-    coco_classes: [2]
-    display_mode: "both"
-    color: "#00ff80"
-    is_semantic: false
-    confidence_threshold: 0.80
-
-  - name: "vehicle"
-    text_prompt: >-
-      cargo truck, car barrier, military supply truck, military convoy vehicle, armored personnel carrier,
-      military transport vehicle, delivery truck
-    coco_classes: [1]
-    display_mode: "both"
-    color: "#ffc800"
-    is_semantic: false
-    confidence_threshold: 0.94
-
-  - name: "obstacle"
-    text_prompt: >-
-      rock, log, debris, boulder, large rock, fallen tree, tree stump,
-      deep rut, ditch, berm, earthwork
-    coco_classes: []
-    display_mode: "bbox_only"
-    color: "#ff4040"
-    is_semantic: false
-
-  - name: "unnecessary_detection"
-    text_prompt: "RV. bridge-laying tank, motorhome, gazebo, truck, trash, container, barrier, traffic cone, traffic light, traffic sign, boom barrier, road block, street light, pole, mobile generator, box truck"
-    coco_classes: []
-    display_mode: "none"
-    color: "#000000"
-    is_semantic: false
-    confidence_threshold: 0.05
-
-  # Semantic classes — order must match model output: 0=non_traversable, 1=road_ground, 2=sky
   - name: "non_traversable"
     text_prompt: "obstacle or non-drivable area"
     display_mode: "none"

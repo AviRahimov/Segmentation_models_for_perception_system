@@ -6,10 +6,13 @@ message rather than silently producing degraded inference output.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 from ..core.colors_named import _NAMED_COLORS, parse_color
 from ..models.semantic._class_catalogues import GOOSE_12_NAMES
@@ -102,7 +105,28 @@ def _build_app_config(raw: dict[str, Any], *, config_file: Path) -> AppConfig:
         config_file=config_file,
     )
     fine_tuned = models_cfg.semantic.num_classes is not None
-    classes = _build_classes(raw.get("classes"), allow_empty_native_indices=fine_tuned)
+    classes = _resolve_classes(raw, models_cfg.instance.profile,
+                               allow_empty_native_indices=fine_tuned)
+
+    # Guard the common footgun: model family and profile disagreeing (e.g.
+    # YOLOE weights running with the 2class profile's prompts/thresholds).
+    inst_name = models_cfg.instance.name.lower()
+    profile = models_cfg.instance.profile
+    if profile is not None:
+        if inst_name.startswith("yoloe") and profile != "yoloe":
+            logger.warning(
+                "models.instance.name=%r looks like YOLOE but profile=%r — "
+                "YOLOE will use that profile's text prompts and thresholds. "
+                "Did you mean profile: yoloe?",
+                models_cfg.instance.name, profile,
+            )
+        elif not inst_name.startswith("yoloe") and profile == "yoloe":
+            logger.warning(
+                "profile 'yoloe' is active but models.instance.name=%r is a "
+                "closed-vocabulary model — its classes need coco_classes, "
+                "text prompts are ignored. Did you mean profile: 2class/6class?",
+                models_cfg.instance.name,
+            )
     return AppConfig(
         models=models_cfg,
         classes=classes,
@@ -114,6 +138,55 @@ def _build_app_config(raw: dict[str, Any], *, config_file: Path) -> AppConfig:
             _require_dict(raw.get("orfd_semantic_comparison"), "orfd_semantic_comparison"),
         ),
     )
+
+
+def _resolve_classes(raw: dict[str, Any], profile: str | None,
+                     *, allow_empty_native_indices: bool) -> tuple[ClassDef, ...]:
+    """Resolve the active class list, honoring ``instance_profiles``.
+
+    Profile mode (``instance_profiles:`` present + ``models.instance.profile``):
+    active classes = the selected profile's instance classes + the semantic
+    classes from ``classes`` (which must then contain ONLY semantic entries —
+    a single source of truth for instance classes). Without profiles, classic
+    behavior: everything lives in ``classes``.
+    """
+    profiles_raw = raw.get("instance_profiles")
+    if profiles_raw is None and profile is None:
+        return _build_classes(raw.get("classes"),
+                              allow_empty_native_indices=allow_empty_native_indices)
+
+    if not isinstance(profiles_raw, dict) or not profiles_raw:
+        raise ConfigError(
+            "instance_profiles must be a non-empty mapping when "
+            "models.instance.profile is set"
+        )
+    if not profile:
+        raise ConfigError(
+            "models.instance.profile must select one of "
+            f"{sorted(profiles_raw)} when instance_profiles is defined"
+        )
+    if profile not in profiles_raw:
+        raise ConfigError(
+            f"Unknown instance profile {profile!r}; available: {sorted(profiles_raw)}"
+        )
+
+    inst_classes = _build_classes(profiles_raw[profile],
+                                  allow_empty_native_indices=True)
+    bad = [c.name for c in inst_classes if c.is_semantic]
+    if bad:
+        raise ConfigError(
+            f"instance_profiles.{profile} must contain only instance classes; "
+            f"semantic entries found: {bad}"
+        )
+    sem_classes = _build_classes(raw.get("classes"),
+                                 allow_empty_native_indices=allow_empty_native_indices)
+    bad = [c.name for c in sem_classes if not c.is_semantic]
+    if bad:
+        raise ConfigError(
+            "When instance_profiles is used, 'classes' must contain only "
+            f"semantic entries; move these into a profile: {bad}"
+        )
+    return tuple(inst_classes) + tuple(sem_classes)
 
 
 def _build_orfd_semantic_comparison(raw: dict[str, Any]) -> OrfdSemanticComparisonCfg:
@@ -452,6 +525,8 @@ def _build_models(raw: dict[str, Any], *, config_file: Path) -> ModelsCfg:
 
     ipm: InstancePromptMode = "discovery" if pm == "discovery" else "production"
 
+    profile_raw = inst_raw.get("profile")
+
     inst = InstanceModelCfg(
         enabled=bool(inst_raw.get("enabled", True)),
         name=str(inst_raw.get("name", "yoloe26l")),
@@ -462,6 +537,7 @@ def _build_models(raw: dict[str, Any], *, config_file: Path) -> ModelsCfg:
         discovery_conf_floor=d_conf,
         discovery_max_det=discovery_max_det,
         imgsz=inst_imgsz,
+        profile=str(profile_raw) if profile_raw else None,
     )
     num_classes_raw = sem_raw.get("num_classes", None)
     sem_num_classes: int | None
