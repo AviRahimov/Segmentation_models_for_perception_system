@@ -22,8 +22,8 @@ models:
     # following the object's real position, instead of freezing/fading via
     # hold. Never creates or (re)confirms a track on its own.
     low_conf_recovery:
-      enabled: false
-      recovery_conf_floor: 0.15   # below a class's own threshold, above this -> recovery-only
+      enabled: true
+      recovery_conf_floor: 0.10   # below a class's own threshold, above this -> recovery-only
 
   # Other options: segformer-b0 (fastest), segformer-b1, segformer-b4
   semantic:
