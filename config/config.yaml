@@ -2,25 +2,35 @@
 
 models:
   # Model + profile must match: 2-class checkpoints -> profile 2class,
-  # merged_6class checkpoints -> profile 6class, YOLOE -> profile yoloe.
-  # Previous production pair: profile 2class +
-  #   weights: "weights/detection/yolo11m/exp/freeze10_aug_clean/best.pt"
+  # merged_6class checkpoints -> profile 6class, YOLOE -> profile yoloe,
+  # a fine-tuned RF-DETR checkpoint -> profile rfdetr_2class / rfdetr_6class
+  # (own profiles, NOT 2class/6class — see the rfdetr_2class block below for why).
+  # Previous production pair: profile 6class +
+  #   name: yolo11s, weights: weights/detection/yolo11s/merged_6class/noaug/best.pt
   instance:
     enabled: true
-    # name: "yolo26m"                     # <-- switch here: yolo11m | yolo26m
-    name: "yolo11s"
-    profile: 6class                     # <-- switch here: 2class | 6class | yoloe
-    # weights: "weights/detection/yolo26m/merged_6class/noaug/best.pt"
-    weights: "weights/detection/yolo11s/merged_6class/noaug/best.pt"
+    # yolo11s/merged_6class/noaug (27k-image dataset) is still the more
+    # battle-tested option — switch back to it (see commented lines below)
+    # if rfdetr-m doesn't hold up as well as this 157-image smoke test on
+    # your real footage.
+    name: "rfdetr-2xl"                    # <-- switch here: rfdetr-m | rfdetr-2xl (higher mAP, ~4x heavier) | yolo11s
+    # name: "yolo11s"
+    profile: rfdetr_2class               # <-- switch here: 2class | 6class | yoloe | rfdetr_2class | rfdetr_6class
+    # weights: "weights/detection/rfdetr-m/merged_2class/coco/best.pt"
+    # weights: "weights/detection/rfdetr-2xl/merged_6class/coco/best.pt"      # best of the 3 (mAP50=0.654)
+    weights: "weights/detection/rfdetr-2xl/detection_dataset/coco/best.pt"    # 2-class — pair with profile: rfdetr_2class
+    # weights: "weights/detection/yolo11s/merged_6class/noaug/best.pt"
     prompt_mode: production             # production | discovery
     discovery_vocabulary_path: "yoloe_discovery_vocab.example.txt"
     discovery_conf_floor: 0.05
-    # 1280 = upscale inference for low-res sources (kaggle-trained models are
-    # near-blind on 640x360 video at imgsz 640: small-object domain gap)
+    # Ignored by RF-DETR — fixed per-variant input resolution (576px for
+    # -m, 880px for -2xl); only affects YOLO models. Harmless to leave set.
     imgsz: 1280
     # An already-confirmed track may accept a sub-threshold detection to keep
     # following the object's real position, instead of freezing/fading via
     # hold. Never creates or (re)confirms a track on its own.
+    # NOTE: not implemented for RF-DETR yet (RFDETRInstanceModel accepts
+    # this kwarg but ignores it) — has no effect while name: rfdetr-*.
     low_conf_recovery:
       enabled: true
       recovery_conf_floor: 0.10   # below a class's own threshold, above this -> recovery-only
@@ -57,6 +67,32 @@ instance_profiles:
       color: "#00ff80"
       is_semantic: false
       confidence_threshold: 0.20      # best-F1 for yolo11m/exp/freeze10_aug_clean
+
+  # ── rfdetr_2class ── same 2-class scheme as `2class` above, but for a
+  #    FINE-TUNED RF-DETR checkpoint specifically. Verified empirically
+  #    (2026-07-14): a fine-tuned RFDETRInstanceModel's raw output class
+  #    ids are 0-INDEXED, matching the training dataset's own class order
+  #    directly (0='Military Vehicle', 1='person') — unlike the YOLO
+  #    wrappers, RFDETRInstanceModel does NOT subtract 1 from coco_classes.
+  #    This is only true for a fine-tuned checkpoint; RF-DETR's stock
+  #    COCO-pretrained weights genuinely are 1-indexed COCO ids (no offset
+  #    either way, but the underlying ids differ) — don't reuse this
+  #    profile for a non-fine-tuned checkpoint.
+  rfdetr_2class:
+    - name: "mil vehicle"
+      text_prompt: "military vehicle"
+      coco_classes: [0]
+      display_mode: "both"
+      color: "#ffc800"
+      is_semantic: false
+      confidence_threshold: 0.50   # best-F1 for rfdetr-2xl/detection_dataset/coco on the held-out test set (2026-07-16)
+    - name: "person"
+      text_prompt: "person"
+      coco_classes: [1]
+      display_mode: "both"
+      color: "#00ff80"
+      is_semantic: false
+      confidence_threshold: 0.50   # best-F1 on test set — was 0.35, raised to cut false positives (P 0.959 vs R 0.839 at 0.50)
 
   # ── 6class ── for merged_6class checkpoints; every object type has its own
   #    threshold + color. model classes: 0=tank 1=truck 2=armored_vehicle
@@ -102,6 +138,57 @@ instance_profiles:
     - name: "civilian"
       text_prompt: "civilian person"
       coco_classes: [6]
+      display_mode: "both"
+      color: "#00c8ff"
+      is_semantic: false
+      confidence_threshold: 0.30
+
+  # ── rfdetr_6class ── same scheme as `6class` above, but for a FINE-TUNED
+  #    RF-DETR checkpoint (merged_6class dataset) — 0-indexed coco_classes,
+  #    same reasoning as rfdetr_2class above. Verified empirically against
+  #    weights/detection/rfdetr-m/merged_6class/coco/best.pt (2026-07-15):
+  #    raw predicted class ids are 0=tank 1=truck 2=armored_vehicle
+  #    3=civilian_vehicle 4=soldier 5=civilian, matching merged_6class's
+  #    own data.yaml names: order directly.
+  rfdetr_6class:
+    - name: "tank"
+      text_prompt: "tank"
+      coco_classes: [0]
+      display_mode: "both"
+      color: "#ffc800"
+      is_semantic: false
+      confidence_threshold: 0.50
+    - name: "truck"
+      text_prompt: "military truck"
+      coco_classes: [1]
+      display_mode: "none"
+      color: "#ff7800"
+      is_semantic: false
+      confidence_threshold: 0.50
+    - name: "armored_vehicle"
+      text_prompt: "armored vehicle"
+      coco_classes: [2]
+      display_mode: "both"
+      color: "#ffe000"
+      is_semantic: false
+      confidence_threshold: 0.45
+    - name: "civilian_vehicle"       # FP sink: detected, never displayed
+      text_prompt: "civilian car"
+      coco_classes: [3]
+      display_mode: "none"
+      color: "#888888"
+      is_semantic: false
+      confidence_threshold: 0.30
+    - name: "soldier"
+      text_prompt: "soldier"
+      coco_classes: [4]
+      display_mode: "both"
+      color: "#00ff80"
+      is_semantic: false
+      confidence_threshold: 0.30
+    - name: "civilian"
+      text_prompt: "civilian person"
+      coco_classes: [5]
       display_mode: "both"
       color: "#00c8ff"
       is_semantic: false
