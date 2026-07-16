@@ -7,13 +7,25 @@ remapping its predicted classes through a collapse map first, then computing
 standard all-point-interpolated AP per benchmark class.
 
 Pure Python/numpy — unit-tested in tests/test_ap_utils.py.
+
+RF-DETR checkpoints (see bottom of file) are evaluated through the same
+Pred/GT/collapse machinery via a separate collection path — RFDETRInstanceModel
+returns already-resolved `list[Detection]` rather than an Ultralytics `Results`
+object, so it can't share `collect_predictions`'s per-call imgsz/conf/device/
+augment passthrough (none of those apply post-construction to that wrapper).
 """
 from __future__ import annotations
 
+import sys
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
+
+_ROOT = Path(__file__).resolve().parents[3]
+if str(_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(_ROOT / "src"))
 
 
 @dataclass(frozen=True)
@@ -333,3 +345,89 @@ def load_yolo_gts(images_dir, labels_dir, class_names: list[str]) -> list[tuple[
                 gts.append(GT(str(img_path), class_names[cid], box))
         pairs.append((str(img_path), gts))
     return pairs
+
+
+# --------------------------------------------------------------------------- #
+# RF-DETR adapter                                                              #
+#                                                                               #
+# Class scheme is inferred from the checkpoint's dataset-folder-name component
+# ("6class" in the path -> the 6-class scheme, else 2-class) — mirrors
+# rfdetr_2class/rfdetr_6class in config.yaml, same fragility (path-name-based,
+# not read from the checkpoint itself): would need updating if a new
+# class-count scheme is trained under a name that doesn't contain "6class".
+# --------------------------------------------------------------------------- #
+
+RFDETR_2CLASS_NAMES = ["Military Vehicle", "person"]
+RFDETR_6CLASS_NAMES = ["tank", "truck", "armored_vehicle", "civilian_vehicle",
+                       "soldier", "civilian"]
+
+
+def is_rfdetr_checkpoint(ckpt_path) -> bool:
+    from perception.models.instance.rfdetr.model import _RFDETR_VARIANTS
+    return any(v in Path(ckpt_path).parts for v in _RFDETR_VARIANTS)
+
+
+def infer_rfdetr_profile(ckpt_path, confidence_threshold: float | None = None):
+    """RF-DETR checkpoint path -> list[ClassDef] with 0-indexed coco_classes.
+
+    0-indexed (not 1-indexed like the YOLO-family profiles in config.yaml)
+    because RFDETRInstanceModel does not subtract 1 — verified empirically
+    against a fine-tuned checkpoint (2026-07-14/15): raw output class ids
+    match the training dataset's own 0-indexed class order directly.
+
+    confidence_threshold=None (the default) leaves each ClassDef's own
+    threshold unset, so RFDETRInstanceModel.warmup() falls back to whatever
+    confidence_threshold the model was constructed with — a per-class
+    override here would otherwise silently win over that constructor value
+    (this bit a first version: every class hardcoded to 0.05 meant
+    load_rfdetr_for_eval's confidence_floor param was always ignored).
+    """
+    from perception.config.schema import ClassDef
+
+    names = RFDETR_6CLASS_NAMES if "6class" in str(ckpt_path) else RFDETR_2CLASS_NAMES
+    return [
+        ClassDef(name=n, text_prompt=n, display_mode="both", color_rgb=(0, 0, 0),
+                is_semantic=False, coco_classes=(i,),
+                confidence_threshold=confidence_threshold)
+        for i, n in enumerate(names)
+    ]
+
+
+def load_rfdetr_for_eval(ckpt_path, confidence_floor: float = 0.05):
+    """Construct + warm up an RFDETRInstanceModel directly — no AppConfig/YAML
+    needed, since the wrapper's constructor + warmup(classes) is all it takes."""
+    from perception.models.instance.rfdetr.model import RFDETRInstanceModel, _RFDETR_VARIANTS
+
+    ckpt_path = Path(ckpt_path)
+    model_name = next((v for v in _RFDETR_VARIANTS if v in ckpt_path.parts), None)
+    if model_name is None:
+        raise ValueError(f"Could not infer RF-DETR variant from path: {ckpt_path}")
+
+    model = RFDETRInstanceModel(weights=str(ckpt_path),
+                                confidence_threshold=confidence_floor,
+                                model_name=model_name)
+    model.warmup(infer_rfdetr_profile(ckpt_path))
+    return model
+
+
+def collect_predictions_rfdetr(
+    model,
+    image_label_pairs: list[tuple[str, list[GT]]],
+    collapse: dict[str, str],
+) -> tuple[list[Pred], list[GT]]:
+    """RF-DETR analogue of collect_predictions — model.predict(frame_bgr)
+    already returns resolved, thresholded Detection objects, so this is a
+    direct field mapping rather than an Ultralytics Results unpack."""
+    import cv2
+
+    preds: list[Pred] = []
+    gts: list[GT] = []
+    for img_path, img_gts in image_label_pairs:
+        gts.extend(img_gts)
+        bgr = cv2.imread(str(img_path))
+        if bgr is None:
+            continue
+        for d in model.predict(bgr):
+            preds.append(Pred(str(img_path), d.class_name, float(d.score),
+                              tuple(d.bbox_xyxy)))
+    return collapse_preds(preds, collapse), gts

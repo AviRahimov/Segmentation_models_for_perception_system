@@ -71,6 +71,13 @@ import numpy as np
 
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _ap_utils import (  # noqa: E402
+    infer_rfdetr_profile,
+    is_rfdetr_checkpoint,
+    load_rfdetr_for_eval,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -123,10 +130,26 @@ def _parse_spec(spec: str) -> _ModelSpec:
     return _ModelSpec(label=label, weights=weights)
 
 
-def _load_model(spec: _ModelSpec):
-    from ultralytics import YOLO
+def _reject_rfdetr(specs: list[_ModelSpec], mode: str) -> None:
+    """--mode table/images aren't extended for RF-DETR (only --mode video is,
+    per scope) — fail clearly here instead of a confusing AttributeError deep
+    in Ultralytics-specific code (model.val()/predict(conf=...) kwargs)."""
+    bad = [s.label for s in specs if is_rfdetr_checkpoint(s.weights)]
+    if bad:
+        raise NotImplementedError(
+            f"--mode {mode} does not support RF-DETR checkpoints yet (only "
+            f"--mode video does): {bad}"
+        )
+
+
+def _load_model(spec: _ModelSpec, conf: float = 0.25):
+    """conf only matters for RF-DETR: its confidence threshold is fixed at
+    construction time (no per-call override like Ultralytics' predict(conf=))."""
     if not spec.weights.exists():
         raise FileNotFoundError(f"Checkpoint not found: {spec.weights}")
+    if is_rfdetr_checkpoint(spec.weights):
+        return load_rfdetr_for_eval(spec.weights, confidence_floor=conf)
+    from ultralytics import YOLO
     return YOLO(str(spec.weights))
 
 
@@ -197,6 +220,7 @@ def _run_table(specs: list[_ModelSpec], data_path: Path, split: str,
                imgsz: int, batch: int, device: str, half: bool,
                conf: float = 0.25, iou: float = 0.7,
                per_model_thresholds: dict | None = None) -> None:
+    _reject_rfdetr(specs, "table")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     reports_dir = _ROOT / "reports" / "detection"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -275,6 +299,7 @@ def _run_table(specs: list[_ModelSpec], data_path: Path, split: str,
 def _run_images(specs: list[_ModelSpec], test_data_dir: Path,
                 n_samples: int, imgsz: int, conf: float, device: str, half: bool,
                 iou: float = 0.7, per_model_thresholds: dict | None = None) -> None:
+    _reject_rfdetr(specs, "images")
     # Collect images
     img_paths = sorted([
         p for p in test_data_dir.iterdir()
@@ -374,7 +399,19 @@ def _run_video(specs: list[_ModelSpec], source: Path, out_path: Path,
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(str(out_path), fourcc, fps_src, (out_w, out_h))
 
-    models = [(spec, _load_model(spec)) for spec in specs]
+    models = [
+        (spec, _load_model(
+            spec, conf=(per_model_thresholds or {}).get(spec.label, {}).get("conf", conf),
+        ))
+        for spec in specs
+    ]
+    # Stable class-name -> id map per RF-DETR spec, built once (not per-frame:
+    # per-frame would reassign ids/colors depending on which classes happen to
+    # appear in that one frame, making box colors flicker across the video).
+    rfdetr_class_maps: dict[str, dict[str, int]] = {
+        spec.label: {c.name: i for i, c in enumerate(infer_rfdetr_profile(spec.weights))}
+        for spec in specs if is_rfdetr_checkpoint(spec.weights)
+    }
     frame_idx = 0
     logger.info("Processing video: %s  →  %s", source.name, out_path.name)
 
@@ -388,18 +425,27 @@ def _run_video(specs: list[_ModelSpec], source: Path, out_path: Path,
         t0 = time.perf_counter()
         panels = []
         for spec, model in models:
-            m_conf = (per_model_thresholds or {}).get(spec.label, {}).get("conf", conf)
-            m_iou  = (per_model_thresholds or {}).get(spec.label, {}).get("iou",  iou)
-            results = model.predict(bgr, imgsz=imgsz, conf=m_conf, iou=m_iou,
-                                    device=device, half=half, verbose=False)
-            r = results[0]
-            if r.boxes is not None and len(r.boxes):
-                boxes  = r.boxes.xyxy.cpu().numpy().tolist()
-                scores = r.boxes.conf.cpu().numpy().tolist()
-                cids   = r.boxes.cls.cpu().numpy().astype(int).tolist()
+            if spec.label in rfdetr_class_maps:
+                name_to_id = rfdetr_class_maps[spec.label]
+                dets = model.predict(bgr)
+                boxes  = [list(d.bbox_xyxy) for d in dets]
+                scores = [d.score for d in dets]
+                cids   = [name_to_id.get(d.class_name, 0) for d in dets]
+                names  = {i: n for n, i in name_to_id.items()}
             else:
-                boxes, scores, cids = [], [], []
-            pred_img = _draw_boxes(bgr, boxes, scores, cids, model.names)
+                m_conf = (per_model_thresholds or {}).get(spec.label, {}).get("conf", conf)
+                m_iou  = (per_model_thresholds or {}).get(spec.label, {}).get("iou",  iou)
+                results = model.predict(bgr, imgsz=imgsz, conf=m_conf, iou=m_iou,
+                                        device=device, half=half, verbose=False)
+                r = results[0]
+                if r.boxes is not None and len(r.boxes):
+                    boxes  = r.boxes.xyxy.cpu().numpy().tolist()
+                    scores = r.boxes.conf.cpu().numpy().tolist()
+                    cids   = r.boxes.cls.cpu().numpy().astype(int).tolist()
+                else:
+                    boxes, scores, cids = [], [], []
+                names = model.names
+            pred_img = _draw_boxes(bgr, boxes, scores, cids, names)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             fps_label  = f"{spec.label}  {elapsed_ms:.0f}ms"
             panels.append(_make_label_panel(pred_img, fps_label, _PANEL_WIDTH))

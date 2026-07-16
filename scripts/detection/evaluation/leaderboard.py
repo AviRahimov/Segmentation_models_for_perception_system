@@ -36,18 +36,24 @@ _HERE = Path(__file__).resolve().parent
 _ROOT = _HERE.parents[2]
 sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_ROOT / "scripts" / "detection" / "training"))
 
 import numpy as np  # noqa: E402
 
 from _ap_utils import (  # noqa: E402
     ap_per_class,
     collect_predictions,
+    collect_predictions_rfdetr,
     false_positives,
+    infer_rfdetr_profile,
+    is_rfdetr_checkpoint,
+    load_rfdetr_for_eval,
     load_yolo_gts,
     operating_point,
     size_bucketed_recall,
     threshold_sweep,
 )
+from _survey_common import _ask  # noqa: E402
 
 _DEPLOY_CONF = 0.40  # fixed operating point for P / R / FP-per-image columns
 
@@ -90,8 +96,9 @@ _COLLAPSE: dict[str, str] = {
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Ranked leaderboard over all trained detectors")
-    p.add_argument("--benchmark", default="datasets/Detection_Dataset/valid",
-                   help="Benchmark split dir containing images/ and labels/")
+    p.add_argument("--benchmark", default=None,
+                   help="Benchmark split dir containing images/ and labels/. "
+                        "Omit to be asked interactively (Enter = Detection_Dataset/valid).")
     p.add_argument("--only", nargs="*", default=None,
                    help="Evaluate only these checkpoints (paths); default: all found")
     p.add_argument("--tta", action="store_true",
@@ -100,12 +107,56 @@ def parse_args() -> argparse.Namespace:
                    help="Inference size for the benchmark (default 1280)")
     p.add_argument("--conf", type=float, default=0.05)
     p.add_argument("--device", default="0")
-    p.add_argument("--out", default="reports/detection/leaderboard.md")
+    p.add_argument("--out", default=None,
+                   help="Output markdown path. Default: reports/detection/leaderboard.md "
+                        "for the valid split, leaderboard_{split}.md for any other "
+                        "(so a test-set run never clobbers the val results).")
     p.add_argument("--thresholds", action="store_true",
                    help="Write per-model best-F1 threshold recommendations")
     p.add_argument("--fp-gallery", action="store_true", dest="fp_gallery",
                    help="Save annotated false-positive crops per model")
     return p.parse_args()
+
+
+def _discover_benchmark_dirs() -> list[tuple[str, Path, Path, int]]:
+    """Every images/+labels/ pair under datasets/ -> [(label, img_dir, lbl_dir, n_images)].
+
+    Not hardcoded to "valid"/"test": scans every subdirectory of
+    Detection_Dataset/ (covers valid, test, and anything else dropped there
+    later) plus every top-level datasets/* dir that itself directly holds
+    images/+labels/ (a wholly separate benchmark dataset dropped elsewhere) —
+    same discovery spirit as _survey_common._scan_datasets().
+
+    Excludes anything named "train": it also has images/+labels/, but
+    evaluating a checkpoint on its own training data gives a misleadingly
+    optimistic score, not a meaningful benchmark choice — confirmed as a real
+    footgun while testing this (picked it by accident, got 0.98 mAP50).
+    """
+    datasets_root = _ROOT / "datasets"
+    out: list[tuple[str, Path, Path, int]] = []
+    if not datasets_root.is_dir():
+        return out
+
+    def _add(label: str, d: Path) -> None:
+        if d.name.lower() == "train":
+            return
+        img_dir, lbl_dir = d / "images", d / "labels"
+        if img_dir.is_dir() and lbl_dir.is_dir():
+            n = sum(1 for p in img_dir.iterdir()
+                   if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".bmp"))
+            out.append((label, img_dir, lbl_dir, n))
+
+    det_ds = datasets_root / "Detection_Dataset"
+    if det_ds.is_dir():
+        for sub in sorted(det_ds.iterdir()):
+            if sub.is_dir():
+                _add(f"Detection_Dataset/{sub.name}", sub)
+
+    for d in sorted(datasets_root.iterdir()):
+        if d.is_dir() and d != det_ds:
+            _add(d.name, d)
+
+    return out
 
 
 def _discover_checkpoints() -> list[Path]:
@@ -179,12 +230,36 @@ def _load_experiments() -> dict[str, dict]:
 def main() -> int:
     args = parse_args()
 
-    bench_dir = Path(args.benchmark)
-    if not bench_dir.is_absolute():
-        bench_dir = _ROOT / bench_dir
-    img_dir, lbl_dir = bench_dir / "images", bench_dir / "labels"
-    if not img_dir.is_dir() or not lbl_dir.is_dir():
-        raise SystemExit(f"Benchmark needs images/ and labels/ under {bench_dir}")
+    if args.benchmark is None:
+        # Not passed on the CLI -> ask interactively (EOF/non-interactive
+        # contexts fall back to the recommended default via _ask itself).
+        candidates = _discover_benchmark_dirs()
+        if not candidates:
+            raise SystemExit("No images/+labels/ benchmark dirs found under datasets/.")
+        options = [(label, f"{n} images") for label, _, _, n in candidates]
+        default_idx = next((i for i, (label, *_ ) in enumerate(candidates)
+                            if label == "Detection_Dataset/valid"), 0)
+        pick = _ask("Which data to evaluate on?", options, default_idx=default_idx)[0]
+        split_label, img_dir, lbl_dir, _ = candidates[pick]
+        bench_dir = img_dir.parent
+        # _cache_key() hashes args.benchmark directly — must be the resolved
+        # path, not None, or val/test picks would collide on the same cache
+        # entry and silently reuse the wrong split's cached results.
+        args.benchmark = str(bench_dir.relative_to(_ROOT))
+    else:
+        bench_dir = Path(args.benchmark)
+        if not bench_dir.is_absolute():
+            bench_dir = _ROOT / bench_dir
+        img_dir, lbl_dir = bench_dir / "images", bench_dir / "labels"
+        if not img_dir.is_dir() or not lbl_dir.is_dir():
+            raise SystemExit(f"Benchmark needs images/ and labels/ under {bench_dir}")
+        split_label = None
+
+    if args.out is None:
+        if split_label in (None, "Detection_Dataset/valid"):
+            args.out = "reports/detection/leaderboard.md"
+        else:
+            args.out = f"reports/detection/leaderboard_{bench_dir.name}.md"
 
     pairs = load_yolo_gts(img_dir, lbl_dir, _BENCHMARK_CLASSES)
     logger.info("Benchmark: %s  (%d images)", bench_dir, len(pairs))
@@ -202,8 +277,6 @@ def main() -> int:
     cache: dict = json.loads(cache_path.read_text()) if cache_path.exists() else {}
     experiments = _load_experiments()
 
-    from ultralytics import YOLO
-
     rows: list[dict] = []
     threshold_recs: dict[str, dict] = {}
     for ckpt in ckpts:
@@ -211,15 +284,22 @@ def main() -> int:
             logger.warning("missing checkpoint: %s", ckpt)
             continue
         label = _label(ckpt)
-        variants = [False] + ([True] if args.tta else [])
+        is_rfdetr = is_rfdetr_checkpoint(ckpt)
+        # RF-DETR has no augment=True inference path (unlike Ultralytics TTA).
+        variants = [False] if is_rfdetr else [False] + ([True] if args.tta else [])
         for tta in variants:
             key = _cache_key(ckpt, args, tta)
             # Cache short-circuits only when no fresh predictions are needed.
             if key in cache and not (args.thresholds or args.fp_gallery):
                 rows.append(cache[key])
                 continue
-            model = YOLO(str(ckpt))
-            names = list((model.names or {}).values())
+            if is_rfdetr:
+                model = load_rfdetr_for_eval(ckpt, confidence_floor=args.conf)
+                names = [c.name for c in infer_rfdetr_profile(ckpt)]
+            else:
+                from ultralytics import YOLO
+                model = YOLO(str(ckpt))
+                names = list((model.names or {}).values())
             unknown = [n for n in names if n not in _COLLAPSE and n != "civilian_vehicle"]
             if unknown:
                 logger.warning("%s: classes not in collapse map (dropped): %s",
@@ -228,11 +308,14 @@ def main() -> int:
                 continue  # TTA only meaningful where supported
             logger.info("Evaluating %s%s ...", label, " +TTA" if tta else "")
             try:
-                preds, gts = collect_predictions(
-                    model, pairs, _COLLAPSE,
-                    imgsz=args.imgsz, conf=args.conf, device=args.device,
-                    augment=tta,
-                )
+                if is_rfdetr:
+                    preds, gts = collect_predictions_rfdetr(model, pairs, _COLLAPSE)
+                else:
+                    preds, gts = collect_predictions(
+                        model, pairs, _COLLAPSE,
+                        imgsz=args.imgsz, conf=args.conf, device=args.device,
+                        augment=tta,
+                    )
             except Exception as exc:  # noqa: BLE001
                 logger.error("  failed: %s", exc)
                 continue
@@ -297,11 +380,11 @@ def main() -> int:
 
     # Console table
     logger.info("")
-    logger.info("%-52s %-4s %7s %7s %7s %6s %6s %7s",
+    logger.info("%-62s %-4s %7s %7s %7s %6s %6s %7s",
                 "Model", "cls", "mAP50", "vehAP", "perAP", "P@.4", "R@.4", "FP/img")
     logger.info("-" * 104)
     for r in rows:
-        logger.info("%-52s %-4s %7.4f %7.4f %7.4f %6.3f %6.3f %7.3f",
+        logger.info("%-62s %-4s %7.4f %7.4f %7.4f %6.3f %6.3f %7.3f",
                     r["label"], r["scheme"], r["mAP50"],
                     r["vehicle_AP50"], r["person_AP50"],
                     r.get("P40", float("nan")), r.get("R40", float("nan")),
