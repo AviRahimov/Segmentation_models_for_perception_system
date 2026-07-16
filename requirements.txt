@@ -27,7 +27,12 @@ Pillow==11.0.0
 ultralytics==8.4.47
 transformers==4.46.3
 supervision==0.25.1
-rfdetr>=0.3.0            # RF-DETR detector (N/S/M/L); XL/2XL require: pip install "rfdetr[plus]"
+rfdetr==1.5.2             # RF-DETR N/S/M/L, inference only. Pinned: rfdetr>=1.6.0 needs
+                          # transformers>=5.1 which conflicts with the transformers pin
+                          # above (SegFormer) — 1.5.2 is the newest version compatible
+                          # with both. XL/2XL need rfdetr-plus>=1.6.0 (same conflict) and
+                          # aren't available in this venv. Training uses a separate venv
+                          # — see requirements-rfdetr-train.txt.
 
 # UI
 PyQt5                    # PyQt6 incompatible with Jetson arm64; PyQt5 works on both platforms

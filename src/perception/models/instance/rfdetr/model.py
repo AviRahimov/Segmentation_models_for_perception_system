@@ -42,6 +42,17 @@ _RFDETR_VARIANTS: dict[str, tuple[str, int]] = {
 
 
 def _load_rfdetr(model_name: str, weights: str | None) -> Any:
+    # Must import rfdetr_plus (if installed) BEFORE rfdetr: rfdetr's own
+    # plus-extra detection resolves importlib.util.find_spec("rfdetr_plus.models")
+    # from inside rfdetr's own __init__, a circular import that only resolves
+    # correctly if rfdetr_plus is already in sys.modules first — otherwise
+    # XL/2XL stay unavailable for the rest of the process even with the
+    # extra installed. Verified empirically against rfdetr 1.7.1.
+    try:
+        import rfdetr_plus  # type: ignore  # noqa: F401
+    except ImportError:
+        pass
+
     try:
         import rfdetr as _rfdetr_pkg  # type: ignore
     except ImportError as e:
@@ -52,7 +63,13 @@ def _load_rfdetr(model_name: str, weights: str | None) -> Any:
         ) from e
 
     cls_name, _ = _RFDETR_VARIANTS[model_name]
-    cls = getattr(_rfdetr_pkg, cls_name, None)
+    try:
+        cls = getattr(_rfdetr_pkg, cls_name, None)
+    except ImportError:
+        # rfdetr's __getattr__ raises ImportError (not AttributeError) for
+        # XL/2XL when the [plus] extra is missing — getattr(..., default)
+        # does not swallow that, so it must be caught explicitly.
+        cls = None
     if cls is None:
         raise RuntimeError(
             f"rfdetr.{cls_name} not found in the installed version. "

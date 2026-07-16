@@ -1,0 +1,30 @@
+# RF-DETR training — separate venv, deliberately isolated from requirements.txt.
+#
+# rfdetr-plus (needed for the XL/2XL variants) requires rfdetr>=1.6.0, which
+# requires transformers>=5.1.0 — incompatible with this project's main venv,
+# which pins transformers==4.46.3 for SegFormer. Rather than risk breaking
+# the semantic segmentation pipeline with an untested transformers major-
+# version bump, RF-DETR *training* gets its own venv with its own newer
+# transformers. Inference is unaffected: a trained checkpoint is a plain
+# file, loaded back into the main venv same as any other checkpoint.
+#
+# Setup:
+#   python3.12 -m venv .venv-rfdetr-train
+#   source .venv-rfdetr-train/bin/activate
+#   pip install -r requirements-rfdetr-train.txt
+#   python scripts/detection/training/train_detector_rfdetr.py
+#
+# See requirements.txt's header comment for why cu128 wheels are required
+# on this project's RTX 5090 dev target.
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+
+# Pinned exactly: verified against this project's train_detector_rfdetr.py,
+# which relies on batch_size="auto" and progress_bar="tqdm" — both added
+# after 1.6.0 and confirmed present in 1.7.1's TrainConfig. Re-verify
+# TrainConfig's fields (rfdetr/config.py) before bumping this pin.
+rfdetr[train,loggers,plus]==1.7.1
+
+PyYAML==6.0.2

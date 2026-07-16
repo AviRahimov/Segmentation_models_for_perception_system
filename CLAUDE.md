@@ -59,6 +59,14 @@ python scripts/detection/training/train_detector.py --model yolo11m --variants f
 #         weights/detection/{model}/exp/{variant}/ (CLI sweep)
 # Every run is appended to reports/detection/experiments.jsonl (provenance)
 
+# Detection training — RF-DETR (separate venv: see requirements-rfdetr-train.txt
+# for why — rfdetr-plus/XL-2XL needs transformers>=5.1, incompatible with the
+# main venv's SegFormer pin)
+python3.12 -m venv .venv-rfdetr-train && source .venv-rfdetr-train/bin/activate
+pip install -r requirements-rfdetr-train.txt
+python scripts/detection/training/train_detector_rfdetr.py
+# Output: weights/detection/{model}/{dataset_slug}/{coco|ft}/best.pt
+
 # Merged dataset builds — manifest-driven, reproducible (manifests in git)
 python scripts/detection/tools/build_dataset.py --manifest config/detection/datasets/merged_2class.yaml
 python scripts/detection/tools/build_dataset.py --manifest config/detection/datasets/merged_6class.yaml
