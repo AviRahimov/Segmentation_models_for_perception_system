@@ -15,11 +15,16 @@ matcher, which can't produce this) accumulated into an (N+1)x(N+1) matrix
 (classes + a "background" row/col for false positives/negatives).
 
 Each checkpoint is evaluated on its OWN native class scheme (not collapsed
-to leaderboard's 2-class benchmark) and, where possible, its OWN validation
-split (inferred from its weights/detection/{model}/{dataset_slug}/{recipe}/
-path — falls back to the shared Detection_Dataset benchmark with a warning
-when that inference fails, e.g. for old round1/exp sweep checkpoints that
-don't carry a resolvable dataset-slug component).
+to leaderboard's 2-class benchmark). Dataset defaults to "Auto" — each
+checkpoint's own validation split, inferred from its
+weights/detection/{model}/{dataset_slug}/{recipe}/ path (falls back to the
+shared Detection_Dataset/valid benchmark with a warning when that inference
+fails, e.g. for old round1/exp sweep checkpoints with no resolvable
+dataset-slug component) — or pick an explicit dataset (val/test/anything
+else under datasets/, same discovery as leaderboard.py) to evaluate every
+selected checkpoint against the same split. A checkpoint is skipped (not
+silently mismatched) if the explicit dataset's class scheme doesn't match
+its own classes.
 
 Usage
 -----
@@ -54,7 +59,7 @@ from _ap_utils import (  # noqa: E402
     load_rfdetr_for_eval,
     load_yolo_gts,
 )
-from leaderboard import _discover_checkpoints, _label  # noqa: E402
+from leaderboard import _discover_benchmark_dirs, _discover_checkpoints, _label  # noqa: E402
 from _survey_common import _ask, _confirm  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -109,6 +114,18 @@ def _dataset_class_names(dataset_dir: Path) -> list[str] | None:
         if isinstance(names_raw, dict):
             return [str(names_raw[k]) for k in sorted(names_raw)]
         return [str(n) for n in names_raw]
+    return None
+
+
+def _dataset_class_names_near(img_dir: Path) -> list[str] | None:
+    """data.yaml sits at different depths depending on layout: directly
+    alongside images/ (e.g. Synthesis_Eval/{data.yaml,images,labels}) or one
+    level up when images/ is itself inside a split dir (e.g.
+    Detection_Dataset/data.yaml vs Detection_Dataset/test/images) — try both."""
+    for candidate in (img_dir.parent, img_dir.parent.parent):
+        names = _dataset_class_names(candidate)
+        if names is not None:
+            return names
     return None
 
 
@@ -245,18 +262,15 @@ def _plot_heatmap(cm: np.ndarray, labels: list[str], title: str,
 # Per-checkpoint run                                                          #
 # =========================================================================== #
 
-def _run_one(ckpt: Path, label: str, out_root: Path) -> None:
+def _run_one(ckpt: Path, label: str, out_root: Path,
+            override: tuple[str, Path, Path] | None) -> bool:
+    """Returns False (nothing written) if an explicit dataset override's class
+    scheme doesn't match this checkpoint's own classes — skipped rather than
+    silently mislabeling ground truth (e.g. a 6-class checkpoint evaluated
+    against a 2-class-only dataset would read raw label id 0 as this
+    checkpoint's class 0, "tank", when the dataset's own id 0 is actually
+    "Military Vehicle")."""
     is_rf = is_rfdetr_checkpoint(ckpt)
-
-    resolved = _resolve_own_dataset(ckpt)
-    if resolved is None:
-        logger.warning("  could not infer this checkpoint's own validation set from its "
-                       "path — falling back to the shared benchmark "
-                       "(datasets/Detection_Dataset/valid).")
-        img_dir = _ROOT / "datasets" / "Detection_Dataset" / "valid" / "images"
-        lbl_dir = _ROOT / "datasets" / "Detection_Dataset" / "valid" / "labels"
-    else:
-        img_dir, lbl_dir = resolved
 
     model = None
     if is_rf:
@@ -264,12 +278,33 @@ def _run_one(ckpt: Path, label: str, out_root: Path) -> None:
     else:
         from ultralytics import YOLO
         model = YOLO(str(ckpt))
-        names = _dataset_class_names(img_dir.parent) or list((model.names or {}).values())
-        classes = list((model.names or {}).values()) or names
+        classes = list((model.names or {}).values())
+
+    if override is not None:
+        override_label, img_dir, lbl_dir = override
+        ds_names = _dataset_class_names_near(img_dir)
+        if ds_names is not None and set(ds_names) != set(classes):
+            logger.warning(
+                "  %s's class scheme %s doesn't match %s's own classes %s — "
+                "skipping (pick Auto, or a dataset with a matching scheme).",
+                override_label, ds_names, label, classes)
+            if model is not None:
+                del model
+            return False
+    else:
+        resolved = _resolve_own_dataset(ckpt)
+        if resolved is None:
+            logger.warning("  could not infer this checkpoint's own validation set from its "
+                           "path — falling back to the shared benchmark "
+                           "(datasets/Detection_Dataset/valid).")
+            img_dir = _ROOT / "datasets" / "Detection_Dataset" / "valid" / "images"
+            lbl_dir = _ROOT / "datasets" / "Detection_Dataset" / "valid" / "labels"
+        else:
+            img_dir, lbl_dir = resolved
 
     pairs = load_yolo_gts(img_dir, lbl_dir, classes)
     logger.info("  dataset: %s (%d images), classes: %s",
-               img_dir.parent.parent.name, len(pairs), classes)
+               img_dir.parent.relative_to(_ROOT), len(pairs), classes)
 
     thresholds = _resolve_thresholds(ckpt, classes, is_rf)
     conf_floor = min(thresholds.values()) if thresholds else 0.05
@@ -297,6 +332,7 @@ def _run_one(ckpt: Path, label: str, out_root: Path) -> None:
     _plot_heatmap(cm, labels, f"{label} — row-normalized (recall)",
                  out_dir / "normalized.png", normalize=True)
     logger.info("  -> %s", out_dir.relative_to(_ROOT))
+    return True
 
 
 # =========================================================================== #
@@ -321,9 +357,22 @@ def run_survey() -> None:
     )
     selected = [ckpts[i] for i in picks]
 
+    bench_candidates = _discover_benchmark_dirs()
+    bench_options = [("Auto — each checkpoint's own validation split", "recommended: matches how each model was actually validated")]
+    bench_options += [(label, f"{n} images") for label, _, _, n in bench_candidates]
+    bench_pick = _ask(
+        "2) Which dataset to evaluate on?",
+        bench_options, default_idx=0,
+    )[0]
+    override: tuple[str, Path, Path] | None = None
+    if bench_pick > 0:
+        ov_label, ov_img, ov_lbl, _ = bench_candidates[bench_pick - 1]
+        override = (ov_label, ov_img, ov_lbl)
+
     print(f"\nSelected {len(selected)} checkpoint(s):")
     for c in selected:
         print(f"  - {_label(c)}")
+    print(f"Dataset: {override[0] if override else 'auto (per-checkpoint)'}")
     if not _confirm("Proceed?"):
         print("Aborted — nothing generated.")
         return
@@ -336,7 +385,7 @@ def run_survey() -> None:
         logger.info("Confusion matrix: %s", label)
         logger.info("=" * 70)
         try:
-            _run_one(ckpt, label, out_root)
+            _run_one(ckpt, label, out_root, override)
         except Exception as exc:  # noqa: BLE001 — one failed checkpoint must not kill the queue
             logger.error("  failed: %s", exc)
             continue
