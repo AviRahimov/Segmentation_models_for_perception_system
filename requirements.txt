@@ -14,7 +14,23 @@ torchvision==0.26.0+cu128
 numpy==1.26.4
 
 # Vision / IO
-opencv-python-headless==4.10.0.84  # headless avoids Qt plugin conflict with PyQt5/PyQt6
+#
+# opencv-python-headless avoids a Qt plugin conflict with PyQt5/PyQt6 (plain
+# opencv-python bundles its own Qt platform plugins that silently overwrite
+# headless's files in the shared cv2/ install dir, since both packages
+# install into the same location — crashes run_player.py at Qt-plugin-load
+# time, not at import time). BOTH `supervision` and `trackers` below declare
+# a hard, undeclared-as-optional dependency on plain `opencv-python` (not
+# headless) — confirmed by inspecting their metadata directly. There is no
+# way to make pip skip that transitive dependency; it WILL reinstall plain
+# opencv-python on any fresh `pip install -r requirements.txt`, silently
+# corrupting the headless install. After any fresh install, always run:
+#   pip uninstall -y opencv-python && \
+#   pip install --force-reinstall --no-deps opencv-python-headless==4.10.0.84
+# (verify: `ls .venv/lib/python3.12/site-packages/cv2/qt/plugins/platforms/`
+# should report "No such file or directory" — if libqxcb.so is present,
+# plain opencv-python won the race and the fix above needs re-running.)
+opencv-python-headless==4.10.0.84
 Pillow==11.0.0
 
 # Models
@@ -26,13 +42,15 @@ Pillow==11.0.0
 # <module 'ultralytics.nn.tasks'>.
 ultralytics==8.4.47
 transformers==4.46.3
-supervision==0.25.1
+supervision==0.29.1       # bumped from 0.25.1: trackers (below) needs >=0.26.1
 rfdetr==1.5.2             # RF-DETR N/S/M/L, inference only. Pinned: rfdetr>=1.6.0 needs
                           # transformers>=5.1 which conflicts with the transformers pin
                           # above (SegFormer) — 1.5.2 is the newest version compatible
                           # with both. XL/2XL need rfdetr-plus>=1.6.0 (same conflict) and
                           # aren't available in this venv. Training uses a separate venv
                           # — see requirements-rfdetr-train.txt.
+trackers==2.5.0.post0     # roboflow/trackers — ByteTrack/OC-SORT/SORT on supervision.Detections.
+                          # Apache-2.0 (unlike boxmot/ultralytics tracking, both AGPL-3.0).
 
 # UI
 PyQt5                    # PyQt6 incompatible with Jetson arm64; PyQt5 works on both platforms

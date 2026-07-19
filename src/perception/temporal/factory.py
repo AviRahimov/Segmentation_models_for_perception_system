@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from ..config.schema import TemporalCfg
 from .base import InstanceTracker, LogitsSmoother, SceneCutDetector
+from .bytetrack_tracker import ByteTrackInstanceTracker
 from .ema_logits import LogitsEMA
 from .iou_tracker import IoUInstanceTracker
 from .scene_cut import HistogramSceneCutDetector
@@ -21,9 +22,19 @@ def build_instance_tracker(
     *,
     device: str = "cuda",
 ) -> InstanceTracker:
-    """Associate instance detections across frames via mask/box IoU."""
-    del device  # API stability with PerceptionPipeline; IoU tracker ignores device.
+    """Associate instance detections across frames — "iou" (this project's
+    custom greedy/Hungarian tracker) or "bytetrack" (roboflow/trackers'
+    ByteTrackTracker), selected via cfg.instance_tracker.backend."""
+    del device  # API stability with PerceptionPipeline; both backends ignore device.
     tc = cfg.instance_tracker
+    if tc.backend == "bytetrack":
+        return ByteTrackInstanceTracker(
+            lost_track_buffer=tc.max_hold_frames,
+            frame_rate=tc.frame_rate,
+            minimum_consecutive_frames=tc.min_hits,
+            minimum_iou_threshold=tc.iou_threshold,
+            hold_score_decay=tc.hold_score_decay,
+        )
     return IoUInstanceTracker(
         iou_threshold=tc.iou_threshold,
         max_hold_frames=tc.max_hold_frames,

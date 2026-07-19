@@ -13,12 +13,12 @@ models:
     # battle-tested option — switch back to it (see commented lines below)
     # if rfdetr-m doesn't hold up as well as this 157-image smoke test on
     # your real footage.
-    name: "rfdetr-2xl"                    # <-- switch here: rfdetr-m | rfdetr-2xl (higher mAP, ~4x heavier) | yolo11s
+    name: "rfdetr-m"                    # <-- switch here: rfdetr-m | rfdetr-2xl (higher mAP, ~4x heavier) | yolo11s
     # name: "yolo11s"
     profile: rfdetr_2class               # <-- switch here: 2class | 6class | yoloe | rfdetr_2class | rfdetr_6class
     # weights: "weights/detection/rfdetr-m/merged_2class/coco/best.pt"
     # weights: "weights/detection/rfdetr-2xl/merged_6class/coco/best.pt"      # best of the 3 (mAP50=0.654)
-    weights: "weights/detection/rfdetr-2xl/detection_dataset/coco/best.pt"    # 2-class — pair with profile: rfdetr_2class
+    weights: "weights/detection/rfdetr-m/detection_dataset/coco/best.pt"    # 2-class — pair with profile: rfdetr_2class
     # weights: "weights/detection/yolo11s/merged_6class/noaug/best.pt"
     prompt_mode: production             # production | discovery
     discovery_vocabulary_path: "yoloe_discovery_vocab.example.txt"
@@ -281,6 +281,12 @@ temporal:
 
   instance_tracker:
     enabled: true                 # false = bypass tracking entirely (raw per-frame detections, no smoothing)
+    # "iou" (this project's custom greedy/Hungarian tracker, default) or
+    # "bytetrack" (roboflow/trackers' ByteTrackTracker — real Kalman motion
+    # model in place of "iou"'s freeze-and-decay hold). use_hungarian_matching/
+    # bbox_alpha/score_alpha below are "iou"-only and ignored by "bytetrack".
+    backend: iou
+    frame_rate: 30.0               # source FPS; "bytetrack" only, scales lost_track_buffer
     iou_threshold: 0.30
     max_hold_frames: 3
     hold_score_decay: 0.85
@@ -305,6 +311,14 @@ postprocess:
     iou_threshold: 0.55          # same-class overlap ratio -> duplicate
     containment_threshold: 0.85  # intersection/min-area -> nested duplicate
     score_margin: 0.05           # prefer the tighter box within this score gap
+  # Post-hoc temperature scaling of detection confidence scores. Free at
+  # inference (one sigmoid per box). Fit temperatures_path offline via
+  # scripts/detection/evaluation/fit_calibration.py against a held-out
+  # labeled benchmark before enabling.
+  calibration:
+    enabled: false
+    temperatures_path: null      # e.g. weights/detection/calibration/temperatures.json
+    default_temperature: 1.0     # applied to any class missing from the file
 
 # ---------------------------------------------------------------------------
 hardware:

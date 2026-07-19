@@ -17,7 +17,7 @@ from ..config.schema import AppConfig
 from ..core.types import FrameResult, SemanticPrediction
 from ..models.instance.base import InstanceModel
 from ..models.semantic.base import SemanticModel
-from ..postprocess import filter_duplicates
+from ..postprocess import apply_calibration, filter_duplicates, load_temperatures
 from ..temporal.base import InstanceTracker, LogitsSmoother, SceneCutDetector
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,10 @@ class PerceptionPipeline:
         self._has_instance = config.runs_yoloe_instance_inference
         self._reset_on_cut = config.temporal.semantic_ema.reset_on_scene_cut
         self._dedup = config.postprocess.duplicate_filter
+        self._calib = config.postprocess.calibration
+        self._calib_temperatures: dict[str, float] = {}
+        if self._calib.enabled:
+            self._calib_temperatures = load_temperatures(self._calib.temperatures_path)
         self._tracker_enabled = config.temporal.instance_tracker.enabled
         # Persistent thread pool for parallel model inference. Only created when
         # both models are active; otherwise the sequential else-branch is used.
@@ -83,6 +87,7 @@ class PerceptionPipeline:
         if self._executor is not None:
             def _run_instance() -> list:
                 raw = self._inst.predict(frame_bgr)
+                raw = self._calibrate_detections(raw)
                 raw = self._dedup_detections(raw)
                 if not self._tracker_enabled:
                     return raw
@@ -100,6 +105,7 @@ class PerceptionPipeline:
         else:
             if self._has_instance:
                 raw = self._inst.predict(frame_bgr)
+                raw = self._calibrate_detections(raw)
                 raw = self._dedup_detections(raw)
                 detections = (raw if not self._tracker_enabled
                              else self._tracker.update(frame_bgr, raw))
@@ -116,6 +122,15 @@ class PerceptionPipeline:
             frame_idx=frame_idx,
             inference_ms=dt_ms,
             scene_cut=cut,
+        )
+
+    # ------------------------------------------------------------------ #
+    def _calibrate_detections(self, detections: list) -> list:
+        """Rescale confidence scores by fitted per-class temperature, if enabled."""
+        if not self._calib.enabled or not detections:
+            return detections
+        return apply_calibration(
+            detections, self._calib_temperatures, self._calib.default_temperature
         )
 
     # ------------------------------------------------------------------ #

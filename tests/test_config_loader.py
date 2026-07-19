@@ -109,6 +109,77 @@ def test_color_validation(tmp_path):
         load_config(_write(tmp_path, bad))
 
 
+def test_instance_tracker_backend_defaults_to_iou(tmp_path):
+    cfg = load_config(_write(tmp_path, _VALID_YAML))
+    assert cfg.temporal.instance_tracker.backend == "iou"
+    assert cfg.temporal.instance_tracker.frame_rate == 30.0
+
+
+def test_instance_tracker_backend_bytetrack(tmp_path):
+    yaml_with_trk = _VALID_YAML.replace(
+        "temporal:\n  semantic_ema:\n    alpha: 0.4",
+        "temporal:\n  semantic_ema:\n    alpha: 0.4\n"
+        "  instance_tracker:\n    backend: \"bytetrack\"\n    frame_rate: 24.0",
+    )
+    cfg = load_config(_write(tmp_path, yaml_with_trk))
+    assert cfg.temporal.instance_tracker.backend == "bytetrack"
+    assert cfg.temporal.instance_tracker.frame_rate == 24.0
+
+
+def test_instance_tracker_backend_rejects_unknown(tmp_path):
+    yaml_with_trk = _VALID_YAML.replace(
+        "temporal:\n  semantic_ema:\n    alpha: 0.4",
+        "temporal:\n  semantic_ema:\n    alpha: 0.4\n"
+        "  instance_tracker:\n    backend: \"sort\"",
+    )
+    with pytest.raises(ConfigError, match="backend must be 'iou' or 'bytetrack'"):
+        load_config(_write(tmp_path, yaml_with_trk))
+
+
+def test_instance_tracker_frame_rate_must_be_positive(tmp_path):
+    yaml_with_trk = _VALID_YAML.replace(
+        "temporal:\n  semantic_ema:\n    alpha: 0.4",
+        "temporal:\n  semantic_ema:\n    alpha: 0.4\n"
+        "  instance_tracker:\n    frame_rate: 0",
+    )
+    with pytest.raises(ConfigError, match="frame_rate must be > 0"):
+        load_config(_write(tmp_path, yaml_with_trk))
+
+
+def test_calibration_defaults_disabled(tmp_path):
+    cfg = load_config(_write(tmp_path, _VALID_YAML))
+    assert cfg.postprocess.calibration.enabled is False
+    assert cfg.postprocess.calibration.temperatures_path is None
+    assert cfg.postprocess.calibration.default_temperature == 1.0
+
+
+def test_calibration_enabled_requires_temperatures_path(tmp_path):
+    bad = _VALID_YAML + "\npostprocess:\n  calibration:\n    enabled: true\n"
+    with pytest.raises(ConfigError, match="temperatures_path"):
+        load_config(_write(tmp_path, bad))
+
+
+def test_calibration_round_trip(tmp_path):
+    good = _VALID_YAML + (
+        "\npostprocess:\n  calibration:\n    enabled: true\n"
+        "    temperatures_path: \"weights/detection/calibration/x.json\"\n"
+        "    default_temperature: 1.2\n"
+    )
+    cfg = load_config(_write(tmp_path, good))
+    assert cfg.postprocess.calibration.enabled is True
+    assert cfg.postprocess.calibration.temperatures_path == "weights/detection/calibration/x.json"
+    assert cfg.postprocess.calibration.default_temperature == 1.2
+
+
+def test_calibration_default_temperature_must_be_positive(tmp_path):
+    bad = _VALID_YAML + (
+        "\npostprocess:\n  calibration:\n    enabled: true\n"
+        "    temperatures_path: \"x.json\"\n    default_temperature: 0\n"
+    )
+    with pytest.raises(ConfigError, match="default_temperature must be > 0"):
+        load_config(_write(tmp_path, bad))
+
+
 def test_override_source(tmp_path):
     cfg = load_config(_write(tmp_path, _VALID_YAML))
     new = override_source(cfg, source_type="camera", camera=2)

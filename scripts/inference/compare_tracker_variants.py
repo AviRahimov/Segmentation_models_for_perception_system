@@ -27,6 +27,12 @@ Usage
         --source samples/off_road_vid_mitvah_24.mp4 \\
         --min-hits 3 --recovery-floor none 0.15 0.10 \\
         --output runs/recovery_compare.mp4
+
+    # Compare tracker backends instead (min-hits/recovery-floor held fixed):
+    python scripts/inference/compare_tracker_variants.py \\
+        --source samples/off_road_vid_mitvah_24.mp4 \\
+        --min-hits 3 --backend iou bytetrack \\
+        --output runs/backend_compare.mp4
 """
 from __future__ import annotations
 
@@ -52,6 +58,7 @@ from perception.models.factory import build_instance_model, build_semantic_model
 from perception.models.instance._threshold_gate import gate_confidence  # noqa: E402
 from perception.postprocess import filter_duplicates  # noqa: E402
 from perception.render.renderer import Renderer  # noqa: E402
+from perception.temporal.bytetrack_tracker import ByteTrackInstanceTracker  # noqa: E402
 from perception.temporal.factory import build_logits_smoother, build_scene_cut_detector  # noqa: E402
 from perception.temporal.iou_tracker import IoUInstanceTracker  # noqa: E402
 
@@ -66,13 +73,23 @@ def parse_args() -> argparse.Namespace:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--config", default="config/config.yaml")
     p.add_argument("--source", required=True, help="Video file (or any FrameSource path)")
-    p.add_argument("--min-hits", type=int, nargs="+", default=[1, 2, 3],
-                   metavar="N", help="One panel per value (default: 1 2 3)")
+    p.add_argument("--min-hits", type=int, nargs="+", default=None,
+                   metavar="N",
+                   help="One panel per value (default: 1 2 3, unless --backend "
+                        "is the compared axis, where it defaults to this "
+                        "config's own tuned min_hits as a single shared value)")
     p.add_argument("--recovery-floor", type=str, nargs="+", default=None,
                    metavar="FLOOR",
                    help="One panel per value ('none' = recovery disabled for "
                         "that panel). When given with >1 value, becomes the "
                         "compared axis and --min-hits must be a single value.")
+    p.add_argument("--backend", type=str, nargs="+", default=None,
+                   choices=["iou", "bytetrack"],
+                   help="Tracker backend per panel ('iou' = this project's "
+                        "greedy/Hungarian tracker, 'bytetrack' = roboflow/"
+                        "trackers' ByteTrackTracker). When given with >1 "
+                        "value, becomes the compared axis and --min-hits/"
+                        "--recovery-floor must each be a single value.")
     p.add_argument("--output", required=True, help="Output MP4 path")
     p.add_argument("--max-frames", type=int, default=0, help="0 = entire clip")
     p.add_argument("--panel-width", type=int, default=640,
@@ -103,26 +120,50 @@ def main() -> int:
         logger.error("models.instance is disabled in this config — nothing to track/compare.")
         return 2
 
-    # Build the variant list: (label, min_hits, recovery_floor_or_None).
+    if args.min_hits is None:
+        # Backend is the compared axis -> min_hits must be a single shared
+        # value; default to this config's own tuned value rather than the
+        # 3-value [1, 2, 3] sweep meant for the min-hits-axis case.
+        args.min_hits = ([cfg.temporal.instance_tracker.min_hits]
+                         if args.backend and len(args.backend) > 1 else [1, 2, 3])
+
+    # Build the variant list: (label, min_hits, recovery_floor_or_None, backend).
     # recovery_floor is the per-PANEL gate re-applied below to one shared
     # detection pass — it does not require a second model instance.
-    if args.recovery_floor:
+    if args.backend and len(args.backend) > 1:
+        if len(args.min_hits) != 1 or (args.recovery_floor and len(args.recovery_floor) != 1):
+            logger.error("--backend with >1 value requires --min-hits/--recovery-floor "
+                        "to each be a single value.")
+            return 2
+        shared_min_hits = args.min_hits[0]
+        shared_floor = None
+        if args.recovery_floor:
+            tok = args.recovery_floor[0]
+            shared_floor = None if tok.lower() == "none" else float(tok)
+        variants = [(f"backend={b}", shared_min_hits, shared_floor, b) for b in args.backend]
+    elif args.recovery_floor:
         if len(args.recovery_floor) > 1 and len(args.min_hits) != 1:
             logger.error("--recovery-floor with >1 value requires exactly one --min-hits value.")
             return 2
         shared_min_hits = args.min_hits[0]
+        trk_backend = args.backend[0] if args.backend else "iou"
         variants = []
         for tok in args.recovery_floor:
             floor = None if tok.lower() == "none" else float(tok)
-            variants.append((f"recovery={tok}", shared_min_hits, floor))
+            label = f"recovery={tok}" + (f" [{trk_backend}]" if trk_backend != "iou" else "")
+            variants.append((label, shared_min_hits, floor, trk_backend))
     else:
-        variants = [(f"min_hits={mh}", mh, None) for mh in args.min_hits]
+        trk_backend = args.backend[0] if args.backend else "iou"
+        variants = [
+            (f"min_hits={mh}" + (f" [{trk_backend}]" if trk_backend != "iou" else ""), mh, None, trk_backend)
+            for mh in args.min_hits
+        ]
 
     # If any panel requests a numeric recovery floor, the shared detection
     # pass must run at the LOWEST such floor so every panel's gate has boxes
     # to work with — a lower floor only ADDS boxes, it never removes ones
     # above a higher floor.
-    numeric_floors = [f for _, _, f in variants if f is not None]
+    numeric_floors = [f for _, _, f, _ in variants if f is not None]
     inst_cfg = cfg.models.instance
     if numeric_floors:
         inst_cfg = dataclasses.replace(
@@ -140,8 +181,17 @@ def main() -> int:
     smoother = build_logits_smoother(cfg.temporal)
     scene_cut = build_scene_cut_detector(cfg.temporal)
     tc = cfg.temporal.instance_tracker
-    trackers = [
-        (label, floor, IoUInstanceTracker(
+
+    def _make_tracker(mh: int, trk_backend: str):
+        if trk_backend == "bytetrack":
+            return ByteTrackInstanceTracker(
+                lost_track_buffer=tc.max_hold_frames,
+                frame_rate=tc.frame_rate,
+                minimum_consecutive_frames=mh,
+                minimum_iou_threshold=tc.iou_threshold,
+                hold_score_decay=tc.hold_score_decay,
+            )
+        return IoUInstanceTracker(
             iou_threshold=tc.iou_threshold,
             max_hold_frames=tc.max_hold_frames,
             hold_score_decay=tc.hold_score_decay,
@@ -149,8 +199,11 @@ def main() -> int:
             score_alpha=tc.score_alpha,
             use_hungarian_matching=tc.use_hungarian_matching,
             min_hits=mh,
-        ))
-        for label, mh, floor in variants
+        )
+
+    trackers = [
+        (label, floor, _make_tracker(mh, trk_backend))
+        for label, mh, floor, trk_backend in variants
     ]
     dedup_cfg = cfg.postprocess.duplicate_filter
     renderer = Renderer(cfg.classes, cfg.player, yoloe_prompt_mode=cfg.models.instance.prompt_mode)

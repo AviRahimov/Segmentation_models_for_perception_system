@@ -174,6 +174,17 @@ class SemanticEMACfg:
 @dataclass(frozen=True)
 class InstanceTrackerCfg:
     enabled: bool = True             # false = bypass tracking entirely (pass-through, no smoothing)
+    #: "iou" (this project's custom greedy/Hungarian tracker, default) or
+    #: "bytetrack" (roboflow/trackers' ByteTrackTracker — adds a real Kalman
+    #: motion model in place of "iou"'s freeze-and-decay hold). When
+    #: "bytetrack": iou_threshold -> minimum_iou_threshold, max_hold_frames ->
+    #: lost_track_buffer, min_hits -> minimum_consecutive_frames,
+    #: hold_score_decay is reused as-is; use_hungarian_matching/bbox_alpha/
+    #: score_alpha are "iou"-only and ignored.
+    backend: str = "iou"
+    #: Source frame rate, used only by the "bytetrack" backend to scale
+    #: lost_track_buffer consistently across different video frame rates.
+    frame_rate: float = 30.0
     iou_threshold: float = 0.30
     max_hold_frames: int = 2        # frames to re-emit a missed track (0 = disabled)
     hold_score_decay: float = 0.85  # per-missed-frame score multiplier
@@ -207,8 +218,27 @@ class DuplicateFilterCfg:
 
 
 @dataclass(frozen=True)
+class CalibrationCfg:
+    """Post-hoc temperature scaling of detection confidence scores.
+
+    Free at inference (one sigmoid per box, applied in postprocess.calibration).
+    Each per-class temperature is fit offline against a held-out labeled
+    benchmark (scripts/detection/evaluation/fit_calibration.py) and stored as
+    a JSON file: {"class_name": temperature, ...}. Classes absent from that
+    file fall back to default_temperature (1.0 = no change). Does not affect
+    score ordering or existing per-class display_threshold values — only
+    rescales what a given score means.
+    """
+
+    enabled: bool = False
+    temperatures_path: str | None = None
+    default_temperature: float = 1.0
+
+
+@dataclass(frozen=True)
 class PostprocessCfg:
     duplicate_filter: DuplicateFilterCfg = field(default_factory=DuplicateFilterCfg)
+    calibration: CalibrationCfg = field(default_factory=CalibrationCfg)
 
 
 @dataclass(frozen=True)

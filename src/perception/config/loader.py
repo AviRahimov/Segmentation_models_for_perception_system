@@ -19,6 +19,7 @@ from ..models.semantic._class_catalogues import GOOSE_12_NAMES
 from ..models.semantic._class_catalogues import CATALOGUE_SIZES
 from .schema import (
     AppConfig,
+    CalibrationCfg,
     ClassDef,
     DuplicateFilterCfg,
     HardwareCfg,
@@ -622,6 +623,8 @@ def _build_temporal(raw: dict[str, Any]) -> TemporalCfg:
     trk = raw.get("instance_tracker", {}) or {}
     trk_cfg = InstanceTrackerCfg(
         enabled=bool(trk.get("enabled", True)),
+        backend=str(trk.get("backend", "iou")),
+        frame_rate=float(trk.get("frame_rate", 30.0)),
         iou_threshold=float(trk.get("iou_threshold", 0.30)),
         max_hold_frames=int(trk.get("max_hold_frames", 2)),
         hold_score_decay=float(trk.get("hold_score_decay", 0.85)),
@@ -630,6 +633,14 @@ def _build_temporal(raw: dict[str, Any]) -> TemporalCfg:
         use_hungarian_matching=bool(trk.get("use_hungarian_matching", False)),
         min_hits=int(trk.get("min_hits", 1)),
     )
+    if trk_cfg.backend not in ("iou", "bytetrack"):
+        raise ConfigError(
+            f"temporal.instance_tracker.backend must be 'iou' or 'bytetrack', got {trk_cfg.backend!r}"
+        )
+    if trk_cfg.frame_rate <= 0.0:
+        raise ConfigError(
+            f"temporal.instance_tracker.frame_rate must be > 0, got {trk_cfg.frame_rate}"
+        )
     if trk_cfg.min_hits < 1:
         raise ConfigError(
             f"temporal.instance_tracker.min_hits must be >= 1, got {trk_cfg.min_hits}"
@@ -723,6 +734,28 @@ def _build_postprocess(raw: dict[str, Any]) -> PostprocessCfg:
         raise ConfigError(
             f"postprocess.duplicate_filter.score_margin must be >= 0, got {df.score_margin}"
         )
-    return PostprocessCfg(duplicate_filter=df)
+
+    cal_raw = raw.get("calibration") or {}
+    if not isinstance(cal_raw, dict):
+        raise ConfigError("postprocess.calibration must be a mapping")
+    cal_defaults = CalibrationCfg()
+    tpath = cal_raw.get("temperatures_path", cal_defaults.temperatures_path)
+    cal = CalibrationCfg(
+        enabled=bool(cal_raw.get("enabled", cal_defaults.enabled)),
+        temperatures_path=str(tpath) if tpath is not None else None,
+        default_temperature=float(
+            cal_raw.get("default_temperature", cal_defaults.default_temperature)
+        ),
+    )
+    if cal.enabled and not cal.temperatures_path:
+        raise ConfigError(
+            "postprocess.calibration.enabled=true requires temperatures_path to be set"
+        )
+    if cal.default_temperature <= 0.0:
+        raise ConfigError(
+            f"postprocess.calibration.default_temperature must be > 0, got {cal.default_temperature}"
+        )
+
+    return PostprocessCfg(duplicate_filter=df, calibration=cal)
 
 

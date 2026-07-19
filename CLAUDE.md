@@ -9,6 +9,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install --no-deps -e .
+# supervision/trackers transitively pull in plain opencv-python, which
+# silently corrupts the pinned opencv-python-headless install (see
+# requirements.txt's comment) — always run this after a fresh install:
+pip uninstall -y opencv-python && pip install --force-reinstall --no-deps opencv-python-headless==4.10.0.84
 
 # Run tests (no GPU or model downloads required)
 pytest -q
@@ -81,6 +85,12 @@ python scripts/detection/evaluation/leaderboard.py --fp-gallery   # annotated fa
 # Detection evaluation
 python scripts/detection/evaluation/eval_detection.py \
     --weights weights/detection/yolo26m/round1/best.pt
+
+# Confidence calibration — fit per-class temperature scaling for one checkpoint
+# (interactive checkpoint/benchmark picker if flags omitted); enable via
+# postprocess.calibration in config.yaml once fitted
+python scripts/detection/evaluation/fit_calibration.py \
+    --weights weights/detection/rfdetr-2xl/detection_dataset/coco/best.pt
 
 # Detection model comparison (paper-style — table / images / video)
 python scripts/detection/evaluation/compare_detection_models.py --mode table \

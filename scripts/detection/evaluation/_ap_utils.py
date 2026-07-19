@@ -293,6 +293,23 @@ def size_bucketed_recall(
     return out
 
 
+def scores_and_labels(
+    preds: list[Pred],
+    gts: list[GT],
+    cls: str,
+    iou_thr: float = 0.5,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Every class-``cls`` prediction's score, paired with its TP(1)/FP(0)
+    label at ``iou_thr`` — the raw material for confidence calibration
+    (``postprocess.calibration.fit_temperature``), unlike
+    ``operating_point``/``threshold_sweep`` which only report aggregate
+    counts at one confidence cutoff.
+    """
+    cls_preds, tp, _ = _match_class(preds, gts, cls, iou_thr, min_score=0.0)
+    scores = np.array([p.score for p in cls_preds], dtype=float)
+    return scores, tp
+
+
 def false_positives(
     preds: list[Pred],
     gts: list[GT],
