@@ -70,7 +70,18 @@ class ByteTrackInstanceTracker(InstanceTracker):
         minimum_iou_threshold: float = 0.1,
         hold_score_decay: float = 0.85,
     ) -> None:
-        self._lost_track_buffer = int(lost_track_buffer)
+        # +1 to compensate for an off-by-one between the two trackers'
+        # expiry semantics, confirmed empirically: ByteTrackTracker expires a
+        # track the frame its miss-count REACHES lost_track_buffer (so
+        # lost_track_buffer=N holds for only N-1 missed frames), while
+        # IoUInstanceTracker's max_hold_frames=N holds for N full missed
+        # frames. Without this, passing the "same" configured number (as
+        # temporal/factory.py does) makes ByteTrack expire held tracks one
+        # frame earlier than IoU for the same nominal setting — this was
+        # caught by comparing the same real footage side by side (a held
+        # detection visible in the "iou" panel one frame after it had
+        # already vanished from "bytetrack").
+        self._lost_track_buffer = int(lost_track_buffer) + 1
         self._frame_rate = float(frame_rate)
         self._minimum_consecutive_frames = int(minimum_consecutive_frames)
         self._minimum_iou_threshold = float(minimum_iou_threshold)

@@ -10,7 +10,9 @@ Three modes:
   --mode images
       For each sampled image, draw a grid panel: [GT] [Model-A] [Model-B] ...
       GT boxes are drawn in green; predicted boxes use per-class colours.
-      Accepts labelled val/test images or unlabelled test images.
+      Accepts labelled val/test images or unlabelled test images. Supports
+      RF-DETR checkpoints alongside Ultralytics ones (mixed --models list is
+      fine) — only --mode table is Ultralytics-only (model.val() specific).
       Saves PNGs to reports/detection/qualitative/compare_*/img_*.png.
 
   --mode video
@@ -131,15 +133,30 @@ def _parse_spec(spec: str) -> _ModelSpec:
 
 
 def _reject_rfdetr(specs: list[_ModelSpec], mode: str) -> None:
-    """--mode table/images aren't extended for RF-DETR (only --mode video is,
-    per scope) — fail clearly here instead of a confusing AttributeError deep
-    in Ultralytics-specific code (model.val()/predict(conf=...) kwargs)."""
+    """--mode table isn't extended for RF-DETR (images/video both are, via
+    RFDETRInstanceModel.predict()'s already-resolved Detection objects) —
+    fail clearly here instead of a confusing AttributeError deep in
+    Ultralytics-specific code (model.val() kwargs)."""
     bad = [s.label for s in specs if is_rfdetr_checkpoint(s.weights)]
     if bad:
         raise NotImplementedError(
             f"--mode {mode} does not support RF-DETR checkpoints yet (only "
-            f"--mode video does): {bad}"
+            f"--mode images/video do): {bad}"
         )
+
+
+def _dataset_class_names(data_path: Path) -> dict[int, str]:
+    """Read a YOLO data.yaml's names: list/dict -> {class_id: name}, used for
+    the GT panel — decoupled from any one model's own .names (which doesn't
+    exist at all on RFDETRInstanceModel, and would silently pick the wrong
+    scheme if models[0] happened to use a different class order)."""
+    import yaml
+
+    raw = yaml.safe_load(data_path.read_text()) or {}
+    names_raw = raw.get("names", {})
+    if isinstance(names_raw, dict):
+        return {int(k): str(v) for k, v in names_raw.items()}
+    return {i: str(n) for i, n in enumerate(names_raw)}
 
 
 def _load_model(spec: _ModelSpec, conf: float = 0.25):
@@ -296,10 +313,9 @@ def _run_table(specs: list[_ModelSpec], data_path: Path, split: str,
 # Mode: images                                                         #
 # ------------------------------------------------------------------ #
 
-def _run_images(specs: list[_ModelSpec], test_data_dir: Path,
+def _run_images(specs: list[_ModelSpec], test_data_dir: Path, data_path: Path,
                 n_samples: int, imgsz: int, conf: float, device: str, half: bool,
                 iou: float = 0.7, per_model_thresholds: dict | None = None) -> None:
-    _reject_rfdetr(specs, "images")
     # Collect images
     img_paths = sorted([
         p for p in test_data_dir.iterdir()
@@ -313,12 +329,31 @@ def _run_images(specs: list[_ModelSpec], test_data_dir: Path,
         img_paths = img_paths[:n_samples]
     logger.info("Comparing %d models on %d images ...", len(specs), len(img_paths))
 
-    # Load all models
-    models = [(spec, _load_model(spec)) for spec in specs]
+    # Load all models. RF-DETR's confidence threshold is fixed at construction
+    # (no per-call override like Ultralytics' predict(conf=)) so the resolved
+    # per-spec conf must be passed in here, same as _run_video does.
+    models = [
+        (spec, _load_model(
+            spec, conf=(per_model_thresholds or {}).get(spec.label, {}).get("conf", conf),
+        ))
+        for spec in specs
+    ]
+    # Stable class-name -> id map per RF-DETR spec (RFDETRInstanceModel has no
+    # .names attribute at all — it returns already-resolved Detection objects
+    # with string class_name instead of Ultralytics-style integer class ids).
+    rfdetr_class_maps: dict[str, dict[str, int]] = {
+        spec.label: {c.name: i for i, c in enumerate(infer_rfdetr_profile(spec.weights))}
+        for spec in specs if is_rfdetr_checkpoint(spec.weights)
+    }
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = _ROOT / "reports" / "detection" / "qualitative" / f"compare_{ts}"
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # GT class names come from the dataset's own data.yaml, not any one
+    # model's .names — decouples GT rendering from which model happens to be
+    # listed first (previously broke entirely when models[0] was RF-DETR).
+    gt_names = _dataset_class_names(data_path)
 
     for idx, img_path in enumerate(img_paths):
         bgr = cv2.imread(str(img_path))
@@ -332,26 +367,34 @@ def _run_images(specs: list[_ModelSpec], test_data_dir: Path,
         # GT panel (if label file exists)
         label_path = img_path.parent.parent / "labels" / img_path.with_suffix(".txt").name
         gt_boxes, gt_classes = _load_gt_boxes(label_path, w, h)
-        gt_names = models[0][1].names if models else {}
         gt_img = _draw_boxes(bgr, gt_boxes, [1.0] * len(gt_boxes), gt_classes, gt_names,
                               color_override=_GT_COLOR_BGR)
         panels.append(_make_label_panel(gt_img, "Ground Truth", _PANEL_WIDTH))
 
         # Per-model prediction panels
         for spec, model in models:
-            m_conf = (per_model_thresholds or {}).get(spec.label, {}).get("conf", conf)
-            m_iou  = (per_model_thresholds or {}).get(spec.label, {}).get("iou",  iou)
-            results = model.predict(bgr, imgsz=imgsz, conf=m_conf, iou=m_iou,
-                                    device=device, half=half, verbose=False)
-            r = results[0]
-            if r.boxes is not None and len(r.boxes):
-                boxes  = r.boxes.xyxy.cpu().numpy().tolist()
-                scores = r.boxes.conf.cpu().numpy().tolist()
-                cids   = r.boxes.cls.cpu().numpy().astype(int).tolist()
+            if spec.label in rfdetr_class_maps:
+                name_to_id = rfdetr_class_maps[spec.label]
+                dets = model.predict(bgr)
+                boxes  = [list(d.bbox_xyxy) for d in dets]
+                scores = [d.score for d in dets]
+                cids   = [name_to_id.get(d.class_name, 0) for d in dets]
+                names  = {i: n for n, i in name_to_id.items()}
             else:
-                boxes, scores, cids = [], [], []
+                m_conf = (per_model_thresholds or {}).get(spec.label, {}).get("conf", conf)
+                m_iou  = (per_model_thresholds or {}).get(spec.label, {}).get("iou",  iou)
+                results = model.predict(bgr, imgsz=imgsz, conf=m_conf, iou=m_iou,
+                                        device=device, half=half, verbose=False)
+                r = results[0]
+                if r.boxes is not None and len(r.boxes):
+                    boxes  = r.boxes.xyxy.cpu().numpy().tolist()
+                    scores = r.boxes.conf.cpu().numpy().tolist()
+                    cids   = r.boxes.cls.cpu().numpy().astype(int).tolist()
+                else:
+                    boxes, scores, cids = [], [], []
+                names = model.names
 
-            pred_img = _draw_boxes(bgr, boxes, scores, cids, model.names)
+            pred_img = _draw_boxes(bgr, boxes, scores, cids, names)
             n_det = len(boxes)
             panels.append(_make_label_panel(pred_img, f"{spec.label} ({n_det})", _PANEL_WIDTH))
 
@@ -572,7 +615,7 @@ def main() -> None:
                 val_rel_clean = re.sub(r"^(\.\./)+", "", val_rel)
                 test_dir = (data_path.parent / val_rel_clean).resolve()
 
-        _run_images(specs, test_dir, args.n_samples, args.imgsz,
+        _run_images(specs, test_dir, data_path, args.n_samples, args.imgsz,
                     args.conf, args.device, args.half,
                     iou=args.iou, per_model_thresholds=per_model_thresholds)
 

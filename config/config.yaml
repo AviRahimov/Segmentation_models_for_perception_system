@@ -18,7 +18,7 @@ models:
     profile: rfdetr_2class               # <-- switch here: 2class | 6class | yoloe | rfdetr_2class | rfdetr_6class
     # weights: "weights/detection/rfdetr-m/merged_2class/coco/best.pt"
     # weights: "weights/detection/rfdetr-2xl/merged_6class/coco/best.pt"      # best of the 3 (mAP50=0.654)
-    weights: "weights/detection/rfdetr-m/detection_dataset/coco/best.pt"    # 2-class — pair with profile: rfdetr_2class
+    weights: "weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt"    # 2-class — pair with profile: rfdetr_2class
     # weights: "weights/detection/yolo11s/merged_6class/noaug/best.pt"
     prompt_mode: production             # production | discovery
     discovery_vocabulary_path: "yoloe_discovery_vocab.example.txt"

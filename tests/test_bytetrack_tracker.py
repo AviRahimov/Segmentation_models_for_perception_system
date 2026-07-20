@@ -127,11 +127,11 @@ def test_sub_threshold_detection_can_extend_a_confirmed_track():
 # --------------------------------------------------------------------------- #
 
 def test_hold_decays_score_then_expires():
-    # lost_track_buffer=2 (frame_rate=30 default -> maximum_frames_without_update=2):
-    # a track survives exactly one missed frame (held) before the second miss
-    # prunes it — verified empirically against the installed trackers package,
-    # since buffer=1 would expire on the very first miss with no hold at all.
-    t = _tracker(minimum_iou_threshold=0.1, lost_track_buffer=2, hold_score_decay=0.5)
+    # lost_track_buffer=1 -> held for exactly 1 missed frame then expires,
+    # matching IoUInstanceTracker's max_hold_frames=1 semantics exactly (the
+    # constructor's own +1 internally compensates for the underlying
+    # ByteTrackTracker's off-by-one expiry — see its docstring).
+    t = _tracker(minimum_iou_threshold=0.1, lost_track_buffer=1, hold_score_decay=0.5)
     out1 = _confirm(t, (0, 0, 10, 10), score=0.8)
     tid = out1[0].track_id
     out2 = t.update(_FRAME, [])  # missed once -> held via Kalman prediction
@@ -140,6 +140,30 @@ def test_hold_decays_score_then_expires():
     assert out2[0].score < 0.8
     out3 = t.update(_FRAME, [])  # missed twice -> lost_track_buffer exhausted, expired
     assert out3 == []
+
+
+def test_hold_duration_matches_iou_tracker_semantics():
+    """max_hold_frames=N (IoU) and lost_track_buffer=N (ByteTrack) must hold
+    for the same number N of missed frames — this is what temporal/factory.py
+    assumes when mapping tc.max_hold_frames -> lost_track_buffer as-is."""
+    from perception.temporal.iou_tracker import IoUInstanceTracker
+
+    n = 3
+    bt = _tracker(minimum_consecutive_frames=3, minimum_iou_threshold=0.1, lost_track_buffer=n)
+    iou = IoUInstanceTracker(iou_threshold=0.1, max_hold_frames=n, min_hits=3)
+
+    for i in range(3):
+        bt.update(_FRAME, [_det((i, i, 10 + i, 10 + i))])
+        iou.update(_FRAME, [_det((i, i, 10 + i, 10 + i))])
+
+    bt_held_frames = 0
+    iou_held_frames = 0
+    for _ in range(n + 1):
+        if bt.update(_FRAME, []):
+            bt_held_frames += 1
+        if iou.update(_FRAME, []):
+            iou_held_frames += 1
+    assert bt_held_frames == iou_held_frames == n
 
 
 # --------------------------------------------------------------------------- #
