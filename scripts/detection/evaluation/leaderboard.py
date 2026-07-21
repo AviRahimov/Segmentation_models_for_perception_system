@@ -176,7 +176,7 @@ def _label(ckpt: Path) -> str:
             return str(ckpt)
 
 
-_CACHE_SCHEMA = "v2"  # bump when row fields change → old entries recompute
+_CACHE_SCHEMA = "v3"  # bump when row fields change → old entries recompute
 
 
 def _cache_key(ckpt: Path, args, tta: bool) -> str:
@@ -352,6 +352,8 @@ def main() -> int:
                 "R40": round(_macro("recall"), 4),
                 "fp_img": round(float(sum(op[c]["fp"] for c in _BENCHMARK_CLASSES))
                                 / len(pairs), 3),
+                "fn_img": round(float(sum(op[c]["fn"] for c in _BENCHMARK_CLASSES))
+                                / len(pairs), 3),
                 "veh_szrec": _szstr("Military Vehicle"),
                 "per_szrec": _szstr("person"),
                 "size_bounds": {c: sizes[c]["boundaries_px"] for c in sizes},
@@ -380,15 +382,15 @@ def main() -> int:
 
     # Console table
     logger.info("")
-    logger.info("%-62s %-4s %7s %7s %7s %6s %6s %7s",
-                "Model", "cls", "mAP50", "vehAP", "perAP", "P@.4", "R@.4", "FP/img")
-    logger.info("-" * 104)
+    logger.info("%-62s %-4s %7s %7s %7s %6s %6s %7s %7s",
+                "Model", "cls", "mAP50", "vehAP", "perAP", "P@.4", "R@.4", "FP/img", "FN/img")
+    logger.info("-" * 112)
     for r in rows:
-        logger.info("%-62s %-4s %7.4f %7.4f %7.4f %6.3f %6.3f %7.3f",
+        logger.info("%-62s %-4s %7.4f %7.4f %7.4f %6.3f %6.3f %7.3f %7.3f",
                     r["label"], r["scheme"], r["mAP50"],
                     r["vehicle_AP50"], r["person_AP50"],
                     r.get("P40", float("nan")), r.get("R40", float("nan")),
-                    r.get("fp_img", float("nan")))
+                    r.get("fp_img", float("nan")), r.get("fn_img", float("nan")))
 
     # Markdown
     out_path = Path(args.out)
@@ -405,16 +407,16 @@ def main() -> int:
         f"> Benchmark: `{bench_dir.relative_to(_ROOT)}` ({len(pairs)} images) | "
         f"collapsed AP50, all schemes comparable | imgsz={args.imgsz} conf={args.conf} | "
         f"P/R/FP at conf={_DEPLOY_CONF}{size_note}\n\n",
-        "| # | Model | Cls | mAP50 | Veh AP | Per AP | P@.4 | R@.4 | FP/img "
+        "| # | Model | Cls | mAP50 | Veh AP | Per AP | P@.4 | R@.4 | FP/img | FN/img "
         "| Veh R s/m/l | Per R s/m/l | Trained on |\n",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|\n",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
     ]
     for i, r in enumerate(rows, 1):
         lines.append(
             f"| {i} | `{r['label']}` | {r['scheme']} | {r['mAP50']:.4f} "
             f"| {r['vehicle_AP50']:.4f} | {r['person_AP50']:.4f} "
             f"| {r.get('P40', float('nan')):.3f} | {r.get('R40', float('nan')):.3f} "
-            f"| {r.get('fp_img', float('nan')):.3f} "
+            f"| {r.get('fp_img', float('nan')):.3f} | {r.get('fn_img', float('nan')):.3f} "
             f"| {r.get('veh_szrec', '')} | {r.get('per_szrec', '')} "
             f"| {r['dataset']} |\n")
     out_path.write_text("".join(lines))
