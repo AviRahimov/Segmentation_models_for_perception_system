@@ -51,6 +51,12 @@ rfdetr==1.5.2             # RF-DETR N/S/M/L, inference only. Pinned: rfdetr>=1.6
                           # — see requirements-rfdetr-train.txt.
 trackers==2.5.0.post0     # roboflow/trackers — ByteTrack/OC-SORT/SORT on supervision.Detections.
                           # Apache-2.0 (unlike boxmot/ultralytics tracking, both AGPL-3.0).
+tidecv==1.0.1             # TIDE — detection error-type breakdown (classification/localization/
+                          # duplicate/background/missed). Same opencv-python/numpy-2.x landmine as
+                          # supervision/trackers above (pulls both transitively) — installed
+                          # --no-deps; re-run the opencv-python-headless fix above after any
+                          # fresh `pip install -r requirements.txt`.
+appdirs==1.4.4            # tidecv dependency (pulled in --no-deps-safe here since it has none of its own)
 
 # UI
 PyQt5                    # PyQt6 incompatible with Jetson arm64; PyQt5 works on both platforms

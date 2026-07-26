@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install --no-deps -e .
-# supervision/trackers transitively pull in plain opencv-python, which
+# supervision/trackers/tidecv transitively pull in plain opencv-python, which
 # silently corrupts the pinned opencv-python-headless install (see
 # requirements.txt's comment) — always run this after a fresh install:
 pip uninstall -y opencv-python && pip install --force-reinstall --no-deps opencv-python-headless==4.10.0.84
@@ -107,6 +107,43 @@ python scripts/detection/evaluation/compare_detection_models.py --mode video \
 
 # Dataset download
 python scripts/tools/download_datasets.py  # both RUGD + ORFD
+
+# TIDE error-type breakdown (classification/localization/duplicate/background/missed)
+python scripts/detection/evaluation/tide_analysis.py
+python scripts/detection/evaluation/tide_analysis.py --only weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt
+
+# D-RISE saliency — why does the model fire on one specific detection/box
+python scripts/detection/evaluation/drise_explain.py \
+    --weights weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt \
+    --image datasets/Detection_Dataset/test/images/some_frame.jpg
+
+# Full-image FP review — every GT/TP/FP box drawn on the uncropped frame (leaderboard.py's
+# --fp-gallery only shows a cropped context window per box)
+python scripts/detection/evaluation/fp_full_image_review.py \
+    --weights weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt
+
+# Optuna hyperparameter sweep for rfdetr-m (TPE sampler, MedianPruner) — separate venv
+source .venv-rfdetr-train/bin/activate
+python scripts/detection/training/tune_rfdetr_optuna.py --n-trials 25
+python scripts/detection/training/train_rfdetr_optuna_best.py  # retrain with the sweep's winning params
+# NOTE: chasing this sweep's mAP50 objective has NOT translated into fewer real FPs on any
+# trial tried so far — always re-verify with leaderboard.py --fp-gallery, not just mAP.
+
+# Inpainting-based hard-negative generation — remove labeled Military
+# Vehicle/person objects from real training images via LaMa or ZITS
+# (non-generative — can't hallucinate a new object into the hole), for
+# manual review before promoting into a NEW dataset copy. Own venv.
+python3.12 -m venv .venv-inpaint && source .venv-inpaint/bin/activate
+pip install simple-lama-inpainting iopaint opencv-python-headless numpy
+python scripts/detection/tools/generate_inpainted_negatives.py --n-images 18       # LaMa
+python scripts/detection/tools/generate_inpainted_negatives_iopaint.py --n-images 18  # ZITS
+python scripts/detection/tools/compare_inpaint_models.py           # side-by-side [orig|mask|LaMa|ZITS]
+# --> manually delete unwanted candidates from <review_dir>/_preview/, then:
+python scripts/detection/tools/init_inpainted_dataset.py           # copy Detection_Dataset_hardneg -> _inpainted
+python scripts/detection/tools/promote_inpainted_negatives.py --source zits --from-preview \
+    --dest datasets/Detection_Dataset_hardneg_inpainted
+# promote_inpainted_negatives.py REFUSES to target Detection_Dataset_hardneg directly
+# (the dataset the production checkpoint was trained on) without --allow-hardneg.
 ```
 
 ## Architecture
@@ -175,6 +212,25 @@ Key fields in `config/config.yaml` to know about:
 | `temporal.instance_tracker.min_hits` | `N>1` → a track must match N consecutive frames before display (suppresses single-frame FP flicker) |
 | `models.instance.low_conf_recovery.enabled` | `true` → an already-confirmed track may accept a sub-threshold detection to keep following the real position instead of freezing via hold |
 | `player.draw_road_ground_semantic_last` | z-order: render road_ground on top of other semantic classes |
+
+## Detection FP/FN Investigation (rfdetr-m)
+
+TIDE (`tide_analysis.py`) on the production rfdetr-m checkpoint shows its residual
+error profile is dominated by **background error** (6/10 FPs — genuine
+hallucination on empty background, e.g. an ego-vehicle-mounted rig or a loading
+ramp) and **missed detections** (19 FN, the single biggest driver of AP loss).
+Two independent fixes were tried and **both rejected** — every tried variant
+increased FP or degraded recall relative to the untouched baseline:
+- **Optuna hyperparameter tuning** (3 trials retrained+evaluated): mAP50 improved
+  on all of them, but FP roughly doubled in every case. Chasing mAP50 as the
+  sweep objective does not track real FP/FN — always re-verify with
+  `leaderboard.py --fp-gallery`, not the sweep's own metric.
+- **Inpainting-based hard negatives** (266 promoted, LaMa/ZITS, `Detection_Dataset_hardneg_inpainted`):
+  background error was literally unchanged (6→6) and FN got worse (19→22).
+
+The production checkpoint (`weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt`)
+remains the best known rfdetr-m checkpoint. See `reports/detection/phase7_closing_summary.md`
+for the full comparison table before proposing another retrain along either of these two axes.
 
 ## Jetson / Production Notes
 
