@@ -32,6 +32,9 @@ import numpy as np
 
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _ap_utils import run_yolo_val  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -101,16 +104,13 @@ def _sweep_model(label: str, weights: Path, data_path: Path,
     done = 0
     for conf in conf_values:
         for iou in iou_values:
-            metrics = model.val(
-                data=str(data_path),
-                split=split,
-                imgsz=imgsz,
-                batch=batch,
-                device=device,
-                half=half,
-                conf=conf,
-                iou=iou,
-                verbose=False,
+            # Reuse the already-loaded `model` across every combo (see
+            # run_yolo_val's model= param) -- reconstructing YOLO(weights)
+            # per combo would reload the checkpoint from disk dozens of times.
+            _, metrics = run_yolo_val(
+                weights, data=str(data_path), split=split, imgsz=imgsz,
+                batch=batch, device=device, half=half, conf=conf, iou=iou,
+                model=model,
             )
             box = metrics.box
             map50   = float(box.map50)

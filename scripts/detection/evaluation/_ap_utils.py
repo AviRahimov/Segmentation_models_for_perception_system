@@ -448,3 +448,55 @@ def collect_predictions_rfdetr(
             preds.append(Pred(str(img_path), d.class_name, float(d.score),
                               tuple(d.bbox_xyxy)))
     return collapse_preds(preds, collapse), gts
+
+
+def run_yolo_val(
+    weights,
+    data: str,
+    split: str,
+    imgsz: int,
+    batch: int,
+    device: str,
+    conf: float,
+    iou: float,
+    half: bool = True,
+    plots: bool = True,
+    model=None,
+):
+    """Construct YOLO(weights) (unless a pre-built `model` is passed in) and
+    call .val(...) with this project's usual knobs, returning (model,
+    metrics) -- model is needed downstream for .names, metrics for whichever
+    accessor the caller uses (metrics.box, metrics.results_dict, etc. --
+    these differ across callers, deliberately left to each caller rather
+    than folded in here).
+
+    Shared because eval_detection.py, compare_detection_models.py's
+    --mode table, tune_thresholds.py, and summarize_exp.py were each
+    independently re-typing this same ~10-line model.val() call. plots
+    defaults to True to match Ultralytics' own default (get_cfg().plots) --
+    confirmed directly rather than assumed, so callers that never passed
+    plots= before see no behavior change; only summarize_exp.py explicitly
+    overrides it to False.
+
+    Pass an already-constructed `model` (and `weights` is then ignored) when
+    sweeping many conf/iou combos against the same checkpoint -- rebuilding
+    YOLO(weights) per call would reload the checkpoint from disk every time,
+    which is what tune_thresholds.py's multi-combo sweep needs to avoid.
+    """
+    if model is None:
+        from ultralytics import YOLO
+
+        model = YOLO(str(weights))
+    metrics = model.val(
+        data=data,
+        split=split,
+        imgsz=imgsz,
+        batch=batch,
+        device=device,
+        half=half,
+        conf=conf,
+        iou=iou,
+        plots=plots,
+        verbose=False,
+    )
+    return model, metrics

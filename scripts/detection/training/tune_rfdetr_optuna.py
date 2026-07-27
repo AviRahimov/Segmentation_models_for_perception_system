@@ -59,13 +59,16 @@ weights/detection/rfdetr-m/optuna/best_params.json (for Phase 5's retrain).
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import logging
 import shutil
+import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(_ROOT / "scripts" / "detection" / "training"))
+
+from _rfdetr_common import read_final_metrics  # noqa: E402
 
 # Must happen before the first `import rfdetr` -- same circular-import
 # workaround train_detector_rfdetr.py uses for XL/2XL plus-variant detection.
@@ -144,30 +147,6 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def _read_final_metrics(out_dir: Path) -> tuple[float, float]:
-    """Best (not merely last) val/mAP_50 and val/mAP_50_95 from PTL's CSVLogger
-    output. Duplicated from train_detector_rfdetr.py rather than imported --
-    that script is deliberately zero-dependency on other project modules (see
-    its own module docstring), and this one follows the same convention."""
-    metrics_csv = out_dir / "metrics.csv"
-    if not metrics_csv.exists():
-        return float("nan"), float("nan")
-    best50, best5095 = float("nan"), float("nan")
-    with metrics_csv.open(newline="") as f:
-        for row in csv.DictReader(f):
-            raw = row.get("val/mAP_50", "")
-            if not raw:
-                continue
-            try:
-                m50 = float(raw)
-                m5095 = float(row.get("val/mAP_50_95", "nan") or "nan")
-            except ValueError:
-                continue
-            if best50 != best50 or m50 > best50:
-                best50, best5095 = m50, m5095
-    return best50, best5095
-
-
 def _suggest_hparams(trial: optuna.trial.Trial) -> dict:
     aug_name = trial.suggest_categorical("aug_preset", list(_AUG_PRESETS))
     return {
@@ -229,7 +208,7 @@ def _objective(trial: optuna.trial.Trial, args: argparse.Namespace) -> float:
         del model, module, datamodule, trainer
         torch.cuda.empty_cache()
 
-    map50, map5095 = _read_final_metrics(out_dir)
+    map50, map5095 = read_final_metrics(out_dir)
     if map50 != map50:
         raise optuna.TrialPruned(f"trial {trial.number} produced no metrics.csv rows")
     trial.set_user_attr("map50_95", map5095)

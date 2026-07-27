@@ -31,11 +31,16 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import shutil
 import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(_ROOT / "scripts" / "detection" / "training"))
+
+from _rfdetr_common import (  # noqa: E402
+    check_output_dir_safe, copy_best_checkpoint, read_final_metrics,
+    snapshot_production_checkpoint, verify_production_checkpoint_unchanged,
+)
 
 try:
     import rfdetr_plus  # noqa: F401
@@ -50,30 +55,6 @@ _DATASET_DIR = _ROOT / "datasets/Detection_Dataset_hardneg"
 _PRODUCTION_CKPT = _ROOT / "weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt"
 
 _AUG_PRESET_NAMES = {"none": None}  # populated below with the real objects
-
-
-def _read_final_metrics(out_dir: Path) -> tuple[float, float]:
-    """Identical to train_detector_rfdetr.py's helper -- duplicated rather
-    than imported, matching that script's own zero-cross-import convention."""
-    import csv
-
-    metrics_csv = out_dir / "metrics.csv"
-    if not metrics_csv.exists():
-        return float("nan"), float("nan")
-    best50, best5095 = float("nan"), float("nan")
-    with metrics_csv.open(newline="") as f:
-        for row in csv.DictReader(f):
-            raw = row.get("val/mAP_50", "")
-            if not raw:
-                continue
-            try:
-                m50 = float(raw)
-                m5095 = float(row.get("val/mAP_50_95", "nan") or "nan")
-            except ValueError:
-                continue
-            if best50 != best50 or m50 > best50:
-                best50, best5095 = m50, m5095
-    return best50, best5095
 
 
 def parse_args() -> argparse.Namespace:
@@ -95,18 +76,15 @@ def main() -> int:
     args = parse_args()
     out_dir = _ROOT / "weights/detection/rfdetr-m/detection_dataset_hardneg" / args.recipe_suffix
 
-    if args.recipe_suffix == "conservative_aug" or out_dir.resolve() == _PRODUCTION_CKPT.parent.resolve():
+    if args.recipe_suffix == "conservative_aug":
         logger.error("Refusing to run: --recipe-suffix would collide with the production checkpoint dir (%s)",
                      _PRODUCTION_CKPT.parent)
         return 1
-    if out_dir.exists() and any(out_dir.iterdir()):
-        logger.error("Refusing to run: %s already exists and is non-empty. "
-                    "Delete it yourself first if you want to redo this run.", out_dir)
+    if not check_output_dir_safe(out_dir, _PRODUCTION_CKPT, logger):
         return 1
-    if not _PRODUCTION_CKPT.exists():
-        logger.error("Production checkpoint missing, aborting as a precaution: %s", _PRODUCTION_CKPT)
+    prod_size_before = snapshot_production_checkpoint(_PRODUCTION_CKPT, logger)
+    if prod_size_before is None:
         return 1
-    prod_size_before = _PRODUCTION_CKPT.stat().st_size
 
     best = json.loads(args.params_json.read_text())
     params = dict(best["params"])
@@ -132,24 +110,14 @@ def main() -> int:
         **params,
     )
 
-    best_src = out_dir / "checkpoint_best_total.pth"
-    best_dest = out_dir / "best.pt"
-    if best_src.exists():
-        shutil.copy2(str(best_src), str(best_dest))
-        logger.info("Best checkpoint -> %s", best_dest)
-    else:
-        logger.warning("Expected checkpoint not found: %s", best_src)
+    copy_best_checkpoint(out_dir, logger)
 
-    map50, map5095 = _read_final_metrics(out_dir)
+    map50, map5095 = read_final_metrics(out_dir)
     logger.info("Phase 5 retrain done -- mAP50=%.4f  mAP50-95=%.4f", map50, map5095)
 
-    if _PRODUCTION_CKPT.stat().st_size != prod_size_before:
-        logger.error("Production checkpoint changed size during this run -- INVESTIGATE IMMEDIATELY: %s",
-                     _PRODUCTION_CKPT)
+    if not verify_production_checkpoint_unchanged(_PRODUCTION_CKPT, prod_size_before, logger):
         return 1
-    logger.info("Verified production checkpoint untouched: %s", _PRODUCTION_CKPT)
 
-    sys.path.insert(0, str(_ROOT / "scripts" / "detection" / "training"))
     from _survey_common import _log_experiment  # noqa: E402
 
     _log_experiment({

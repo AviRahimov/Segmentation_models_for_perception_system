@@ -30,6 +30,9 @@ from typing import Any
 
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _ap_utils import run_yolo_val  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -91,20 +94,13 @@ def find_checkpoints(model_name: str) -> list[tuple[str, Path]]:
 
 def evaluate_checkpoint(ckpt: Path, data: str, args: argparse.Namespace) -> dict[str, Any]:
     """Run YOLO.val() and return a metrics dict."""
-    from ultralytics import YOLO
-
     logger.info("Evaluating %s ...", ckpt)
-    model = YOLO(str(ckpt))
-    metrics = model.val(
-        data=data,
-        split=args.split,
-        conf=args.conf,
-        iou=args.iou,
-        imgsz=args.imgsz,
-        batch=args.batch,
-        device=args.device,
-        verbose=False,
-        plots=False,
+    # half=False (Ultralytics' own default) to match this script's prior
+    # behavior of never passing half= explicitly.
+    _, metrics = run_yolo_val(
+        ckpt, data=data, split=args.split, conf=args.conf, iou=args.iou,
+        imgsz=args.imgsz, batch=args.batch, device=args.device,
+        half=False, plots=False,
     )
 
     rd = metrics.results_dict if hasattr(metrics, "results_dict") else {}

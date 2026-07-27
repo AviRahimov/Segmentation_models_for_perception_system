@@ -1,10 +1,11 @@
-"""Shared sampling/masking/preview logic for the inpainting model comparison.
+"""Shared sampling/masking/preview logic for inpainting-based hard-negative
+generation, used by generate_inpainted_negatives_iopaint.py (ZITS).
 
-Split out so every backend (generate_inpainted_negatives.py for LaMa,
-generate_inpainted_negatives_iopaint.py for ZITS) samples the EXACT same
-images and builds the EXACT same masks -- the only way a side-by-side model
-comparison is actually meaningful. A backend swapping in a different model
-but a different mask would confound the two variables.
+Kept as its own module (rather than folded into that one script) so any
+future backend can reuse the exact same sampling/masking -- an earlier LaMa
+backend (generate_inpainted_negatives.py) was compared against ZITS this way
+before being retired once ZITS won on quality; a new backend added later
+would plug in the same way.
 """
 from __future__ import annotations
 

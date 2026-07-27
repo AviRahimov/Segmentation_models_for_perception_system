@@ -86,6 +86,15 @@ python scripts/detection/evaluation/leaderboard.py --fp-gallery   # annotated fa
 python scripts/detection/evaluation/eval_detection.py \
     --weights weights/detection/yolo26m/round1/best.pt
 
+# Confusion matrix — interactive survey; which class gets confused as which
+# other class (leaderboard.py doesn't compute this)
+python scripts/detection/evaluation/confusion_matrix.py
+
+# Threshold sweep — conf x NMS-IoU grid search per checkpoint, writes best pair to JSON
+python scripts/detection/evaluation/tune_thresholds.py \
+    --models pytorch:weights/detection/yolo26m/round1/best.pt \
+    --data datasets/Detection_Dataset/data.yaml
+
 # Confidence calibration — fit per-class temperature scaling for one checkpoint
 # (interactive checkpoint/benchmark picker if flags omitted); enable via
 # postprocess.calibration in config.yaml once fitted
@@ -107,6 +116,11 @@ python scripts/detection/evaluation/compare_detection_models.py --mode video \
 
 # Dataset download
 python scripts/tools/download_datasets.py  # both RUGD + ORFD
+
+# Build a 2-class eval set from the synthetic dataset (own class scheme +
+# img/ dir Ultralytics can't resolve) for use with compare_detection_models.py
+python scripts/detection/tools/prepare_synthesis_eval.py
+python scripts/detection/tools/prepare_synthesis_eval.py --n-samples 50  # deterministic subset
 
 # TIDE error-type breakdown (classification/localization/duplicate/background/missed)
 python scripts/detection/evaluation/tide_analysis.py
@@ -130,17 +144,16 @@ python scripts/detection/training/train_rfdetr_optuna_best.py  # retrain with th
 # trial tried so far — always re-verify with leaderboard.py --fp-gallery, not just mAP.
 
 # Inpainting-based hard-negative generation — remove labeled Military
-# Vehicle/person objects from real training images via LaMa or ZITS
-# (non-generative — can't hallucinate a new object into the hole), for
-# manual review before promoting into a NEW dataset copy. Own venv.
+# Vehicle/person objects from real training images via ZITS (non-generative
+# — can't hallucinate a new object into the hole), for manual review before
+# promoting into a NEW dataset copy. Own venv. (LaMa was tried and retired
+# in favor of ZITS after a quality comparison; ZITS is now the only backend.)
 python3.12 -m venv .venv-inpaint && source .venv-inpaint/bin/activate
-pip install simple-lama-inpainting iopaint opencv-python-headless numpy
-python scripts/detection/tools/generate_inpainted_negatives.py --n-images 18       # LaMa
+pip install iopaint opencv-python-headless numpy
 python scripts/detection/tools/generate_inpainted_negatives_iopaint.py --n-images 18  # ZITS
-python scripts/detection/tools/compare_inpaint_models.py           # side-by-side [orig|mask|LaMa|ZITS]
 # --> manually delete unwanted candidates from <review_dir>/_preview/, then:
 python scripts/detection/tools/init_inpainted_dataset.py           # copy Detection_Dataset_hardneg -> _inpainted
-python scripts/detection/tools/promote_inpainted_negatives.py --source zits --from-preview \
+python scripts/detection/tools/promote_inpainted_negatives.py --from-preview \
     --dest datasets/Detection_Dataset_hardneg_inpainted
 # promote_inpainted_negatives.py REFUSES to target Detection_Dataset_hardneg directly
 # (the dataset the production checkpoint was trained on) without --allow-hardneg.

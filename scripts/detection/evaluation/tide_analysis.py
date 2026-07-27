@@ -45,7 +45,7 @@ from _ap_utils import (  # noqa: E402
     load_rfdetr_for_eval,
     load_yolo_gts,
 )
-from leaderboard import _COLLAPSE  # noqa: E402
+from leaderboard import _COLLAPSE, _label  # noqa: E402
 
 from tidecv import TIDE, Data  # noqa: E402
 from tidecv.quantify import (  # noqa: E402
@@ -88,14 +88,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", default="0")
     p.add_argument("--out", default="reports/detection/tide_analysis.md")
     return p.parse_args()
-
-
-def _label(ckpt: Path) -> str:
-    det = _ROOT / "weights" / "detection"
-    try:
-        return "/".join(ckpt.relative_to(det).parts[:-1])
-    except ValueError:
-        return str(ckpt)
 
 
 def _xyxy_to_xywh(box: tuple[float, float, float, float]) -> list[float]:

@@ -43,7 +43,8 @@ from _ap_utils import (  # noqa: E402
     _match_class, collect_predictions, collect_predictions_rfdetr,
     is_rfdetr_checkpoint, load_rfdetr_for_eval, load_yolo_gts,
 )
-from leaderboard import _COLLAPSE  # noqa: E402
+from leaderboard import _COLLAPSE
+from leaderboard import _label as _leaderboard_label  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s",
                     datefmt="%H:%M:%S")
@@ -54,11 +55,9 @@ _DEPLOY_CONF = 0.40
 
 
 def _label(ckpt: Path) -> str:
-    det = _ROOT / "weights" / "detection"
-    try:
-        return "/".join(ckpt.relative_to(det).parts[:-1]).replace("/", "_")
-    except ValueError:
-        return ckpt.stem
+    """Filesystem-safe variant of leaderboard.py's own _label() (this one's
+    result becomes a directory name, so '/' must not survive)."""
+    return _leaderboard_label(ckpt).replace("/", "_")
 
 
 def parse_args() -> argparse.Namespace:

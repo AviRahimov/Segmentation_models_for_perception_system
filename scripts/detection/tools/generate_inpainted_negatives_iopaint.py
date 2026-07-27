@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Phase 3 follow-up — same sampled images, same fixed masks (via
-_inpaint_common.py) as the LaMa run, ZITS as the inpainting backend, so the
-comparison isolates ONE variable (the model) at a time.
+_inpaint_common.py) as the retired LaMa run (generate_inpainted_negatives.py,
+since removed after ZITS won on quality), ZITS as the inpainting backend, so
+the comparison isolates ONE variable (the model) at a time.
 
-Why ZITS (after MAT/FcF/SDXL/PowerPaint were all tried and rejected -- see
-generate_inpainted_negatives.py's docstring and the approved plan): FLUX.1
+Why ZITS (after MAT/FcF/SDXL/PowerPaint were all tried and rejected): FLUX.1
 Fill (web-researched) has the same "hallucinates unrelated objects" problem
 as SDXL. SmartEraser (CVPR 2025, explicitly designed to prevent hallucination
 during removal) requires a heavy custom conda/shell-script setup with

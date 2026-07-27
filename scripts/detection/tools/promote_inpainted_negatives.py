@@ -2,10 +2,9 @@
 """Phase 3 — promote approved inpainted candidates into a training set.
 
 Deliberately the ONLY step that writes to a real training dataset --
-everything upstream (generate_inpainted_negatives.py / _iopaint.py) only
-ever writes to the separate review areas
-(datasets/Detection_Dataset_inpaint_review[_zits]/). This script does
-nothing until you've looked at _preview/ by hand and picked which
+generate_inpainted_negatives_iopaint.py only ever writes to the separate
+review area (datasets/Detection_Dataset_inpaint_review_zits/). This script
+does nothing until you've looked at _preview/ by hand and picked which
 candidates are actually convincing.
 
 Refuses to target datasets/Detection_Dataset_hardneg directly (pass
@@ -14,7 +13,7 @@ datasets/Detection_Dataset_hardneg) -- promoting straight into the
 dataset a production checkpoint was trained on is exactly the mistake
 this guard exists to prevent (confirmed to have happened once already:
 a partial promotion run silently succeeded for only 25/266 approved
-candidates because of the OLD hardcoded review-root bug below, then a
+candidates because of an earlier hardcoded-review-root bug, then a
 routine training survey retrained over the production checkpoint using
 that half-contaminated dataset). The intended destination is a
 SEPARATE dataset directory (see init_inpainted_dataset.py) so the
@@ -22,23 +21,22 @@ original stays untouched and comparable against.
 
 Usage
 -----
-    # Recommended: promote everything still present in a source's
-    # _preview/ folder (i.e. whatever you didn't delete during review)
-    # into a fresh dataset copy:
+    # Recommended: promote everything still present in _preview/ (i.e.
+    # whatever you didn't delete during review) into a fresh dataset copy:
     python scripts/detection/tools/promote_inpainted_negatives.py \\
-        --source zits --from-preview --dest datasets/Detection_Dataset_hardneg_inpainted
+        --from-preview --dest datasets/Detection_Dataset_hardneg_inpainted
 
     # Or name candidates explicitly, one per line in a file:
     python scripts/detection/tools/promote_inpainted_negatives.py \\
-        --source zits --list approved.txt --dest datasets/Detection_Dataset_hardneg_inpainted
+        --list approved.txt --dest datasets/Detection_Dataset_hardneg_inpainted
 
     # Or directly on the command line:
     python scripts/detection/tools/promote_inpainted_negatives.py \\
-        --source zits --dest datasets/Detection_Dataset_hardneg_inpainted \\
+        --dest datasets/Detection_Dataset_hardneg_inpainted \\
         --candidates both_removed/getty_24a975e59efd_jpg.rf.qYwODMdIV7y2DXtW6B1F
 
 Copies the image+label pair from
-datasets/Detection_Dataset_inpaint_review[_zits]/<variant>/{images,labels}/
+datasets/Detection_Dataset_inpaint_review_zits/<variant>/{images,labels}/
 into <dest>/train/{images,labels}/, prefixing the filename with the
 variant name so promoted files can never collide with an existing train
 image and stay traceable back to which removal they came from. Refuses
@@ -71,10 +69,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(
 logger = logging.getLogger("promote_inpainted_negatives")
 
 _ROOT = Path(__file__).resolve().parents[3]
-_SOURCES = {
-    "lama": _ROOT / "datasets/Detection_Dataset_inpaint_review",
-    "zits": _ROOT / "datasets/Detection_Dataset_inpaint_review_zits",
-}
+_REVIEW_ROOT = _ROOT / "datasets/Detection_Dataset_inpaint_review_zits"
 _GUARDED_DATASET = _ROOT / "datasets/Detection_Dataset_hardneg"
 _VARIANTS = ("both_removed", "vehicle_only_removed", "person_only_removed")
 _BOX_COLOR = (0, 200, 0)
@@ -82,8 +77,6 @@ _BOX_COLOR = (0, 200, 0)
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--source", choices=list(_SOURCES), default="zits",
-                   help="Which review folder to promote from (default: zits)")
     p.add_argument("--dest", type=Path, default=_ROOT / "datasets/Detection_Dataset_hardneg_inpainted",
                    help="Dataset root to promote into (its train/{images,labels}/ must already exist -- "
                         "see init_inpainted_dataset.py). Refuses to target Detection_Dataset_hardneg "
@@ -154,7 +147,7 @@ def _draw_label_audit(review_root: Path, variant: str, stem: str, dest_label: Pa
 
 def main() -> int:
     args = parse_args()
-    review_root = _SOURCES[args.source]
+    review_root = _REVIEW_ROOT
     args.dest = args.dest if args.dest.is_absolute() else _ROOT / args.dest
 
     if args.dest.resolve() == _GUARDED_DATASET.resolve() and not args.allow_hardneg:
@@ -213,7 +206,7 @@ def main() -> int:
             continue
         shutil.copy2(src_image, dest_image)
         shutil.copy2(src_label, dest_label)
-        manifest_lines.append(f"{datetime.now().isoformat(timespec='seconds')}  {args.source}  {dest_stem}")
+        manifest_lines.append(f"{datetime.now().isoformat(timespec='seconds')}  zits  {dest_stem}")
         n_promoted += 1
         logger.info("Promoted %s -> %s", f"{variant}/{stem}", dest_image.relative_to(_ROOT))
 

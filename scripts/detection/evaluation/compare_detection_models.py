@@ -79,6 +79,7 @@ from _ap_utils import (  # noqa: E402
     infer_rfdetr_profile,
     is_rfdetr_checkpoint,
     load_rfdetr_for_eval,
+    run_yolo_val,
 )
 
 logging.basicConfig(
@@ -248,19 +249,12 @@ def _run_table(specs: list[_ModelSpec], data_path: Path, split: str,
 
     for spec in specs:
         logger.info("Evaluating %s ...", spec.label)
-        model = _load_model(spec)
         m_conf = (per_model_thresholds or {}).get(spec.label, {}).get("conf", conf)
         m_iou  = (per_model_thresholds or {}).get(spec.label, {}).get("iou",  iou)
-        metrics = model.val(
-            data=str(data_path),
-            split=split,
-            imgsz=imgsz,
-            batch=batch,
-            device=device,
-            half=half,
-            conf=m_conf,
-            iou=m_iou,
-            verbose=False,
+        # _reject_rfdetr() above guarantees every spec here is Ultralytics-loadable
+        model, metrics = run_yolo_val(
+            spec.weights, data=str(data_path), split=split, imgsz=imgsz,
+            batch=batch, device=device, half=half, conf=m_conf, iou=m_iou,
         )
         box = metrics.box
         names = model.names

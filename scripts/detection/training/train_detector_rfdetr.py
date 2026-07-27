@@ -48,13 +48,13 @@ Usage
 from __future__ import annotations
 
 import logging
-import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
 _ROOT = Path(__file__).resolve().parents[3]
 
+from _rfdetr_common import copy_best_checkpoint, read_final_metrics  # noqa: E402
 from _survey_common import (  # noqa: E402
     _ask,
     _ask_int,
@@ -448,49 +448,15 @@ def _run_rfdetr_variant(
     # RF-DETR's canonical "best" checkpoint (winner of regular-vs-EMA,
     # optimizer state stripped) — copy alongside Ultralytics' best.pt
     # convention so _scan_checkpoints() discovers it uniformly.
-    best_src = out_dir / "checkpoint_best_total.pth"
-    best_dest = out_dir / "best.pt"
-    if best_src.exists():
-        shutil.copy2(str(best_src), str(best_dest))
-        logger.info("Best checkpoint → %s", best_dest)
-    else:
-        logger.warning("Expected checkpoint not found: %s", best_src)
+    copy_best_checkpoint(out_dir, logger)
 
-    map50, map5095 = _read_final_metrics(out_dir)
+    map50, map5095 = read_final_metrics(out_dir)
     if map50 == map50:  # not NaN
         logger.info("Run %s — mAP50=%.4f  mAP50-95=%.4f", model_name, map50, map5095)
     else:
         logger.info("Could not read final metrics from %s/metrics.csv — "
                     "check that file directly.", out_dir)
     return map50, map5095
-
-
-def _read_final_metrics(out_dir: Path) -> tuple[float, float]:
-    """Best (not merely last) val/mAP_50 and val/mAP_50_95 from PyTorch
-    Lightning's CSVLogger output. Most rows are train-only (val columns
-    blank — validation runs less often than train steps), so this scans
-    every row rather than just the last one. NaN, NaN if the file is
-    missing or the expected columns aren't present."""
-    import csv
-
-    metrics_csv = out_dir / "metrics.csv"
-    if not metrics_csv.exists():
-        return float("nan"), float("nan")
-
-    best50, best5095 = float("nan"), float("nan")
-    with metrics_csv.open(newline="") as f:
-        for row in csv.DictReader(f):
-            raw = row.get("val/mAP_50", "")
-            if not raw:
-                continue
-            try:
-                m50 = float(raw)
-                m5095 = float(row.get("val/mAP_50_95", "nan") or "nan")
-            except ValueError:
-                continue
-            if best50 != best50 or m50 > best50:  # first hit, or a new best
-                best50, best5095 = m50, m5095
-    return best50, best5095
 
 
 if __name__ == "__main__":

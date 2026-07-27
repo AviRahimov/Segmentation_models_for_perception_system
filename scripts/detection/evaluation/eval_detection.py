@@ -24,6 +24,9 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _ap_utils import run_yolo_val  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,7 +60,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    from ultralytics import YOLO
 
     weights_path = Path(args.weights)
     if not weights_path.is_absolute():
@@ -75,17 +77,9 @@ def main() -> None:
     logger.info("Data:     %s  (split=%s)", data_path, args.split)
 
     # YOLO works for both YOLO26 and post-YOLOEPETrainer YOLOE checkpoints
-    model = YOLO(str(weights_path))
-    metrics = model.val(
-        data=str(data_path),
-        split=args.split,
-        imgsz=args.imgsz,
-        batch=args.batch,
-        device=args.device,
-        half=args.half,
-        conf=args.conf,
-        iou=args.iou,
-        verbose=False,
+    model, metrics = run_yolo_val(
+        weights_path, data=str(data_path), split=args.split, imgsz=args.imgsz,
+        batch=args.batch, device=args.device, half=args.half, conf=args.conf, iou=args.iou,
     )
 
     # Extract metrics

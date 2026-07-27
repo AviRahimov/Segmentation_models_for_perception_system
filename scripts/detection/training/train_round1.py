@@ -35,18 +35,19 @@ from __future__ import annotations
 
 import argparse
 import logging
-import random
 import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import torch
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
+
+from _survey_common import seed_everything  # noqa: E402
+from train_detector import _FREEZE_DEFAULTS  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,29 +75,11 @@ _MODELS: dict[str, tuple[str, bool]] = {
     "yolo11m":    ("yolo11m.pt",     False),
 }
 
-# Scale-aware freeze defaults for standard YOLO models (YOLOEPETrainer ignores freeze).
-# Pattern: smaller model = more frozen (less trainable capacity on 157-image dataset).
-# YOLO26 and YOLO11 share the same 11-block backbone structure.
-_FREEZE_DEFAULTS: dict[str, int] = {
-    # YOLO26
-    "yolo26n": 10,   # freeze 0–9 (through SPPF); only C2PSA + head trainable
-    "yolo26s":  8,   # freeze 0–7
-    "yolo26m":  6,   # freeze 0–5
-    "yolo26l":  4,   # freeze 0–3
-    # YOLOv11 (same 11-block backbone, same freeze logic)
-    "yolo11n":  7,
-    "yolo11s":  6,
-    "yolo11m":  5,
-}
-
-
-def seed_everything(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+# _FREEZE_DEFAULTS (scale-aware freeze depth per model -- smaller model = more
+# frozen, since a 157-image dataset can't support much trainable capacity) and
+# seed_everything() are imported above from train_detector.py / _survey_common.py
+# -- this script's own values were verified identical to those before switching
+# to the shared versions.
 
 
 def load_config(config_path: str) -> dict[str, Any]:

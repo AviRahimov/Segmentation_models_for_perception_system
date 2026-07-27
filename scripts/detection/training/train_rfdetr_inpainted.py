@@ -28,11 +28,16 @@ Usage
 from __future__ import annotations
 
 import logging
-import shutil
 import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(_ROOT / "scripts" / "detection" / "training"))
+
+from _rfdetr_common import (  # noqa: E402
+    check_output_dir_safe, copy_best_checkpoint, read_final_metrics,
+    snapshot_production_checkpoint, verify_production_checkpoint_unchanged,
+)
 
 try:
     import rfdetr_plus  # noqa: F401
@@ -48,30 +53,6 @@ _OUT_DIR = _ROOT / "weights/detection/rfdetr-m/detection_dataset_hardneg_inpaint
 _PRODUCTION_CKPT = _ROOT / "weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt"
 
 
-def _read_final_metrics(out_dir: Path) -> tuple[float, float]:
-    """Identical helper to train_rfdetr_optuna_best.py / train_detector_rfdetr.py
-    -- duplicated rather than imported, matching their own zero-cross-import convention."""
-    import csv
-
-    metrics_csv = out_dir / "metrics.csv"
-    if not metrics_csv.exists():
-        return float("nan"), float("nan")
-    best50, best5095 = float("nan"), float("nan")
-    with metrics_csv.open(newline="") as f:
-        for row in csv.DictReader(f):
-            raw = row.get("val/mAP_50", "")
-            if not raw:
-                continue
-            try:
-                m50 = float(raw)
-                m5095 = float(row.get("val/mAP_50_95", "nan") or "nan")
-            except ValueError:
-                continue
-            if best50 != best50 or m50 > best50:
-                best50, best5095 = m50, m5095
-    return best50, best5095
-
-
 def main() -> int:
     from rfdetr.datasets.aug_config import AUG_CONSERVATIVE
 
@@ -79,18 +60,11 @@ def main() -> int:
         logger.error("Dataset not found: %s -- run init_inpainted_dataset.py + "
                     "promote_inpainted_negatives.py first.", _DATASET_DIR)
         return 1
-    if _OUT_DIR.resolve() == _PRODUCTION_CKPT.parent.resolve():
-        logger.error("Refusing to run: output dir would collide with the production checkpoint dir (%s)",
-                     _PRODUCTION_CKPT.parent)
+    if not check_output_dir_safe(_OUT_DIR, _PRODUCTION_CKPT, logger):
         return 1
-    if _OUT_DIR.exists() and any(_OUT_DIR.iterdir()):
-        logger.error("Refusing to run: %s already exists and is non-empty. "
-                    "Delete it yourself first if you want to redo this run.", _OUT_DIR)
+    prod_size_before = snapshot_production_checkpoint(_PRODUCTION_CKPT, logger)
+    if prod_size_before is None:
         return 1
-    if not _PRODUCTION_CKPT.exists():
-        logger.error("Production checkpoint missing, aborting as a precaution: %s", _PRODUCTION_CKPT)
-        return 1
-    prod_size_before = _PRODUCTION_CKPT.stat().st_size
 
     n_train = len(list((_DATASET_DIR / "train" / "images").iterdir()))
     logger.info("Phase 6 retrain -- rfdetr-m, conservative_aug recipe (matches production), "
@@ -112,24 +86,14 @@ def main() -> int:
         aug_config=dict(AUG_CONSERVATIVE),
     )
 
-    best_src = _OUT_DIR / "checkpoint_best_total.pth"
-    best_dest = _OUT_DIR / "best.pt"
-    if best_src.exists():
-        shutil.copy2(str(best_src), str(best_dest))
-        logger.info("Best checkpoint -> %s", best_dest)
-    else:
-        logger.warning("Expected checkpoint not found: %s", best_src)
+    copy_best_checkpoint(_OUT_DIR, logger)
 
-    map50, map5095 = _read_final_metrics(_OUT_DIR)
+    map50, map5095 = read_final_metrics(_OUT_DIR)
     logger.info("Phase 6 retrain done -- mAP50=%.4f  mAP50-95=%.4f", map50, map5095)
 
-    if _PRODUCTION_CKPT.stat().st_size != prod_size_before:
-        logger.error("Production checkpoint changed size during this run -- INVESTIGATE IMMEDIATELY: %s",
-                     _PRODUCTION_CKPT)
+    if not verify_production_checkpoint_unchanged(_PRODUCTION_CKPT, prod_size_before, logger):
         return 1
-    logger.info("Verified production checkpoint untouched: %s", _PRODUCTION_CKPT)
 
-    sys.path.insert(0, str(_ROOT / "scripts" / "detection" / "training"))
     from _survey_common import _log_experiment  # noqa: E402
 
     _log_experiment({
