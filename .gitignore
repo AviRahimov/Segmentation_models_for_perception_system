@@ -63,10 +63,14 @@ checkpoints/
 # Use /datasets/* (not /datasets/) so subdirectory exceptions can work
 /datasets/*
 /data/
+!/datasets/detection/
+/datasets/detection/*
 # Track detection dataset placeholder README only (not the data files themselves)
-!/datasets/Detection_Dataset/
-/datasets/Detection_Dataset/*
-!/datasets/Detection_Dataset/README.md
+!/datasets/detection/Detection_Dataset/
+/datasets/detection/Detection_Dataset/*
+!/datasets/detection/Detection_Dataset/README.md
+!/datasets/segmentation/
+/datasets/segmentation/*
 *.zip
 *.tar
 *.tar.gz

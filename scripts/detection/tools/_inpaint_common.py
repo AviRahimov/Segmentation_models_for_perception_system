@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 
 _ROOT = Path(__file__).resolve().parents[3]
-SRC_DIR = _ROOT / "datasets/Detection_Dataset/train"
+SRC_DIR = _ROOT / "datasets/detection/Detection_Dataset/train"
 CLASS_NAMES = ["Military Vehicle", "person"]
 
 # build_mask()'s size-adaptive dilation: margin = clip(diag * DILATE_FRAC, DILATE_MIN_PX, DILATE_MAX_PX).

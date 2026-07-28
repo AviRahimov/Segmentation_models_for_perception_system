@@ -1,6 +1,6 @@
 dataset:
   # Path to YOLO data.yaml (relative to project root or absolute)
-  path: "datasets/Detection_Dataset/data.yaml"
+  path: "datasets/detection/Detection_Dataset/data.yaml"
 
 model:
   # Override on CLI: --model yolo26s / yolo26m / yolo26l / yoloe-26s / yoloe-26m / yoloe-26l

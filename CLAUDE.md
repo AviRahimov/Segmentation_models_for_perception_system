@@ -39,15 +39,15 @@ python scripts/segmentation/evaluation/benchmark_orfd.py
 python scripts/segmentation/evaluation/compare_semantic_models.py
 
 # Optimization pipeline (dev PC → Jetson workflow)
-python scripts/segmentation/optimization/resolution_sweep.py --checkpoint weights/.../best.pth --data datasets/Segmentation_Dataset_ORFD
+python scripts/segmentation/optimization/resolution_sweep.py --checkpoint weights/.../best.pth --data datasets/segmentation/ORFD
 python scripts/segmentation/optimization/export_onnx.py --resolution 256
 python scripts/segmentation/optimization/train_qat.py --config config/segmentation/optimization/qat.yaml
 python scripts/segmentation/optimization/train_sparse.py --config config/segmentation/optimization/sparse.yaml
 # Stage 4 runs on Jetson only:
-python scripts/segmentation/optimization/benchmark_jetson.py --onnx-dir weights/segmentation/optimization/ --val-data datasets/Segmentation_Dataset_ORFD
+python scripts/segmentation/optimization/benchmark_jetson.py --onnx-dir weights/segmentation/optimization/ --val-data datasets/segmentation/ORFD
 python scripts/segmentation/optimization/compare_models.py --mode images \
     --model-a pytorch:weights/.../best.pth --model-b onnx:weights/segmentation/optimization/qat_int8.onnx \
-    --test-data datasets/Segmentation_Dataset_ORFD
+    --test-data datasets/segmentation/ORFD
 # Stage 6b: render benchmark_jetson.py's CSV -> colour-coded Markdown/HTML
 python scripts/segmentation/optimization/generate_report.py --csv reports/segmentation/optimization/benchmark_results.csv
 
@@ -61,7 +61,7 @@ python scripts/detection/training/train_round1.py --model yolo26m
 python scripts/detection/training/train_round1.py --model yoloe-26m
 # Output: weights/detection/{model_name}/round1/best.pt
 
-# Detection training — general (interactive survey: scans datasets/, Enter = defaults)
+# Detection training — general (interactive survey: scans datasets/detection/, Enter = defaults)
 python scripts/detection/training/train_detector.py
 # Classic hyperparameter-sweep CLI (former train_exp.py):
 python scripts/detection/training/train_detector.py --model yolo11m --variants freeze10_aug_clean
@@ -99,7 +99,7 @@ python scripts/detection/evaluation/confusion_matrix.py
 # Threshold sweep — conf x NMS-IoU grid search per checkpoint, writes best pair to JSON
 python scripts/detection/evaluation/tune_thresholds.py \
     --models pytorch:weights/detection/yolo26m/round1/best.pt \
-    --data datasets/Detection_Dataset/data.yaml
+    --data datasets/detection/Detection_Dataset/data.yaml
 
 # Confidence calibration — fit per-class temperature scaling for one checkpoint
 # (interactive checkpoint/benchmark picker if flags omitted); enable via
@@ -115,7 +115,7 @@ python scripts/detection/evaluation/compare_detection_models.py --mode table \
 python scripts/detection/evaluation/compare_detection_models.py --mode images \
     --models pytorch:weights/detection/yolo26m/round1/best.pt \
              pytorch:weights/detection/yoloe-26m/round1/best.pt \
-    --test-data datasets/Detection_Dataset/valid/images --n-samples 20
+    --test-data datasets/detection/Detection_Dataset/valid/images --n-samples 20
 python scripts/detection/evaluation/compare_detection_models.py --mode video \
     --models pytorch:weights/detection/yolo26m/round1/best.pt \
     --source samples/clip.mp4
@@ -135,7 +135,7 @@ python scripts/detection/evaluation/tide_analysis.py --only weights/detection/rf
 # D-RISE saliency — why does the model fire on one specific detection/box
 python scripts/detection/evaluation/drise_explain.py \
     --weights weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt \
-    --image datasets/Detection_Dataset/test/images/some_frame.jpg
+    --image datasets/detection/Detection_Dataset/test/images/some_frame.jpg
 
 # Full-image FP review — every GT/TP/FP box drawn on the uncropped frame (leaderboard.py's
 # --fp-gallery only shows a cropped context window per box)
@@ -160,7 +160,7 @@ python scripts/detection/tools/generate_inpainted_negatives_iopaint.py --n-image
 # --> manually delete unwanted candidates from <review_dir>/_preview/, then:
 python scripts/detection/tools/init_inpainted_dataset.py           # copy Detection_Dataset_hardneg -> _inpainted
 python scripts/detection/tools/promote_inpainted_negatives.py --from-preview \
-    --dest datasets/Detection_Dataset_hardneg_inpainted
+    --dest datasets/detection/Detection_Dataset_hardneg_inpainted
 # promote_inpainted_negatives.py REFUSES to target Detection_Dataset_hardneg directly
 # (the dataset the production checkpoint was trained on) without --allow-hardneg.
 ```

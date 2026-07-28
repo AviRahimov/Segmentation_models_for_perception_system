@@ -240,9 +240,9 @@ def run_survey() -> None:
     print("=" * 70)
 
     # ---- Q1: dataset ------------------------------------------------------
-    datasets, skipped = _scan_datasets(_ROOT / "datasets")
+    datasets, skipped = _scan_datasets(_ROOT / "datasets" / "detection")
     if not datasets:
-        logger.error("No trainable datasets found under datasets/.")
+        logger.error("No trainable datasets found under datasets/detection/.")
         sys.exit(1)
     for name, reason in skipped:
         print(f"  (skipped {name}: {reason})")

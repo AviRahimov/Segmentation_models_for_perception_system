@@ -5,7 +5,7 @@
 #   civilian_vehicle -> dropped.
 # Build: python scripts/detection/tools/build_dataset.py --manifest config/detection/datasets/merged_6class.yaml
 name: merged_6class
-output: datasets/merged_6class
+output: datasets/detection/merged_6class
 classes: [tank, truck, armored_vehicle, civilian_vehicle, soldier, civilian]
 min_box_px: 8
 resplit:
@@ -15,7 +15,7 @@ resplit:
 sources:
   # Manual real data: GT has no subtypes — 'Military Vehicle' goes to
   # armored_vehicle (the dominant content: APCs/tanks in the footage).
-  - path: datasets/Detection_Dataset
+  - path: datasets/detection/Detection_Dataset
     format: yolo_splits
     include_splits: {train: train, valid: val}
     oversample_train: 10
@@ -23,7 +23,7 @@ sources:
       Military Vehicle: armored_vehicle
       person: soldier
 
-  - path: datasets/military_object_dataset_kaggle
+  - path: datasets/detection/military_object_dataset_kaggle
     format: yolo_splits
     include_splits: {train: train, val: val}
     map:
@@ -38,7 +38,7 @@ sources:
       from_classes: [military_artillery]
       fraction: 0.04
 
-  - path: datasets/military-vehicle.v2i.yolo26
+  - path: datasets/detection/military-vehicle.v2i.yolo26
     format: yolo_splits
     include_splits: {train: pool, valid: pool, test: pool}
     map:                  # rstvv 'person' is ambiguous -> soldier (user decision)
@@ -47,7 +47,7 @@ sources:
       amoured-vehicle: armored_vehicle
       person: soldier
 
-  - path: datasets/verrckter_military_vehicle/ready_to_use_dataset/ready_to_use_dataset
+  - path: datasets/detection/verrckter_military_vehicle/ready_to_use_dataset/ready_to_use_dataset
     format: class_dirs
     alias: verrckter
     filename_exclude: [destr, aband]

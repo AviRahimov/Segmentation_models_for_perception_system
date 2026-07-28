@@ -99,7 +99,7 @@ def load_config(config_path: str) -> dict[str, Any]:
     m  = raw.get("model",   {}) or {}
     tr = raw.get("training", {}) or {}
     return {
-        "data":          ds.get("path",          "datasets/Detection_Dataset/data.yaml"),
+        "data":          ds.get("path",          "datasets/detection/Detection_Dataset/data.yaml"),
         "model":         m.get("name",            "yolo26m"),
         "out_dir":       m.get("out_dir",         "weights/detection/{model_name}/round1"),
         "epochs":        tr.get("epochs",          300),

@@ -33,8 +33,8 @@ Usage
 -----
     .venv-inpaint/bin/python3 scripts/detection/tools/generate_inpainted_negatives_iopaint.py
 
-Output: datasets/Detection_Dataset_inpaint_review_zits/<variant>/{images,labels}/
-        datasets/Detection_Dataset_inpaint_review_zits/_preview/<variant>__<stem>.jpg
+Output: datasets/detection/Detection_Dataset_inpaint_review_zits/<variant>/{images,labels}/
+        datasets/detection/Detection_Dataset_inpaint_review_zits/_preview/<variant>__<stem>.jpg
 """
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(
 logger = logging.getLogger("generate_inpainted_negatives_iopaint")
 
 _ROOT = Path(__file__).resolve().parents[3]
-_OUT_ROOT = _ROOT / "datasets/Detection_Dataset_inpaint_review_zits"
+_OUT_ROOT = _ROOT / "datasets/detection/Detection_Dataset_inpaint_review_zits"
 
 
 def parse_args() -> argparse.Namespace:

@@ -21,7 +21,7 @@ weights/detection/{model}/{dataset_slug}/{recipe}/ path (falls back to the
 shared Detection_Dataset/valid benchmark with a warning when that inference
 fails, e.g. for old round1/exp sweep checkpoints with no resolvable
 dataset-slug component) — or pick an explicit dataset (val/test/anything
-else under datasets/, same discovery as leaderboard.py) to evaluate every
+else under datasets/detection/, same discovery as leaderboard.py) to evaluate every
 selected checkpoint against the same split. A checkpoint is skipped (not
 silently mismatched) if the explicit dataset's class scheme doesn't match
 its own classes.
@@ -75,8 +75,9 @@ _BACKGROUND = "background"
 
 def _resolve_own_dataset(ckpt: Path) -> tuple[Path, Path] | None:
     """weights/detection/{model}/{dataset_slug}/{recipe}/best.pt -> matching
-    datasets/{Name}/{valid|val}/{images,labels}, or None if unresolvable
-    (e.g. round1/exp sweep checkpoints with no real dataset-slug component)."""
+    datasets/detection/{Name}/{valid|val}/{images,labels}, or None if
+    unresolvable (e.g. round1/exp sweep checkpoints with no real
+    dataset-slug component)."""
     det_root = _ROOT / "weights" / "detection"
     try:
         rel_parts = ckpt.relative_to(det_root).parts
@@ -85,7 +86,7 @@ def _resolve_own_dataset(ckpt: Path) -> tuple[Path, Path] | None:
     if len(rel_parts) < 3:
         return None
     dataset_slug = rel_parts[1].lower()
-    datasets_root = _ROOT / "datasets"
+    datasets_root = _ROOT / "datasets" / "detection"
     if not datasets_root.is_dir():
         return None
     match = next((d for d in datasets_root.iterdir()
@@ -296,9 +297,9 @@ def _run_one(ckpt: Path, label: str, out_root: Path,
         if resolved is None:
             logger.warning("  could not infer this checkpoint's own validation set from its "
                            "path — falling back to the shared benchmark "
-                           "(datasets/Detection_Dataset/valid).")
-            img_dir = _ROOT / "datasets" / "Detection_Dataset" / "valid" / "images"
-            lbl_dir = _ROOT / "datasets" / "Detection_Dataset" / "valid" / "labels"
+                           "(datasets/detection/Detection_Dataset/valid).")
+            img_dir = _ROOT / "datasets" / "detection" / "Detection_Dataset" / "valid" / "images"
+            lbl_dir = _ROOT / "datasets" / "detection" / "Detection_Dataset" / "valid" / "labels"
         else:
             img_dir, lbl_dir = resolved
 

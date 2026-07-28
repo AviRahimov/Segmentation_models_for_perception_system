@@ -71,7 +71,7 @@ _DEFAULT_CHECKPOINTS = [
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--benchmark", default="datasets/Detection_Dataset/test",
+    p.add_argument("--benchmark", default="datasets/detection/Detection_Dataset/test",
                    help="Benchmark split dir containing images/ and labels/")
     p.add_argument("--only", nargs="*", default=None,
                    help="Evaluate only these checkpoints (paths); default: one per model family")

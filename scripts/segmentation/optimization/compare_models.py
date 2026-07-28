@@ -22,7 +22,7 @@ Usage
     python scripts/segmentation/optimization/compare_models.py --mode images \\
         --model-a pytorch:weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \\
         --model-b onnx:weights/segmentation/optimization/qat_int8_256x256.onnx \\
-        --test-data datasets/Segmentation_Dataset_ORFD \\
+        --test-data datasets/segmentation/ORFD \\
         --n-samples 20
 
     # Video comparison:
@@ -429,7 +429,7 @@ def main() -> int:
                    help="Input resolution for both models")
 
     # Image mode
-    p.add_argument("--test-data",  default="datasets/Segmentation_Dataset_ORFD",
+    p.add_argument("--test-data",  default="datasets/segmentation/ORFD",
                    help="ORFD root (must contain testing/ split)")
     p.add_argument("--n-samples",  type=int, default=20)
     p.add_argument("--output-dir", default=None,

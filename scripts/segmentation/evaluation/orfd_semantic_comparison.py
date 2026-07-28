@@ -27,7 +27,7 @@ ORFD gray value and optional YOLOE mask subtraction are configured under
 Examples::
 
     PYTHONPATH=src python scripts/segmentation/evaluation/orfd_semantic_comparison.py \\
-        --training-root datasets/Segmentation_Dataset_ORFD/training --samples 20
+        --training-root datasets/segmentation/ORFD/training --samples 20
 
     PYTHONPATH=src python scripts/segmentation/evaluation/orfd_semantic_comparison.py \\
         --single-mosaic --sanity-write-gt-raw
@@ -474,7 +474,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     p.add_argument(
         "--training-root",
-        default="datasets/Segmentation_Dataset_ORFD/training",
+        default="datasets/segmentation/ORFD/training",
         help="ORFD folder containing image_data/ and gt_image/",
     )
     p.add_argument("--config", default="config/config.yaml")

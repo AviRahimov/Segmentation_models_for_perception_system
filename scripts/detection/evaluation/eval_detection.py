@@ -11,7 +11,7 @@ Usage
     python scripts/detection/evaluation/eval_detection.py \\
         --weights weights/detection/yoloe-26m/round1/best.pt \\
         --split test \\
-        --data datasets/Detection_Dataset/data.yaml
+        --data datasets/detection/Detection_Dataset/data.yaml
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Evaluate a detection model (mAP50 / mAP50-95)")
     p.add_argument("--weights", required=True,
                    help="Path to trained best.pt checkpoint")
-    p.add_argument("--data",    default="datasets/Detection_Dataset/data.yaml",
+    p.add_argument("--data",    default="datasets/detection/Detection_Dataset/data.yaml",
                    help="Path to YOLO data.yaml")
     p.add_argument("--split",   default="val", choices=["val", "test"],
                    help="Dataset split to evaluate on")

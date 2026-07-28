@@ -8,7 +8,7 @@ Usage
 -----
     python scripts/segmentation/optimization/resolution_sweep.py \\
         --checkpoint weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \\
-        --data datasets/Segmentation_Dataset_ORFD
+        --data datasets/segmentation/ORFD
 
 Choose the resolution for downstream stages based on the printed table.
 """
@@ -134,7 +134,7 @@ def _sweep_resolution(
 def main() -> int:
     p = argparse.ArgumentParser(description="Stage 0: resolution mIoU + latency sweep")
     p.add_argument("--checkpoint", default="weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth")
-    p.add_argument("--data",        default="datasets/Segmentation_Dataset_ORFD",
+    p.add_argument("--data",        default="datasets/segmentation/ORFD",
                    help="ORFD root (must contain validation/)")
     p.add_argument("--resolutions", nargs="+", type=int, default=[256, 384, 512])
     p.add_argument("--batch",       type=int, default=8)

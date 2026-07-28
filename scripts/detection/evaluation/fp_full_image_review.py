@@ -63,7 +63,7 @@ def _label(ckpt: Path) -> str:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--weights", required=True, nargs="+", type=Path)
-    p.add_argument("--benchmark", default="datasets/Detection_Dataset/test")
+    p.add_argument("--benchmark", default="datasets/detection/Detection_Dataset/test")
     p.add_argument("--conf", type=float, default=0.05)
     p.add_argument("--imgsz", type=int, default=1280)
     p.add_argument("--device", default="0")

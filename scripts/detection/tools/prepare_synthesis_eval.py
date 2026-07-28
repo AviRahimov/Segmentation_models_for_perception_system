@@ -1,10 +1,10 @@
 """Build an Ultralytics-compatible eval set from the synthetic dataset.
 
-The synthetic data (datasets/Synthesis_Train/) uses its own class scheme
+The synthetic data (datasets/detection/Synthesis_Train/) uses its own class scheme
 (0=Boulders, 1=Humans, 2=Cars, 3=Trees) and an ``img/`` directory name that
 Ultralytics ``val()`` cannot resolve labels for (it requires ``images/``).
 
-This script produces datasets/Synthesis_Eval/ with:
+This script produces datasets/detection/Synthesis_Eval/ with:
 
 - ``images/``   — symlinks to the source pictures (or copies with --copy-images)
 - ``labels/``   — labels remapped to the model scheme: Cars(2)->0 (Military
@@ -22,7 +22,7 @@ Usage
 
 Then evaluate with:
     python scripts/detection/evaluation/compare_detection_models.py --mode table \\
-        --data datasets/Synthesis_Eval/data.yaml --models pytorch:...
+        --data datasets/detection/Synthesis_Eval/data.yaml --models pytorch:...
 """
 from __future__ import annotations
 
@@ -53,9 +53,9 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Remap synthetic labels to the model class scheme for evaluation"
     )
-    p.add_argument("--source", default="datasets/Synthesis_Train",
+    p.add_argument("--source", default="datasets/detection/Synthesis_Train",
                    help="Source dataset dir containing img/ and labels/")
-    p.add_argument("--out", default="datasets/Synthesis_Eval",
+    p.add_argument("--out", default="datasets/detection/Synthesis_Eval",
                    help="Output dataset dir (recreated on every run)")
     p.add_argument("--n-samples", type=int, default=0, dest="n_samples",
                    help="Random subset size (0 = all images)")

@@ -9,12 +9,12 @@ Usage
         --models pytorch:weights/detection/yolo26m/round1/best.pt \\
                  pytorch:weights/detection/yoloe-26m/round1/best.pt \\
                  pytorch:weights/detection/yolo11m/round1/best.pt \\
-        --data datasets/Detection_Dataset/data.yaml
+        --data datasets/detection/Detection_Dataset/data.yaml
 
     # Custom sweep range:
     python scripts/detection/evaluation/tune_thresholds.py \\
         --models pytorch:weights/detection/yolo26m/round1/best.pt \\
-        --data datasets/Detection_Dataset/data.yaml \\
+        --data datasets/detection/Detection_Dataset/data.yaml \\
         --conf-range 0.20 0.50 0.05 \\
         --iou-range  0.40 0.71 0.10 \\
         --out reports/detection/best_thresholds.json
@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--models", nargs="+", required=True, metavar="SPEC",
                    help="Model specs: pytorch:path/to/best.pt")
-    p.add_argument("--data",   default="datasets/Detection_Dataset/data.yaml",
+    p.add_argument("--data",   default="datasets/detection/Detection_Dataset/data.yaml",
                    help="YOLO data.yaml")
     p.add_argument("--conf-range", nargs=3, type=float, default=[0.10, 0.56, 0.05],
                    metavar=("START", "STOP", "STEP"),

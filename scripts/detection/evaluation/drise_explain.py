@@ -35,12 +35,12 @@ Usage
     # Explain every detection the model itself finds in an image:
     python scripts/detection/evaluation/drise_explain.py \\
         --weights weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt \\
-        --image datasets/Detection_Dataset/test/images/some_frame.jpg
+        --image datasets/detection/Detection_Dataset/test/images/some_frame.jpg
 
     # Explain one specific hand-picked box (e.g. from a TIDE-flagged crop):
     python scripts/detection/evaluation/drise_explain.py \\
         --weights weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt \\
-        --image datasets/Detection_Dataset/test/images/some_frame.jpg \\
+        --image datasets/detection/Detection_Dataset/test/images/some_frame.jpg \\
         --box 120,340,410,560 --label "Military Vehicle" --score 0.62
 
     # Fast/rough pass while iterating (fewer masks -> noisier heatmap):

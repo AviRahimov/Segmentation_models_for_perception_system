@@ -218,9 +218,9 @@ def run_survey() -> None:
     print("=" * 70)
 
     # ---- Q1: dataset ------------------------------------------------------
-    datasets, skipped = _scan_datasets(_ROOT / "datasets")
+    datasets, skipped = _scan_datasets(_ROOT / "datasets" / "detection")
     if not datasets:
-        logger.error("No trainable datasets found under datasets/.")
+        logger.error("No trainable datasets found under datasets/detection/.")
         sys.exit(1)
     for name, reason in skipped:
         print(f"  (skipped {name}: {reason})")
@@ -424,7 +424,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--variants", nargs="+", default=["all"],
                    metavar="VARIANT",
                    help=f"Variants to run (default: all). Choices: {list(_VARIANTS)}")
-    p.add_argument("--data", default="datasets/Detection_Dataset/data.yaml",
+    p.add_argument("--data", default="datasets/detection/Detection_Dataset/data.yaml",
                    help="Path to YOLO data.yaml")
     p.add_argument("--device", default="0",
                    help="CUDA device index or 'cpu' (default: 0)")

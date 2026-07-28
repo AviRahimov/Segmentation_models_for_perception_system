@@ -104,7 +104,7 @@ def main() -> int:
     if args.benchmark is None:
         candidates = _discover_benchmark_dirs()
         if not candidates:
-            raise SystemExit("No images/+labels/ benchmark dirs found under datasets/.")
+            raise SystemExit("No images/+labels/ benchmark dirs found under datasets/detection/.")
         options = [(label, f"{n} images") for label, _, _, n in candidates]
         default_idx = next((i for i, (label, *_ ) in enumerate(candidates)
                             if label == "Detection_Dataset/valid"), 0)

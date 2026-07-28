@@ -84,7 +84,7 @@ def load_train_config(path: str) -> dict[str, Any]:
     m  = raw.get("model",    {}) or {}
     tr = raw.get("training", {}) or {}
     return {
-        "data":               ds.get("root",          "datasets/Segmentation_Dataset_ORFD"),
+        "data":               ds.get("root",          "datasets/segmentation/ORFD"),
         "train_split":        ds.get("train_split",   "training"),
         "val_split":          ds.get("val_split",     "validation"),
         "model":              m.get("name",            "segformer-b2"),
@@ -131,7 +131,7 @@ def parse_args() -> argparse.Namespace:
                    help="Path to train.yaml config file")
     p.add_argument("--model",   default=cfg.get("model", "segformer-b2"),
                    choices=["segformer-b0", "segformer-b1", "segformer-b2", "segformer-b4"])
-    p.add_argument("--data",    default=cfg.get("data",    "datasets/Segmentation_Dataset_ORFD"),
+    p.add_argument("--data",    default=cfg.get("data",    "datasets/segmentation/ORFD"),
                    help="Path to dataset root (must contain training/ and validation/)")
     p.add_argument("--epochs",  type=int,   default=cfg.get("epochs",   100))
     p.add_argument("--batch",   type=int,   default=cfg.get("batch",    8))

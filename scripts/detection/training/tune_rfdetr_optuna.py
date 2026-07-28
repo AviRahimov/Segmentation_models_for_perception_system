@@ -92,7 +92,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(
 logger = logging.getLogger("tune_rfdetr_optuna")
 optuna.logging.set_verbosity(optuna.logging.WARNING)  # PTL's own per-epoch tables are noisy enough
 
-_DEFAULT_DATASET = _ROOT / "datasets/Detection_Dataset_hardneg"
+_DEFAULT_DATASET = _ROOT / "datasets/detection/Detection_Dataset_hardneg"
 _OUT_ROOT = _ROOT / "weights/detection/rfdetr-m/optuna"
 
 # AUG_AERIAL/AUG_INDUSTRIAL omitted -- neither preset fits this off-road

@@ -10,7 +10,7 @@ mappings, filters, oversampling, and split policy:
 Manifest schema
 ---------------
     name: merged_2class
-    output: datasets/merged_2class
+    output: datasets/detection/merged_2class
     classes: ["Military Vehicle", "person"]   # target scheme, index = class id
     min_box_px: 8                # drop boxes smaller than this (pixels, noise)
     resplit: {val_fraction: 0.05, seed: 42}   # for sources pooled below

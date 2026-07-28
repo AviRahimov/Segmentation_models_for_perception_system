@@ -497,7 +497,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Benchmark models on ORFD")
     p.add_argument("--models", nargs="*", default=None,
                    help="Model keys to evaluate (default: all available)")
-    p.add_argument("--data",   default=str(_ROOT / "datasets" / "Segmentation_Dataset"),
+    p.add_argument("--data",   default=str(_ROOT / "datasets" / "segmentation" / "ORFD"),
                    help="Path to ORFD root")
     p.add_argument("--split",  default="validation",
                    choices=["validation", "testing"])

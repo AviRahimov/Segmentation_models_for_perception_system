@@ -299,7 +299,7 @@ SegFormer-B2 checkpoint for Jetson AGX Orin deployment.
 # Stage 0: resolution sweep (choose resolution from table)
 python scripts/segmentation/optimization/resolution_sweep.py \
     --checkpoint weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \
-    --data datasets/Segmentation_Dataset_ORFD
+    --data datasets/segmentation/ORFD
 
 # Stage 1: FP16 baseline ONNX
 python scripts/segmentation/optimization/export_onnx.py --resolution 256
@@ -313,14 +313,14 @@ python scripts/segmentation/optimization/train_sparse.py --config config/segment
 # Transfer weights/segmentation/optimization/*.onnx to Jetson, then on Jetson:
 # Stage 4 (Jetson only):
 python scripts/segmentation/optimization/benchmark_jetson.py \
-    --onnx-dir weights/segmentation/optimization/ --val-data datasets/Segmentation_Dataset_ORFD
+    --onnx-dir weights/segmentation/optimization/ --val-data datasets/segmentation/ORFD
 
 # Stage 6: reports and comparisons
 python scripts/segmentation/optimization/generate_report.py
 python scripts/segmentation/optimization/compare_models.py --mode images \
     --model-a pytorch:weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \
     --model-b onnx:weights/segmentation/optimization/qat_int8_256x256.onnx \
-    --test-data datasets/Segmentation_Dataset_ORFD
+    --test-data datasets/segmentation/ORFD
 ```
 
 New dependencies for the optimization pipeline:

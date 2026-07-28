@@ -48,7 +48,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(
                     datefmt="%H:%M:%S")
 logger = logging.getLogger("train_rfdetr_inpainted")
 
-_DATASET_DIR = _ROOT / "datasets/Detection_Dataset_hardneg_inpainted"
+_DATASET_DIR = _ROOT / "datasets/detection/Detection_Dataset_hardneg_inpainted"
 _OUT_DIR = _ROOT / "weights/detection/rfdetr-m/detection_dataset_hardneg_inpainted/conservative_aug"
 _PRODUCTION_CKPT = _ROOT / "weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt"
 

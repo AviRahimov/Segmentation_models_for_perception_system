@@ -74,7 +74,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--config",      default=known.config)
     p.add_argument("--checkpoint",  default=cfg.get("base_checkpoint",
                    "weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth"))
-    p.add_argument("--data",        default=cfg.get("data", "datasets/Segmentation_Dataset_ORFD"))
+    p.add_argument("--data",        default=cfg.get("data", "datasets/segmentation/ORFD"))
     p.add_argument("--resolution",  type=int, default=cfg.get("resolution", 256),
                    help="Input resolution chosen from Stage 0 sweep")
     p.add_argument("--epochs",      type=int, default=cfg.get("qat_epochs", 8))

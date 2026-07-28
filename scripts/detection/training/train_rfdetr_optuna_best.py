@@ -51,7 +51,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(
                     datefmt="%H:%M:%S")
 logger = logging.getLogger("train_rfdetr_optuna_best")
 
-_DATASET_DIR = _ROOT / "datasets/Detection_Dataset_hardneg"
+_DATASET_DIR = _ROOT / "datasets/detection/Detection_Dataset_hardneg"
 _PRODUCTION_CKPT = _ROOT / "weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt"
 
 _AUG_PRESET_NAMES = {"none": None}  # populated below with the real objects

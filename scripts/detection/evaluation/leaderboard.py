@@ -119,20 +119,20 @@ def parse_args() -> argparse.Namespace:
 
 
 def _discover_benchmark_dirs() -> list[tuple[str, Path, Path, int]]:
-    """Every images/+labels/ pair under datasets/ -> [(label, img_dir, lbl_dir, n_images)].
+    """Every images/+labels/ pair under datasets/detection/ -> [(label, img_dir, lbl_dir, n_images)].
 
     Not hardcoded to "valid"/"test": scans every subdirectory of
     Detection_Dataset/ (covers valid, test, and anything else dropped there
-    later) plus every top-level datasets/* dir that itself directly holds
-    images/+labels/ (a wholly separate benchmark dataset dropped elsewhere) —
-    same discovery spirit as _survey_common._scan_datasets().
+    later) plus every top-level datasets/detection/* dir that itself directly
+    holds images/+labels/ (a wholly separate benchmark dataset dropped
+    elsewhere) — same discovery spirit as _survey_common._scan_datasets().
 
     Excludes anything named "train": it also has images/+labels/, but
     evaluating a checkpoint on its own training data gives a misleadingly
     optimistic score, not a meaningful benchmark choice — confirmed as a real
     footgun while testing this (picked it by accident, got 0.98 mAP50).
     """
-    datasets_root = _ROOT / "datasets"
+    datasets_root = _ROOT / "datasets" / "detection"
     out: list[tuple[str, Path, Path, int]] = []
     if not datasets_root.is_dir():
         return out
@@ -169,7 +169,7 @@ def _label(ckpt: Path) -> str:
     try:
         return "/".join(ckpt.relative_to(det).parts[:-1])
     except ValueError:
-        # Foreign checkpoint (e.g. datasets/verrckter_military_vehicle/best.pt)
+        # Foreign checkpoint (e.g. datasets/detection/verrckter_military_vehicle/best.pt)
         try:
             return str(ckpt.relative_to(_ROOT))
         except ValueError:
@@ -235,7 +235,7 @@ def main() -> int:
         # contexts fall back to the recommended default via _ask itself).
         candidates = _discover_benchmark_dirs()
         if not candidates:
-            raise SystemExit("No images/+labels/ benchmark dirs found under datasets/.")
+            raise SystemExit("No images/+labels/ benchmark dirs found under datasets/detection/.")
         options = [(label, f"{n} images") for label, _, _, n in candidates]
         default_idx = next((i for i, (label, *_ ) in enumerate(candidates)
                             if label == "Detection_Dataset/valid"), 0)

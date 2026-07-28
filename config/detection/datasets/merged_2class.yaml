@@ -1,7 +1,7 @@
 # Merged 2-class training set — all web sources remapped to the pipeline scheme.
 # Build: python scripts/detection/tools/build_dataset.py --manifest config/detection/datasets/merged_2class.yaml
 name: merged_2class
-output: datasets/merged_2class
+output: datasets/detection/merged_2class
 classes: ["Military Vehicle", "person"]
 min_box_px: 8            # drop annotation-noise boxes smaller than 8px
 resplit:                 # applied to sources with target split 'pool'
@@ -10,7 +10,7 @@ resplit:                 # applied to sources with target split 'pool'
 
 sources:
   # Manually labeled real data — oversampled so it can't be ignored (idea 2)
-  - path: datasets/Detection_Dataset
+  - path: datasets/detection/Detection_Dataset
     format: yolo_splits
     include_splits: {train: train, valid: val}   # test/ held out, never consumed
     oversample_train: 10
@@ -19,7 +19,7 @@ sources:
       person: person
 
   # Kaggle 12-class original (mapped directly; supersedes military_kaggle_2class)
-  - path: datasets/military_object_dataset_kaggle
+  - path: datasets/detection/military_object_dataset_kaggle
     format: yolo_splits
     include_splits: {train: train, val: val}
     map:
@@ -34,7 +34,7 @@ sources:
       fraction: 0.08
 
   # rstvv v2 (Roboflow) — broken 99/1 split → pooled and re-split
-  - path: datasets/military-vehicle.v2i.yolo26
+  - path: datasets/detection/military-vehicle.v2i.yolo26
     format: yolo_splits
     include_splits: {train: pool, valid: pool, test: pool}
     map:                  # artillery (49 instances) dropped
@@ -44,7 +44,7 @@ sources:
       person: person
 
   # verrckter (class-per-directory layout; label ids meaningless)
-  - path: datasets/verrckter_military_vehicle/ready_to_use_dataset/ready_to_use_dataset
+  - path: datasets/detection/verrckter_military_vehicle/ready_to_use_dataset/ready_to_use_dataset
     format: class_dirs
     alias: verrckter
     filename_exclude: [destr, aband]   # destroyed/abandoned vehicles filtered

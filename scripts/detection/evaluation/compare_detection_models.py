@@ -35,13 +35,13 @@ Usage
                  pytorch:weights/detection/yoloe-26s/round1/best.pt \\
                  pytorch:weights/detection/yoloe-26m/round1/best.pt \\
                  pytorch:weights/detection/yoloe-26l/round1/best.pt \\
-        --data datasets/Detection_Dataset/data.yaml
+        --data datasets/detection/Detection_Dataset/data.yaml
 
     # Side-by-side on val images:
     python scripts/detection/evaluation/compare_detection_models.py --mode images \\
         --models pytorch:weights/detection/yolo26m/round1/best.pt \\
                  pytorch:weights/detection/yoloe-26m/round1/best.pt \\
-        --test-data datasets/Detection_Dataset/valid/images --n-samples 20
+        --test-data datasets/detection/Detection_Dataset/valid/images --n-samples 20
 
     # Side-by-side on custom test images (no labels):
     python scripts/detection/evaluation/compare_detection_models.py --mode images \\
@@ -526,7 +526,7 @@ def parse_args() -> argparse.Namespace:
                    help="Comparison mode")
     p.add_argument("--models",  nargs="+", required=True, metavar="SPEC",
                    help="One or more model specs: pytorch:path/to/best.pt")
-    p.add_argument("--data",    default="datasets/Detection_Dataset/data.yaml",
+    p.add_argument("--data",    default="datasets/detection/Detection_Dataset/data.yaml",
                    help="YOLO data.yaml (used by --mode table)")
     p.add_argument("--split",   default="val", choices=["val", "test"],
                    help="Dataset split (--mode table)")
@@ -598,7 +598,7 @@ def main() -> None:
             # Default: val images directory from data.yaml.
             # Roboflow-generated yamls use ../valid/images relative to the yaml's
             # parent directory, which resolves one level too high given our layout
-            # (datasets/Detection_Dataset/valid/images).  Try the yaml-relative path
+            # (datasets/detection/Detection_Dataset/valid/images).  Try the yaml-relative path
             # first; if it doesn't exist, strip leading ../ components and retry.
             import re, yaml
             with data_path.open() as f:

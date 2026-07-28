@@ -26,7 +26,7 @@ Usage
 -----
     python scripts/segmentation/optimization/benchmark_jetson.py \\
         --onnx-dir weights/segmentation/optimization/ \\
-        --val-data datasets/Segmentation_Dataset_ORFD \\
+        --val-data datasets/segmentation/ORFD \\
         --output reports/segmentation/optimization/benchmark_results.csv
 """
 from __future__ import annotations
@@ -427,7 +427,7 @@ def main() -> int:
                    help="Directory containing .onnx files to benchmark")
     p.add_argument("--engine-dir",   default=None,
                    help="Where to save .engine files (default: same as --onnx-dir)")
-    p.add_argument("--val-data",     default="datasets/Segmentation_Dataset_ORFD")
+    p.add_argument("--val-data",     default="datasets/segmentation/ORFD")
     p.add_argument("--output",       default="reports/segmentation/optimization/benchmark_results.csv")
     p.add_argument("--soak",         action="store_true",
                    help="Run 30-minute soak test per variant (adds ~2h total)")

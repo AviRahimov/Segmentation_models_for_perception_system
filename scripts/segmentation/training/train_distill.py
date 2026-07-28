@@ -26,7 +26,7 @@ Usage (once implemented)
     python scripts/segmentation/optimization/train_distill.py \\
         --teacher weights/segmentation/orfd/full_finetune_heavy_aug/segformer-b4/best.pth \\
         --student-variant segformer-b0 \\
-        --data datasets/Segmentation_Dataset_ORFD \\
+        --data datasets/segmentation/ORFD \\
         --epochs 60
 """
 from __future__ import annotations

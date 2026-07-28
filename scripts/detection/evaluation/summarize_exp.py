@@ -7,7 +7,7 @@ Usage
 -----
     python scripts/detection/evaluation/summarize_exp.py \\
         --models yolo26m yolo11m \\
-        --data datasets/Detection_Dataset/data.yaml
+        --data datasets/detection/Detection_Dataset/data.yaml
 
     # Single model, custom output dir:
     python scripts/detection/evaluation/summarize_exp.py \\
@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--models", nargs="+", default=["yolo26m", "yolo11m"],
                    metavar="MODEL",
                    help="Model names to include (e.g. yolo26m yolo11m)")
-    p.add_argument("--data", default="datasets/Detection_Dataset/data.yaml",
+    p.add_argument("--data", default="datasets/detection/Detection_Dataset/data.yaml",
                    help="Path to YOLO data.yaml")
     p.add_argument("--split", default="val", choices=["val", "test"],
                    help="Dataset split to evaluate on (default: val)")

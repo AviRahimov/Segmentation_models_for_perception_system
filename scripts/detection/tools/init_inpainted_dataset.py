@@ -39,8 +39,8 @@ _ROOT = Path(__file__).resolve().parents[3]
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--src", type=Path, default=_ROOT / "datasets/Detection_Dataset_hardneg")
-    p.add_argument("--dest", type=Path, default=_ROOT / "datasets/Detection_Dataset_hardneg_inpainted")
+    p.add_argument("--src", type=Path, default=_ROOT / "datasets/detection/Detection_Dataset_hardneg")
+    p.add_argument("--dest", type=Path, default=_ROOT / "datasets/detection/Detection_Dataset_hardneg_inpainted")
     return p.parse_args()
 
 
