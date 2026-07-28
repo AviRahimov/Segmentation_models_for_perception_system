@@ -203,13 +203,13 @@ cd /mnt/nvme/avi_ws/Segmentation_models_for_perception_system
 
 python3 scripts/segmentation/optimization/benchmark_jetson.py \
     --onnx-dir weights/segmentation/optimization/ \
-    --val-data datasets/Segmentation_Dataset \
+    --val-data datasets/Segmentation_Dataset_ORFD \
     --output reports/segmentation/optimization/benchmark_results.csv
 
 # Optional: 30-minute soak test per variant (adds ~2h total):
 python3 scripts/segmentation/optimization/benchmark_jetson.py \
     --onnx-dir weights/segmentation/optimization/ \
-    --val-data datasets/Segmentation_Dataset \
+    --val-data datasets/Segmentation_Dataset_ORFD \
     --soak
 ```
 
@@ -284,7 +284,7 @@ python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4 --m
 | `download_datasets.py` | Download ORFD / GOOSE datasets | `python3 scripts/tools/download_datasets.py` |
 | `yoloe_discovery_dump.py` | Dump YOLOE open-vocab detections | `python3 scripts/detection/tools/yoloe_discovery_dump.py` |
 | **Optimization pipeline** | | |
-| `optimization/benchmark_jetson.py` | Stage 4 — TRT engine build + authoritative benchmark | `python3 scripts/segmentation/optimization/benchmark_jetson.py --onnx-dir weights/segmentation/optimization/ --val-data datasets/Segmentation_Dataset` |
+| `optimization/benchmark_jetson.py` | Stage 4 — TRT engine build + authoritative benchmark | `python3 scripts/segmentation/optimization/benchmark_jetson.py --onnx-dir weights/segmentation/optimization/ --val-data datasets/Segmentation_Dataset_ORFD` |
 | `optimization/compare_models.py` | Stage 6a — side-by-side image / video comparison | `python3 scripts/segmentation/optimization/compare_models.py --mode video --model-a pytorch:... --model-b engine:...` |
 | `optimization/generate_report.py` | Stage 6b — Markdown + HTML results table | `python3 scripts/segmentation/optimization/generate_report.py --csv reports/segmentation/optimization/benchmark_results.csv` |
 

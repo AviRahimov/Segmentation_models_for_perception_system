@@ -33,17 +33,23 @@ python scripts/segmentation/training/train_orfd.py
 # Evaluation
 python scripts/segmentation/evaluation/eval_segformer_on_datasets.py
 python scripts/segmentation/evaluation/orfd_semantic_comparison.py
+# Accuracy metrics (mIoU/P/R/F1) on ORFD val across a registry of trained variants
+python scripts/segmentation/evaluation/benchmark_orfd.py
+# GOOSE-Ex-based B2 vs B4 comparison via the real config/factory path (undocumented elsewhere)
+python scripts/segmentation/evaluation/compare_semantic_models.py
 
 # Optimization pipeline (dev PC → Jetson workflow)
-python scripts/segmentation/optimization/resolution_sweep.py --checkpoint weights/.../best.pth --data datasets/Segmentation_Dataset
+python scripts/segmentation/optimization/resolution_sweep.py --checkpoint weights/.../best.pth --data datasets/Segmentation_Dataset_ORFD
 python scripts/segmentation/optimization/export_onnx.py --resolution 256
 python scripts/segmentation/optimization/train_qat.py --config config/segmentation/optimization/qat.yaml
 python scripts/segmentation/optimization/train_sparse.py --config config/segmentation/optimization/sparse.yaml
 # Stage 4 runs on Jetson only:
-python scripts/segmentation/optimization/benchmark_jetson.py --onnx-dir weights/optimization/ --val-data datasets/Segmentation_Dataset
+python scripts/segmentation/optimization/benchmark_jetson.py --onnx-dir weights/segmentation/optimization/ --val-data datasets/Segmentation_Dataset_ORFD
 python scripts/segmentation/optimization/compare_models.py --mode images \
-    --model-a pytorch:weights/.../best.pth --model-b onnx:weights/optimization/qat_int8.onnx \
-    --test-data datasets/Segmentation_Dataset
+    --model-a pytorch:weights/.../best.pth --model-b onnx:weights/segmentation/optimization/qat_int8.onnx \
+    --test-data datasets/Segmentation_Dataset_ORFD
+# Stage 6b: render benchmark_jetson.py's CSV -> colour-coded Markdown/HTML
+python scripts/segmentation/optimization/generate_report.py --csv reports/segmentation/optimization/benchmark_results.csv
 
 # YOLOE discovery mode dump
 python scripts/detection/tools/yoloe_discovery_dump.py --config config/config.yaml \

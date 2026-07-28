@@ -27,6 +27,9 @@ import torch
 
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
+sys.path.insert(0, str(_ROOT / "scripts" / "segmentation"))
+
+from _segformer_checkpoint_common import build_segformer_from_checkpoint  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,33 +44,10 @@ _MAX_ABS_DIFF = 1e-2  # fp16 rounding can introduce ~1e-3; generous but not sile
 
 def _load_model(checkpoint: str, resolution: int, fp16: bool, device: str):
     """Load SegFormer-B2 from a local .pth, set processor to target resolution."""
-    from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
-
-    ckpt_path = Path(checkpoint)
-    if not ckpt_path.is_file():
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-
-    ckpt = torch.load(str(ckpt_path), map_location="cpu", weights_only=True)
-    state_dict = ckpt.get("net", ckpt) if isinstance(ckpt, dict) else ckpt
-
-    from perception.models.semantic.segformer import _remap_segformer_keys
-    state_dict = _remap_segformer_keys(state_dict)
-
-    n_labels = state_dict["decode_head.classifier.weight"].shape[0]
-
-    hf_base = "nvidia/segformer-b2-finetuned-ade-512-512"
-    processor = SegformerImageProcessor.from_pretrained(hf_base)
-    processor.size = {"height": resolution, "width": resolution}
-
-    model = SegformerForSemanticSegmentation.from_pretrained(
-        hf_base, num_labels=n_labels, ignore_mismatched_sizes=True
+    model, processor, n_labels = build_segformer_from_checkpoint(
+        checkpoint, device, resolution=resolution, fp16=fp16
     )
-    model.load_state_dict(state_dict, strict=True)
-    model = model.eval().to(device)
-    if fp16:
-        model = model.half()
-
-    logger.info("Loaded: %s  res=%d  fp16=%s  classes=%d", ckpt_path.name, resolution, fp16, n_labels)
+    logger.info("Loaded: %s  res=%d  fp16=%s  classes=%d", Path(checkpoint).name, resolution, fp16, n_labels)
     return model, processor
 
 

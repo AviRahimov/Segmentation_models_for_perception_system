@@ -8,7 +8,7 @@ Usage
 -----
     python scripts/segmentation/optimization/resolution_sweep.py \\
         --checkpoint weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \\
-        --data datasets/Segmentation_Dataset
+        --data datasets/Segmentation_Dataset_ORFD
 
 Choose the resolution for downstream stages based on the printed table.
 """
@@ -29,8 +29,10 @@ from tqdm import tqdm
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(_ROOT / "scripts" / "segmentation" / "training"))
+sys.path.insert(0, str(_ROOT / "scripts" / "segmentation"))
 
-import train_orfd as _t
+from _orfd_common import compute_miou, segformer_forward
+from _segformer_checkpoint_common import build_segformer_from_checkpoint
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,28 +49,8 @@ _TIMING_ITERS = 100
 
 def _load_model(checkpoint: str, device: str):
     """Load SegFormer-B2 from a local .pth checkpoint."""
-    from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
-
-    ckpt_path = Path(checkpoint)
-    if not ckpt_path.is_file():
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-
-    ckpt = torch.load(str(ckpt_path), map_location="cpu", weights_only=True)
-    state_dict = ckpt.get("net", ckpt) if isinstance(ckpt, dict) else ckpt
-
-    from perception.models.semantic.segformer import _remap_segformer_keys
-    state_dict = _remap_segformer_keys(state_dict)
-
-    n_labels = state_dict["decode_head.classifier.weight"].shape[0]
-
-    hf_base = "nvidia/segformer-b2-finetuned-ade-512-512"
-    processor = SegformerImageProcessor.from_pretrained(hf_base)
-    model = SegformerForSemanticSegmentation.from_pretrained(
-        hf_base, num_labels=n_labels, ignore_mismatched_sizes=True
-    )
-    model.load_state_dict(state_dict, strict=True)
-    model = model.to(device).eval()
-    logger.info("Loaded checkpoint: %s  (%d classes)", ckpt_path, n_labels)
+    model, processor, n_labels = build_segformer_from_checkpoint(checkpoint, device)
+    logger.info("Loaded checkpoint: %s  (%d classes)", checkpoint, n_labels)
     return model, processor
 
 
@@ -101,14 +83,14 @@ def _sweep_resolution(
     images_warm, _ = next(iter(loader))
     images_warm = images_warm.to(device)
     for _ in range(3):
-        _t.segformer_forward(model, processor, images_warm, device, fp16=False)
+        segformer_forward(model, processor, images_warm, device, fp16=False)
     if device == "cuda":
         torch.cuda.synchronize()
 
     for images, labels in tqdm(loader, desc=f"res={resolution}", leave=False):
         images = images.to(device)
         t0 = time.perf_counter()
-        logits = _t.segformer_forward(model, processor, images, device, fp16=False)
+        logits = segformer_forward(model, processor, images, device, fp16=False)
         if device == "cuda":
             torch.cuda.synchronize()
         batch_times.append((time.perf_counter() - t0) * 1000)
@@ -119,7 +101,7 @@ def _sweep_resolution(
 
     preds_cat  = torch.cat(all_preds,  dim=0)
     labels_cat = torch.cat(all_labels, dim=0)
-    miou, per_class = _t.compute_miou(preds_cat, labels_cat)
+    miou, per_class = compute_miou(preds_cat, labels_cat)
 
     # Per-image latency estimate (batch_time / batch_size for a rough p50).
     per_image_ms = [t / batch_size for t in batch_times]
@@ -152,7 +134,7 @@ def _sweep_resolution(
 def main() -> int:
     p = argparse.ArgumentParser(description="Stage 0: resolution mIoU + latency sweep")
     p.add_argument("--checkpoint", default="weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth")
-    p.add_argument("--data",        default="datasets/Segmentation_Dataset",
+    p.add_argument("--data",        default="datasets/Segmentation_Dataset_ORFD",
                    help="ORFD root (must contain validation/)")
     p.add_argument("--resolutions", nargs="+", type=int, default=[256, 384, 512])
     p.add_argument("--batch",       type=int, default=8)

@@ -38,7 +38,7 @@ models:
   # Other options: segformer-b0 (fastest), segformer-b1, segformer-b4
   semantic:
     name: "segformer-b2"
-    weights: "weights/orfd/frozen_backbone/segformer-b2/best.pth"
+    weights: "weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth"
     num_classes: 3
     processor_size: 256
 

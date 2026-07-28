@@ -45,19 +45,25 @@ INSTANCE_REGISTRY: dict[str, Type[InstanceModel]] = {
 }
 
 #: Default weight filename per model name.  Override via models.instance.weights in config.yaml.
+#: All base/pretrained checkpoints live in weights/base_checkpoints/ (auto-downloaded
+#: there by Ultralytics/rfdetr if not already present).
+_BASE_CKPT_DIR = "weights/base_checkpoints/"
 INSTANCE_DEFAULT_WEIGHTS: dict[str, str] = {
-    "yoloe26l":  "yoloe-26l-seg.pt",
-    "yoloe-26l": "yoloe-26l-seg.pt",
-    "yoloe":     "yoloe-26l-seg.pt",
-    "yolo11n": "yolo11n.pt", "yolo11s": "yolo11s.pt", "yolo11m": "yolo11m.pt",
-    "yolo11l": "yolo11l.pt", "yolo11x": "yolo11x.pt",
-    "yolo12n": "yolo12n.pt", "yolo12s": "yolo12s.pt", "yolo12m": "yolo12m.pt",
-    "yolo12l": "yolo12l.pt", "yolo12x": "yolo12x.pt",
-    "yolo26n": "yolo26n.pt", "yolo26s": "yolo26s.pt", "yolo26m": "yolo26m.pt",
-    "yolo26l": "yolo26l.pt", "yolo26x": "yolo26x.pt",
-    "rfdetr-n":   "rf-detr-nano.pth",    "rfdetr-s":   "rf-detr-small.pth",
-    "rfdetr-m":   "rf-detr-medium.pth",  "rfdetr-l":   "rf-detr-large.pth",
-    "rfdetr-xl":  "rf-detr-xlarge.pth",  "rfdetr-2xl": "rf-detr-2xlarge.pth",
+    "yoloe26l":  _BASE_CKPT_DIR + "yoloe-26l-seg.pt",
+    "yoloe-26l": _BASE_CKPT_DIR + "yoloe-26l-seg.pt",
+    "yoloe":     _BASE_CKPT_DIR + "yoloe-26l-seg.pt",
+    "yolo11n": _BASE_CKPT_DIR + "yolo11n.pt", "yolo11s": _BASE_CKPT_DIR + "yolo11s.pt",
+    "yolo11m": _BASE_CKPT_DIR + "yolo11m.pt",
+    "yolo11l": _BASE_CKPT_DIR + "yolo11l.pt", "yolo11x": _BASE_CKPT_DIR + "yolo11x.pt",
+    "yolo12n": _BASE_CKPT_DIR + "yolo12n.pt", "yolo12s": _BASE_CKPT_DIR + "yolo12s.pt",
+    "yolo12m": _BASE_CKPT_DIR + "yolo12m.pt",
+    "yolo12l": _BASE_CKPT_DIR + "yolo12l.pt", "yolo12x": _BASE_CKPT_DIR + "yolo12x.pt",
+    "yolo26n": _BASE_CKPT_DIR + "yolo26n.pt", "yolo26s": _BASE_CKPT_DIR + "yolo26s.pt",
+    "yolo26m": _BASE_CKPT_DIR + "yolo26m.pt",
+    "yolo26l": _BASE_CKPT_DIR + "yolo26l.pt", "yolo26x": _BASE_CKPT_DIR + "yolo26x.pt",
+    "rfdetr-n":   _BASE_CKPT_DIR + "rf-detr-nano.pth",    "rfdetr-s":   _BASE_CKPT_DIR + "rf-detr-small.pth",
+    "rfdetr-m":   _BASE_CKPT_DIR + "rf-detr-medium.pth",  "rfdetr-l":   _BASE_CKPT_DIR + "rf-detr-large.pth",
+    "rfdetr-xl":  _BASE_CKPT_DIR + "rf-detr-xlarge.pth",  "rfdetr-2xl": _BASE_CKPT_DIR + "rf-detr-2xlarge.pth",
 }
 
 

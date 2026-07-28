@@ -54,9 +54,11 @@ from torch.utils.data import DataLoader
 
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
+sys.path.insert(0, str(_ROOT / "scripts" / "segmentation"))
 
 from perception.datasets.orfd_torch import ORFDDataset, TRAIN_SIZE, _to_normalized_tensor
 from perception.datasets.orfd_labels import binary_traversable_iou, orfd_eval_valid_mask
+from _segformer_checkpoint_common import build_segformer_from_checkpoint
 
 logging.basicConfig(
     level=logging.INFO,
@@ -95,10 +97,10 @@ def _default_model_defs() -> list[dict[str, Any]]:
         },
         {
             "key": "segformer-b2-final",
-            "label": "SegFormer-B2\n(Segmentation_Dataset)",
+            "label": "SegFormer-B2\n(full fine-tune, regular aug)",
             "type": "segformer-finetuned",
             "hf_id": "nvidia/segformer-b2-finetuned-ade-512-512",
-            "checkpoint": str(_ROOT / "weights" / "segmentation" / "orfd" / "segmentation_dataset" / "segformer-b2" / "best.pth"),
+            "checkpoint": str(_ROOT / "weights" / "segmentation" / "orfd" / "full_finetune_regular_aug" / "segformer-b2" / "best.pth"),
         },
         {
             "key": "segformer-b2-frozen",
@@ -137,10 +139,10 @@ def _default_model_defs() -> list[dict[str, Any]]:
         },
         {
             "key": "segformer-b4-final",
-            "label": "SegFormer-B4\n(Segmentation_Dataset)",
+            "label": "SegFormer-B4\n(full fine-tune, heavy aug)",
             "type": "segformer-finetuned",
             "hf_id": "nvidia/segformer-b4-finetuned-ade-512-512",
-            "checkpoint": str(_ROOT / "weights" / "segmentation" / "orfd" / "segmentation_dataset" / "segformer-b4" / "best.pth"),
+            "checkpoint": str(_ROOT / "weights" / "segmentation" / "orfd" / "full_finetune_heavy_aug" / "segformer-b4" / "best.pth"),
         },
     ]
     return defs
@@ -191,24 +193,15 @@ def load_segformer_baseline(hf_id: str, device: str, fp16: bool):
 
 
 def load_segformer_finetuned(hf_id: str, checkpoint: str, device: str, fp16: bool):
-    """Load fine-tuned SegFormer from a training checkpoint (2- or 3-class)."""
-    from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
+    """Load fine-tuned SegFormer from a training checkpoint (2- or 3-class).
 
-    ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
-    state_dict = ckpt["net"] if isinstance(ckpt, dict) and "net" in ckpt else ckpt
-
-    # Auto-detect number of output classes from the checkpoint so this works
-    # for both the old 2-class checkpoints and the new 3-class (sky) checkpoints.
-    n_classes = state_dict["decode_head.classifier.weight"].shape[0]
-
-    processor = SegformerImageProcessor.from_pretrained(hf_id)
-    model = SegformerForSemanticSegmentation.from_pretrained(
-        hf_id, num_labels=n_classes, ignore_mismatched_sizes=True,
+    n_classes is auto-detected inside build_segformer_from_checkpoint() so
+    this works for both the old 2-class checkpoints and the new 3-class
+    (sky) checkpoints.
+    """
+    model, processor, _ = build_segformer_from_checkpoint(
+        checkpoint, device, hf_base=hf_id, fp16=fp16
     )
-    model.load_state_dict(state_dict, strict=True)
-    model.eval().to(device)
-    if fp16:
-        model = model.half()
 
     @torch.no_grad()
     def predict(frame_bgr: np.ndarray) -> np.ndarray:

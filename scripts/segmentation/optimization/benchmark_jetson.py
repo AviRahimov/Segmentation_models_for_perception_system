@@ -26,7 +26,7 @@ Usage
 -----
     python scripts/segmentation/optimization/benchmark_jetson.py \\
         --onnx-dir weights/segmentation/optimization/ \\
-        --val-data datasets/Segmentation_Dataset \\
+        --val-data datasets/Segmentation_Dataset_ORFD \\
         --output reports/segmentation/optimization/benchmark_results.csv
 """
 from __future__ import annotations
@@ -47,8 +47,10 @@ from torch.utils.data import DataLoader
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(_ROOT / "scripts" / "segmentation" / "training"))
+sys.path.insert(0, str(_ROOT / "scripts" / "segmentation"))
 
-import train_orfd as _t
+from _orfd_common import _dice_ce_loss, compute_miou, evaluate
+from _segformer_checkpoint_common import load_remapped_state_dict
 
 logging.basicConfig(
     level=logging.INFO,
@@ -409,7 +411,7 @@ def _engine_miou(engine_path: Path, val_data: str, resolution: int) -> float:
 
     preds_cat  = torch.cat(all_preds,  dim=0)
     labels_cat = torch.cat(all_labels, dim=0)
-    miou, per_class = _t.compute_miou(preds_cat, labels_cat)
+    miou, per_class = compute_miou(preds_cat, labels_cat)
     logger.info("Engine mIoU: %.4f  per-class: %s", miou,
                 [f"{v:.3f}" if not (isinstance(v, float) and v != v) else "nan" for v in per_class])
     return miou
@@ -425,7 +427,7 @@ def main() -> int:
                    help="Directory containing .onnx files to benchmark")
     p.add_argument("--engine-dir",   default=None,
                    help="Where to save .engine files (default: same as --onnx-dir)")
-    p.add_argument("--val-data",     default="datasets/Segmentation_Dataset")
+    p.add_argument("--val-data",     default="datasets/Segmentation_Dataset_ORFD")
     p.add_argument("--output",       default="reports/segmentation/optimization/benchmark_results.csv")
     p.add_argument("--soak",         action="store_true",
                    help="Run 30-minute soak test per variant (adds ~2h total)")
@@ -466,10 +468,7 @@ def main() -> int:
         from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
         from perception.datasets.orfd_torch import ORFDDataset
 
-        ckpt_data = torch.load(str(ref_ckpt), map_location="cpu", weights_only=True)
-        state_dict = ckpt_data.get("net", ckpt_data) if isinstance(ckpt_data, dict) else ckpt_data
-        from perception.models.semantic.segformer import _remap_segformer_keys
-        state_dict = _remap_segformer_keys(state_dict)
+        state_dict = load_remapped_state_dict(ref_ckpt)
         n_labels = state_dict["decode_head.classifier.weight"].shape[0]
         hf_base = "nvidia/segformer-b2-finetuned-ade-512-512"
 
@@ -487,8 +486,8 @@ def main() -> int:
             model = model.eval().cuda()
             val_ds = ORFDDataset(str(val_data), split="validation", augment=False, input_size=res)
             loader = DataLoader(val_ds, batch_size=4, shuffle=False, num_workers=2)
-            criterion = lambda logits, labels: _t._dice_ce_loss(logits, labels)
-            _, ref_miou = _t.evaluate(model, processor, loader, criterion, "cuda", fp16=False)
+            criterion = lambda logits, labels: _dice_ce_loss(logits, labels)
+            _, ref_miou = evaluate(model, processor, loader, criterion, "cuda", fp16=False)
             pytorch_ref_miou[res] = ref_miou
             logger.info("PyTorch reference mIoU @ %d px: %.4f", res, ref_miou)
             del model

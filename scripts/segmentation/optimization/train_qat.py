@@ -16,7 +16,7 @@ Pipeline
 Usage
 -----
     python scripts/segmentation/optimization/train_qat.py \\
-        --config config/optimization/qat.yaml
+        --config config/segmentation/optimization/qat.yaml
 
     # Or override individual settings:
     python scripts/segmentation/optimization/train_qat.py \\
@@ -38,8 +38,10 @@ from tqdm import tqdm
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(_ROOT / "scripts" / "segmentation" / "training"))
+sys.path.insert(0, str(_ROOT / "scripts" / "segmentation"))
 
-import train_orfd as _t
+from _orfd_common import _dice_ce_loss, build_segformer, evaluate, segformer_forward, train_one_epoch
+from _segformer_checkpoint_common import load_remapped_state_dict
 
 logging.basicConfig(
     level=logging.INFO,
@@ -72,7 +74,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--config",      default=known.config)
     p.add_argument("--checkpoint",  default=cfg.get("base_checkpoint",
                    "weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth"))
-    p.add_argument("--data",        default=cfg.get("data", "datasets/Segmentation_Dataset"))
+    p.add_argument("--data",        default=cfg.get("data", "datasets/Segmentation_Dataset_ORFD"))
     p.add_argument("--resolution",  type=int, default=cfg.get("resolution", 256),
                    help="Input resolution chosen from Stage 0 sweep")
     p.add_argument("--epochs",      type=int, default=cfg.get("qat_epochs", 8))
@@ -126,7 +128,7 @@ def _calibrate(model, loader: DataLoader, processor, device: str, n_batches: int
                 break
             images = images.to(device)
             with torch.no_grad():
-                _t.segformer_forward(mod, processor, images, device, fp16=False)
+                segformer_forward(mod, processor, images, device, fp16=False)
             count += 1
             pbar.update(1)
 
@@ -238,14 +240,9 @@ def main() -> int:
                 args.resolution, args.epochs, args.lr, device)
 
     # ---- Load baseline model ----
-    model, processor = _t.build_segformer("segformer-b2", device, fp16=False)
+    model, processor = build_segformer("segformer-b2", device, fp16=False)
 
-    ckpt_data = torch.load(str(ckpt), map_location="cpu", weights_only=True)
-    state_dict = ckpt_data.get("net", ckpt_data) if isinstance(ckpt_data, dict) else ckpt_data
-
-    from perception.models.semantic.segformer import _remap_segformer_keys
-    state_dict = _remap_segformer_keys(state_dict)
-
+    state_dict = load_remapped_state_dict(ckpt)
     model.load_state_dict(state_dict, strict=True)
     logger.info("Baseline checkpoint loaded.")
 
@@ -264,9 +261,9 @@ def main() -> int:
                               num_workers=args.workers, pin_memory=True, drop_last=True)
 
     # ---- Evaluate baseline mIoU (pre-QAT reference) ----
-    criterion = lambda logits, labels: _t._dice_ce_loss(logits, labels)
+    criterion = lambda logits, labels: _dice_ce_loss(logits, labels)
     print("\n[1/5] Evaluating baseline FP32 mIoU ...")
-    _, baseline_miou = _t.evaluate(model, processor, val_loader, criterion, device, fp16=False)
+    _, baseline_miou = evaluate(model, processor, val_loader, criterion, device, fp16=False)
     print(f"      Baseline mIoU (FP32): {baseline_miou:.4f}")
 
     # ---- Apply quantization + calibrate ----
@@ -277,7 +274,7 @@ def main() -> int:
 
     # ---- Evaluate post-calibration (before fine-tune) ----
     print("\n[4/5] Evaluating post-calibration mIoU (no fine-tune yet) ...")
-    _, cal_miou = _t.evaluate(model, processor, val_loader, criterion, device, fp16=False)
+    _, cal_miou = evaluate(model, processor, val_loader, criterion, device, fp16=False)
     print(f"      Post-calibration mIoU: {cal_miou:.4f}  "
           f"(drop vs FP32: {baseline_miou - cal_miou:+.4f})")
 
@@ -301,11 +298,11 @@ def main() -> int:
     epoch_bar.set_postfix(loss="—", mIoU="—", best=f"{best_miou:.4f}")
 
     for epoch in epoch_bar:
-        train_loss = _t.train_one_epoch(
+        train_loss = train_one_epoch(
             model, processor, train_loader, optimizer, criterion,
             device, fp16=False, clip_norm=1.0,
         )
-        _, val_miou = _t.evaluate(model, processor, val_loader, criterion, device, fp16=False)
+        _, val_miou = evaluate(model, processor, val_loader, criterion, device, fp16=False)
 
         is_best = val_miou > best_miou
         if is_best:

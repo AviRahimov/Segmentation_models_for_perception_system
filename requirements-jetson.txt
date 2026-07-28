@@ -6,6 +6,11 @@ numpy==1.26.4
 Pillow==11.0.0
 ultralytics==8.4.47
 transformers==4.46.3
+# NOTE: pinned below requirements.txt's supervision==0.29.1 and missing the
+# `trackers` package entirely -- temporal.instance_tracker.backend: bytetrack
+# is NOT available on this venv (ImportError at runtime). Bump both to match
+# requirements.txt first if you need bytetrack on Jetson; the default IoU
+# tracker backend is unaffected.
 supervision==0.25.1
 PyYAML==6.0.2
 requests==2.32.3

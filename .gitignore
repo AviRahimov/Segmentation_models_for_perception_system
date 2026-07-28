@@ -99,3 +99,5 @@ cache/
 !/reports/detection/
 /reports/detection/*
 !/reports/detection/.gitkeep
+# Training provenance log (see CLAUDE.md) — small, append-only, meant to be durable/shared
+!/reports/detection/experiments.jsonl

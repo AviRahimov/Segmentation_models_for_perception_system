@@ -14,7 +14,7 @@
 
 # ---------------------------------------------------------------------------
 dataset:
-  root: "datasets/Segmentation_Dataset"
+  root: "datasets/Segmentation_Dataset_ORFD"
   train_split: "training"
   val_split: "validation"
 

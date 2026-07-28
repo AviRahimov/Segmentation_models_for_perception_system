@@ -22,7 +22,7 @@ Usage
     python scripts/segmentation/optimization/compare_models.py --mode images \\
         --model-a pytorch:weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \\
         --model-b onnx:weights/segmentation/optimization/qat_int8_256x256.onnx \\
-        --test-data datasets/Segmentation_Dataset \\
+        --test-data datasets/Segmentation_Dataset_ORFD \\
         --n-samples 20
 
     # Video comparison:
@@ -48,8 +48,10 @@ import torch
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(_ROOT / "scripts" / "segmentation" / "training"))
+sys.path.insert(0, str(_ROOT / "scripts" / "segmentation"))
 
-import train_orfd as _t
+from _orfd_common import compute_miou
+from _segformer_checkpoint_common import build_segformer_from_checkpoint
 
 logging.basicConfig(
     level=logging.INFO,
@@ -81,20 +83,9 @@ class _Inferencer(Protocol):
 
 class _PyTorchInferencer:
     def __init__(self, checkpoint: str, resolution: int, device: str) -> None:
-        from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
-        ckpt_data = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        state_dict = ckpt_data.get("net", ckpt_data) if isinstance(ckpt_data, dict) else ckpt_data
-        from perception.models.semantic.segformer import _remap_segformer_keys
-        state_dict = _remap_segformer_keys(state_dict)
-        n_labels = state_dict["decode_head.classifier.weight"].shape[0]
-        hf_base = "nvidia/segformer-b2-finetuned-ade-512-512"
-        self._processor = SegformerImageProcessor.from_pretrained(hf_base)
-        self._processor.size = {"height": resolution, "width": resolution}
-        self._model = SegformerForSemanticSegmentation.from_pretrained(
-            hf_base, num_labels=n_labels, ignore_mismatched_sizes=True
+        self._model, self._processor, _ = build_segformer_from_checkpoint(
+            checkpoint, device, resolution=resolution
         )
-        self._model.load_state_dict(state_dict, strict=True)
-        self._model = self._model.eval().to(device)
         self._device = device
         self._resolution = resolution
 
@@ -243,7 +234,7 @@ def _compute_miou_single(mask_pred: np.ndarray, mask_gt: np.ndarray) -> float:
     """mIoU for a single image."""
     preds = torch.from_numpy(mask_pred.astype(np.int64)).unsqueeze(0)
     labels = torch.from_numpy(mask_gt.astype(np.int64)).unsqueeze(0)
-    miou, _ = _t.compute_miou(preds, labels)
+    miou, _ = compute_miou(preds, labels)
     return miou
 
 
@@ -438,7 +429,7 @@ def main() -> int:
                    help="Input resolution for both models")
 
     # Image mode
-    p.add_argument("--test-data",  default="datasets/Segmentation_Dataset",
+    p.add_argument("--test-data",  default="datasets/Segmentation_Dataset_ORFD",
                    help="ORFD root (must contain testing/ split)")
     p.add_argument("--n-samples",  type=int, default=20)
     p.add_argument("--output-dir", default=None,

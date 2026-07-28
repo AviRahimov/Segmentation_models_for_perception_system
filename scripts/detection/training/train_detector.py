@@ -66,15 +66,19 @@ logger = logging.getLogger("train_detector")
 # weights) — the yaml builds a custom architecture (e.g. P2 small-object
 # head) and matching pretrained layers are transferred via .load().
 # ---------------------------------------------------------------------------
+# Base/pretrained checkpoints all live in weights/base_checkpoints/ (auto-downloaded
+# there by Ultralytics if not already present).
+_BASE_CKPT_DIR = "weights/base_checkpoints/"
+
 _MODELS: dict[str, str | tuple[str, str]] = {
-    "yolo26n": "yolo26n.pt",
-    "yolo26s": "yolo26s.pt",
-    "yolo26m": "yolo26m.pt",
-    "yolo26l": "yolo26l.pt",
-    "yolo11n": "yolo11n.pt",
-    "yolo11s": "yolo11s.pt",
-    "yolo11m": "yolo11m.pt",
-    "yolo11l": "yolo11l.pt",
+    "yolo26n": _BASE_CKPT_DIR + "yolo26n.pt",
+    "yolo26s": _BASE_CKPT_DIR + "yolo26s.pt",
+    "yolo26m": _BASE_CKPT_DIR + "yolo26m.pt",
+    "yolo26l": _BASE_CKPT_DIR + "yolo26l.pt",
+    "yolo11n": _BASE_CKPT_DIR + "yolo11n.pt",
+    "yolo11s": _BASE_CKPT_DIR + "yolo11s.pt",
+    "yolo11m": _BASE_CKPT_DIR + "yolo11m.pt",
+    "yolo11l": _BASE_CKPT_DIR + "yolo11l.pt",
 }
 
 # Survey model order: recommended first (sweep results, 2026-07).

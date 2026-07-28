@@ -22,7 +22,7 @@ is present.  On the dev machine this step improves compression only.
 Usage
 -----
     python scripts/segmentation/optimization/train_sparse.py \\
-        --config config/optimization/sparse.yaml
+        --config config/segmentation/optimization/sparse.yaml
 
     python scripts/segmentation/optimization/train_sparse.py \\
         --checkpoint weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth \\
@@ -42,8 +42,10 @@ from torch.utils.data import DataLoader
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(_ROOT / "scripts" / "segmentation" / "training"))
+sys.path.insert(0, str(_ROOT / "scripts" / "segmentation"))
 
-import train_orfd as _t
+from _orfd_common import _dice_ce_loss, build_segformer, evaluate, segformer_forward, train_one_epoch
+from _segformer_checkpoint_common import load_remapped_state_dict
 
 logging.basicConfig(
     level=logging.INFO,
@@ -76,7 +78,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--config",         default=known.config)
     p.add_argument("--checkpoint",     default=cfg.get("base_checkpoint",
                    "weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth"))
-    p.add_argument("--data",           default=cfg.get("data", "datasets/Segmentation_Dataset"))
+    p.add_argument("--data",           default=cfg.get("data", "datasets/Segmentation_Dataset_ORFD"))
     p.add_argument("--resolution",     type=int, default=cfg.get("resolution", 256))
     p.add_argument("--sparse-epochs",  type=int, default=cfg.get("sparse_epochs", 4))
     p.add_argument("--qat-epochs",     type=int, default=cfg.get("qat_epochs", 6))
@@ -160,7 +162,7 @@ def _calibrate(model, loader: DataLoader, processor, device: str, n_batches: int
                 break
             images = images.to(device)
             with torch.no_grad():
-                _t.segformer_forward(mod, processor, images, device, fp16=False)
+                segformer_forward(mod, processor, images, device, fp16=False)
             count += 1
 
     mtq.calibrate(model, algorithm="max", forward_loop=_fwd)
@@ -179,16 +181,16 @@ def _freeze_backbone(model: torch.nn.Module) -> None:
 def _fine_tune(model, processor, loader, val_loader, device, lr, epochs, tag):
     from torch.optim import AdamW
     _freeze_backbone(model)
-    criterion = lambda logits, labels: _t._dice_ce_loss(logits, labels)
+    criterion = lambda logits, labels: _dice_ce_loss(logits, labels)
     head_params = [p for p in model.decode_head.parameters() if p.requires_grad]
     optimizer = AdamW(head_params, lr=lr, weight_decay=0.01)
     best_miou = 0.0
     best_state = None
     for epoch in range(1, epochs + 1):
-        loss = _t.train_one_epoch(
+        loss = train_one_epoch(
             model, processor, loader, optimizer, criterion, device, fp16=False, clip_norm=1.0,
         )
-        _, val_miou = _t.evaluate(model, processor, val_loader, criterion, device, fp16=False)
+        _, val_miou = evaluate(model, processor, val_loader, criterion, device, fp16=False)
         logger.info("[%s] epoch %d/%d  loss=%.4f  mIoU=%.4f", tag, epoch, epochs, loss, val_miou)
         if val_miou > best_miou:
             best_miou = val_miou
@@ -271,13 +273,8 @@ def main() -> int:
     logger.info("=== Stage 3: 2:4 Sparsity + QAT (order=%s) ===", args.order)
 
     # ---- Load baseline ----
-    model, processor = _t.build_segformer("segformer-b2", device, fp16=False)
-    ckpt_data = torch.load(str(ckpt), map_location="cpu", weights_only=True)
-    state_dict = ckpt_data.get("net", ckpt_data) if isinstance(ckpt_data, dict) else ckpt_data
-
-    from perception.models.semantic.segformer import _remap_segformer_keys
-    state_dict = _remap_segformer_keys(state_dict)
-
+    model, processor = build_segformer("segformer-b2", device, fp16=False)
+    state_dict = load_remapped_state_dict(ckpt)
     model.load_state_dict(state_dict, strict=True)
     processor.size = {"height": args.resolution, "width": args.resolution}
 
@@ -291,8 +288,8 @@ def main() -> int:
                               num_workers=args.workers, pin_memory=True)
 
     # Baseline mIoU
-    criterion = lambda logits, labels: _t._dice_ce_loss(logits, labels)
-    _, baseline_miou = _t.evaluate(model, processor, val_loader, criterion, device, fp16=False)
+    criterion = lambda logits, labels: _dice_ce_loss(logits, labels)
+    _, baseline_miou = evaluate(model, processor, val_loader, criterion, device, fp16=False)
     logger.info("Baseline mIoU: %.4f", baseline_miou)
 
     onnx_paths = []

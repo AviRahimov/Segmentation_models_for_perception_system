@@ -14,7 +14,7 @@ the FPS budget while keeping quality acceptable.
 
 Planned approach
 ----------------
-  Teacher : weights/orfd/final_dataset_many_data_augmentations/segformer-b4/best.pth
+  Teacher : weights/segmentation/orfd/full_finetune_heavy_aug/segformer-b4/best.pth
   Student : SegFormer-B0 or B1 (same all-MLP decode head architecture — easy to distil)
   Loss    : CE/Dice on ORFD GT
             + temperature-scaled KL on softmax logits (T=4)
@@ -24,9 +24,9 @@ Planned approach
 Usage (once implemented)
 ------------------------
     python scripts/segmentation/optimization/train_distill.py \\
-        --teacher weights/orfd/final_dataset_many_data_augmentations/segformer-b4/best.pth \\
+        --teacher weights/segmentation/orfd/full_finetune_heavy_aug/segformer-b4/best.pth \\
         --student-variant segformer-b0 \\
-        --data datasets/Segmentation_Dataset \\
+        --data datasets/Segmentation_Dataset_ORFD \\
         --epochs 60
 """
 from __future__ import annotations

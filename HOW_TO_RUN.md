@@ -114,7 +114,7 @@ source venv/bin/activate
 python3 scripts/segmentation/optimization/compare_models.py --mode images \
     --model-a engine:weights/segmentation/optimization/baseline_fp32_256x256.engine \
     --model-b engine:weights/segmentation/optimization/qat_int8_256x256.engine \
-    --test-data datasets/Segmentation_Dataset \
+    --test-data datasets/Segmentation_Dataset_ORFD \
     --n-samples 20
 # Output: reports/segmentation/optimization/qualitative/compare_baseline_fp32_256x256_vs_qat_int8_256x256/
 ```
@@ -154,7 +154,7 @@ For the optimized variants (output of the QAT/sparse pipeline), use `benchmark_j
 ```bash
 python3 scripts/segmentation/optimization/benchmark_jetson.py \
     --onnx-dir weights/segmentation/optimization/ \
-    --val-data datasets/Segmentation_Dataset
+    --val-data datasets/Segmentation_Dataset_ORFD
 ```
 
 > **Note:** TRT engines are tied to the exact GPU + TensorRT version. Rebuild after any JetPack upgrade.

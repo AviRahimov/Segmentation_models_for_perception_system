@@ -35,7 +35,7 @@ class YOLOClosedInstanceModel(InstanceModel):
 
     def __init__(
         self,
-        weights: str = "yolo26l.pt",
+        weights: str = "weights/base_checkpoints/yolo26l.pt",
         confidence_threshold: float = 0.35,
         backend: InferenceBackend | None = None,
         device: str = "cuda",
@@ -50,7 +50,8 @@ class YOLOClosedInstanceModel(InstanceModel):
         discovery_max_det: Any = None,
         model_name: Any = None,
     ) -> None:
-        # Ultralytics handles auto-download for bare .pt names (e.g. "yolo26l.pt").
+        # Ultralytics handles auto-download for a not-yet-downloaded .pt path
+        # (e.g. "weights/base_checkpoints/yolo26l.pt"), fetching it there directly.
         # Only run our resolver for explicit local paths (.engine, .onnx, or existing file).
         from pathlib import Path as _Path
         if weights and (_Path(weights).suffix in (".engine", ".onnx") or _Path(weights).exists()):

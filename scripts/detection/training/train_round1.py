@@ -56,23 +56,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger("train_round1")
 
+# Base/pretrained checkpoints all live in weights/base_checkpoints/ (auto-downloaded
+# there by Ultralytics if not already present).
+_BASE_CKPT_DIR = "weights/base_checkpoints/"
+
 # Supported model names → (base_weights, is_yoloe)
 _MODELS: dict[str, tuple[str, bool]] = {
     # YOLO26 — standard Ultralytics YOLO trainer
-    "yolo26n":    ("yolo26n.pt",     False),
-    "yolo26s":    ("yolo26s.pt",     False),
-    "yolo26m":    ("yolo26m.pt",     False),
-    "yolo26l":    ("yolo26l.pt",     False),
+    "yolo26n":    (_BASE_CKPT_DIR + "yolo26n.pt",     False),
+    "yolo26s":    (_BASE_CKPT_DIR + "yolo26s.pt",     False),
+    "yolo26m":    (_BASE_CKPT_DIR + "yolo26m.pt",     False),
+    "yolo26l":    (_BASE_CKPT_DIR + "yolo26l.pt",     False),
     # YOLOE-26 — detection-only weights don't exist; use seg checkpoint (same
     # backbone/neck) and transfer into detection YAML via YOLOEPETrainer.
-    "yoloe-26n":  ("yoloe-26n-seg.pt",   True),
-    "yoloe-26s":  ("yoloe-26s-seg.pt",   True),
-    "yoloe-26m":  ("yoloe-26m-seg.pt",   True),
-    "yoloe-26l":  ("yoloe-26l-seg.pt",   True),
+    "yoloe-26n":  (_BASE_CKPT_DIR + "yoloe-26n-seg.pt",   True),
+    "yoloe-26s":  (_BASE_CKPT_DIR + "yoloe-26s-seg.pt",   True),
+    "yoloe-26m":  (_BASE_CKPT_DIR + "yoloe-26m-seg.pt",   True),
+    "yoloe-26l":  (_BASE_CKPT_DIR + "yoloe-26l-seg.pt",   True),
     # YOLOv11 — standard Ultralytics YOLO trainer (DFL-based, same API as YOLO26)
-    "yolo11n":    ("yolo11n.pt",     False),
-    "yolo11s":    ("yolo11s.pt",     False),
-    "yolo11m":    ("yolo11m.pt",     False),
+    "yolo11n":    (_BASE_CKPT_DIR + "yolo11n.pt",     False),
+    "yolo11s":    (_BASE_CKPT_DIR + "yolo11s.pt",     False),
+    "yolo11m":    (_BASE_CKPT_DIR + "yolo11m.pt",     False),
 }
 
 # _FREEZE_DEFAULTS (scale-aware freeze depth per model -- smaller model = more

@@ -1,6 +1,6 @@
 """ORFD freespace PNG label semantics (`*_fillcolor.png` grayscale).
 
-Empirically validated on files under ``datasets/orfd/training/gt_image/`` shipped
+Empirically validated on files under ``datasets/Segmentation_Dataset_ORFD/training/gt_image/`` shipped
 with the ORFD ZIP: **brightness encodes freespace**.
 
 * ``255`` — **Traversable**. Visually reads as bright / near-white stripes on
