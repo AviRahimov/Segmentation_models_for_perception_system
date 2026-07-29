@@ -51,6 +51,38 @@ python scripts/segmentation/optimization/compare_models.py --mode images \
 # Stage 6b: render benchmark_jetson.py's CSV -> colour-coded Markdown/HTML
 python scripts/segmentation/optimization/generate_report.py --csv reports/segmentation/optimization/benchmark_results.csv
 
+# RF-DETR TensorRT optimization (separate from the segmentation pipeline above —
+# see JETSON.md's "RF-DETR Optimization" / "Best-YOLO Optimization" sections for
+# the full SSH-driven workflow, incl. harness perf tuning and the rfdetr-s/YOLO variants)
+source .venv-rfdetr-train/bin/activate
+python scripts/detection/optimization/export_onnx.py   # dev PC: export + validate ONNX vs PyTorch
+# --checkpoint/--model-name/--shape generalize this to rfdetr-s/rfdetr-l too
+# Transfer the .onnx + gaza clips + val subset to the Jetson (one weights/{model}/
+# subdir per model — see JETSON.md's on-device folder layout), then on-device:
+python3 scripts/benchmark_jetson.py \
+    --onnx weights/rfdetr-m/rfdetr-m.onnx --engine-dir weights/rfdetr-m --model-name rfdetr-m \
+    --videos-dir data/videos --val-images data/val_images --val-labels data/val_labels \
+    --output results/benchmark_results_rfdetr-m.csv
+# --harness {naive,optimized,both} (default both) compares the plain CPU-preprocess/
+# full-sync loop against GPU-preprocess + CUDA-graph replay — see CLAUDE.md's
+# "RF-DETR / YOLO Jetson TensorRT Optimization" section for measured numbers
+# Best-YOLO checkpoint gets the same real-video FPS/accuracy treatment via Ultralytics'
+# own native TensorRT exporter (needs a source-built torchvision — see JETSON.md):
+python3 scripts/benchmark_yolo_jetson.py \
+    --weights weights/yolo11m_freeze21/yolo11m_freeze21.pt --model-name yolo11m_freeze21 \
+    --videos-dir data/videos --val-images data/val_images --val-labels data/val_labels \
+    --output results/benchmark_results_yolo11m.csv
+# Back on the dev PC, merge the 3 pulled-back CSVs and render:
+python scripts/detection/optimization/generate_report.py --csv reports/detection/optimization/benchmark_results.csv
+# Full-length 3-way annotated comparison videos (all 11 gaza clips) — see JETSON.md's
+# Stage 3 for the loop; saved to reports/detection/optimization/3way_comparison/
+# N-way comparison — any mix of pytorch:/onnx:/engine:/ultralytics: specs:
+python scripts/detection/optimization/compare_models.py --mode video \
+    --models pytorch:weights/detection/rfdetr-s/detection_dataset_hardneg/conservative_aug/best.pt \
+             pytorch:weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt \
+             ultralytics:weights/detection/yolo11m/yolo_dataset_auto_labeled/freeze21/best.pt \
+    --source samples/clip.mp4
+
 # YOLOE discovery mode dump
 python scripts/detection/tools/yoloe_discovery_dump.py --config config/config.yaml \
     --source samples/recording.mp4 --max-frames 200 \
@@ -250,6 +282,69 @@ increased FP or degraded recall relative to the untouched baseline:
 The production checkpoint (`weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt`)
 remains the best known rfdetr-m checkpoint. See `reports/detection/phase7_closing_summary.md`
 for the full comparison table before proposing another retrain along either of these two axes.
+
+## RF-DETR / YOLO Jetson TensorRT Optimization
+
+`scripts/detection/optimization/` (export_onnx.py, `_rfdetr_trt_common.py`, `_video_bench_common.py`,
+benchmark_jetson.py, benchmark_yolo_jetson.py, compare_models.py, generate_report.py) builds and
+benchmarks TensorRT engines for rfdetr-m, rfdetr-s, and the best YOLO checkpoint, separate from the
+training/evaluation scripts — see JETSON.md's "RF-DETR Optimization" / "Best-YOLO Optimization"
+sections for the full dev-PC → Jetson workflow. Measured on a real AGX Orin (TensorRT 8.6.2.3, MAXN,
+real decode+infer over 11 gaza-road clips — see `reports/detection/optimization/RESULTS.md` for the
+full table):
+
+| Model | Precision | Harness | FPS | Recall @0.4 | Notes |
+|---|---|---|---|---|---|
+| rfdetr-m | FP32 | naive (cv2 preprocess, full sync, no CUDA graph) | 33.2 | 0.79 | Healthy baseline |
+| rfdetr-m | FP32 | **optimized** (GPU preprocess + CUDA graph) | **51.4** | 0.72 | Matches RidgeRun's own 52 FPS reference almost exactly |
+| rfdetr-m | FP16 | either | 52.7 / 115.1 | **0.00** | **Broken** — logits systematically suppressed (max ≈ -3.0 vs FP32's ≈ +2.7), not NaN, just severe precision loss through the transformer. Confirmed independent of harness. |
+| rfdetr-s | FP32 | naive | 42.1 | 0.80 | Better accuracy than rfdetr-m at higher FPS |
+| rfdetr-s | FP32 | **optimized** | **68.9** | 0.77 | Matches RidgeRun's rfdetr-s reference (69 FPS) almost exactly |
+| rfdetr-s | FP16 | either | 57.1 / 137.7 | **0.00** | Same FP16 breakage as rfdetr-m |
+| yolo11m (best, see below) | FP32 | Ultralytics native | 49.6 | 0.57 | Notably lower accuracy than either RF-DETR variant |
+| yolo11m (best, see below) | FP16 | Ultralytics native | **71.5** | 0.57 | **FP16 works fine for YOLO** — recall identical to FP32, unlike RF-DETR's total collapse; TensorRT did warn about 99 subnormal-FP16 weights but it didn't show up in real accuracy |
+
+**Harness optimization** (`_rfdetr_trt_common.RFDETRTensorRTEngine`'s `gpu_preprocess=True,
+cuda_graph=True`) closes most of the gap between our own Python inference loop and `trtexec`'s own
+optimized benchmark of the identical engine (which gets 58 FPS on rfdetr-m FP32 — confirming the
+*engine* was never the bottleneck, the naive harness was): GPU-side resize/normalize (CUDA bilinear
+interpolate needs a float cast first — doesn't accept uint8) plus CUDA-graph capture around
+`execute_async_v3` (capture succeeds cleanly on this TRT 8.6.2.3 build; wrapped in try/except since
+NVIDIA/TensorRT#2603 reports capture failing on TRT 8.5.2.2). Real, measured cost: switching from cv2
+resize to GPU resize shifts rfdetr-m's recall 0.79→0.72 — a genuine accuracy delta from the different
+bilinear implementation, not free, disclosed rather than hidden.
+
+**Naive FP16 export is rejected as-is** for both rfdetr-m and rfdetr-s — confirms the exact risk
+flagged in RidgeRun's own `deepstream-rfdetr` README ("detection quality degraded considerably" under
+FP16) and in `infracv/rf-detr-cpp`'s issue tracker (post-attention LayerNorm overflow). The large FPS
+gain is not usable at the cost of zero real detections. A follow-up worth trying before giving up on
+FP16 entirely: per-layer precision constraints (keep the attention/LayerNorm layers in FP32 via
+`trtexec --layerPrecisions`/`--precisionConstraints` while leaving the rest FP16) rather than a
+wholesale FP32 fallback — not yet attempted.
+
+**rfdetr-s is a strong alternative to rfdetr-m**: `weights/detection/rfdetr-s/detection_dataset_hardneg/conservative_aug/best.pt`
+already existed from a prior training run (same recipe used for rfdetr-m's production checkpoint, no
+retraining needed) and beats rfdetr-m on both axes — higher FPS (68.9 vs 51.4 optimized FP32) and
+comparable-or-better accuracy (precision 0.926 vs 0.902, recall 0.77 vs 0.72).
+
+**Best YOLO checkpoint** per the cached `reports/detection/leaderboard_test.md` ranking is
+`weights/detection/yolo11m/yolo_dataset_auto_labeled/freeze21/best.pt` (mAP50=0.8677, same 2-class
+scheme as the RF-DETR checkpoints — directly comparable, no collapse-map needed). Exporting it to
+TensorRT on this JetPack 6.0/torch 2.4.0a0 combo needed two non-obvious fixes, both documented in
+JETSON.md: (1) `torchvision` has no NVIDIA-provided wheel for this JetPack version — must be built
+from source against the exact NVIDIA torch build (a generic PyPI wheel fails with
+`operator torchvision::nms does not exist`, an ABI mismatch); (2) Ultralytics' exporter unconditionally
+passes `dynamo=False` to `torch.onnx.export` for any "torch 2.4.x", but NVIDIA's Jetson snapshot
+predates upstream torch actually adding that parameter — `benchmark_yolo_jetson.py` patches
+`torch.onnx.export` to drop unsupported kwargs rather than patching Ultralytics itself.
+
+**But real accuracy on our own footage tells a different story than the leaderboard rank**: despite
+being the top-ranked YOLO checkpoint by collapsed mAP50, this model's real precision/recall at conf=0.4
+(0.78/0.57) is meaningfully behind *both* RF-DETR variants (0.90+/0.72+) on the same validation images —
+another instance of this repo's recurring lesson that a single aggregate metric doesn't reliably predict
+real deployment behavior (see the Optuna note above). **rfdetr-s remains the strongest overall
+candidate**: best accuracy, second-best FPS (68.9, only behind YOLO's FP16 71.5), and no FP16 precision
+cliff to work around.
 
 ## Jetson / Production Notes
 

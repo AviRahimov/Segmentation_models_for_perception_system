@@ -236,6 +236,250 @@ python3 scripts/segmentation/optimization/compare_models.py --mode video \
 
 ---
 
+## RF-DETR Optimization
+
+`scripts/detection/optimization/` — separate from the segmentation pipeline above, and from
+`scripts/detection/training/`/`evaluation/`. Builds and benchmarks a TensorRT engine for the
+production `rfdetr-m` checkpoint. Deliberately standalone: `_rfdetr_trt_common.py` and
+`benchmark_jetson.py` need only `numpy`/`opencv`/`torch`/`tensorrt` — no full repo checkout, no
+`rfdetr` package — so the Jetson side only needs a handful of files, not this whole project.
+
+**Note on this dev kit specifically**: it has no NVMe mounted (only the internal eMMC, ~34G free)
+— `/mnt/nvme/avi_ws/...` above does not apply here. This workflow instead uses
+`~/perception_optim/` on the eMMC.
+
+### On-device folder layout
+
+```
+~/perception_optim/
+  env.sh                        # PATH/LD_LIBRARY_PATH — source before every command below
+  scripts/                      # benchmark_jetson.py, benchmark_yolo_jetson.py,
+                                 # _rfdetr_trt_common.py, _video_bench_common.py
+  weights/
+    rfdetr-m/                   # rfdetr-m.onnx, rfdetr-m_fp32.engine, rfdetr-m_fp16.engine
+    rfdetr-s/                   # rfdetr-s.onnx, rfdetr-s_fp32.engine, rfdetr-s_fp16.engine
+    yolo11m_freeze21/           # .pt, .onnx, _fp32.engine, _fp16.engine
+  data/
+    videos/                     # FPS-benchmark source clips (e.g. the gaza-road footage)
+    val_images/ val_labels/     # accuracy sanity-check subset (Detection_Dataset/valid)
+  results/
+    benchmark_results_{rfdetr-m,rfdetr-s,yolo11m}.csv
+```
+
+One subfolder per model under `weights/` is deliberate, not just tidiness — an earlier flat layout
+(`weights/*.onnx`, `weights/*.engine` for every model in one directory) led to a real incident: a
+`rm -f weights/*.onnx weights/*.engine` meant to clear a bad export wiped out a *different* model's
+engines too. Per-model subdirectories make that class of mistake structurally impossible.
+
+### One-time Jetson environment setup
+
+The base JetPack 6 image ships `opencv` + `tensorrt` system-wide but no `torch` and no `pip`:
+
+```bash
+# On the Jetson:
+wget -q https://bootstrap.pypa.io/get-pip.py -O /tmp/get-pip.py && python3 /tmp/get-pip.py --user
+
+# NVIDIA's prebuilt torch wheel for this JetPack/L4T/Python combo — check
+# https://developer.download.nvidia.com/compute/redist/jp/ for your exact version
+# (this device is L4T R36.3.0 = JetPack 6.0, Python 3.10 = cp310):
+~/.local/bin/pip install --user "numpy<2,>=1.24" \
+  "https://developer.download.nvidia.com/compute/redist/jp/v60/pytorch/torch-2.4.0a0+3bcc3cddb5.nv24.07.16234504-cp310-cp310-linux_aarch64.whl"
+# numpy<2,>=1.24 is required on BOTH sides: numpy 2.x breaks the system opencv build
+# (compiled against the numpy 1.x ABI), while this torch build wants a newer 1.x
+# C-API than the stock 1.21.5 — 1.26.4 satisfies both. Verify after installing:
+#   python3 -c "import cv2, torch; torch.randn(2).cpu().numpy(); print('OK')"
+
+# torch needs cuSPARSELt at runtime, not present on a fresh JetPack 6 image and
+# not installable without sudo via apt — fetch it directly, no root needed:
+mkdir -p ~/.local/cusparselt && cd ~/.local/cusparselt
+wget -q https://developer.download.nvidia.com/compute/cusparselt/redist/libcusparse_lt/linux-aarch64/libcusparse_lt-linux-aarch64-0.6.2.3-archive.tar.xz
+tar -xf libcusparse_lt-linux-aarch64-0.6.2.3-archive.tar.xz
+
+mkdir -p ~/perception_optim/{scripts,weights/rfdetr-m,weights/rfdetr-s,weights/yolo11m_freeze21,data/videos,data/val_images,data/val_labels,results}
+cat > ~/perception_optim/env.sh << 'EOF'
+export PATH=$HOME/.local/bin:$PATH
+export LD_LIBRARY_PATH=$HOME/.local/cusparselt/libcusparse_lt-linux-aarch64-0.6.2.3-archive/lib:$LD_LIBRARY_PATH
+EOF
+```
+
+Pre-flight (same as the segmentation Stage 4 pre-flight above): `sudo nvpmodel -m 0` (reboots),
+`sudo jetson_clocks`, confirm with `nvpmodel -q` → `MAXN`.
+
+### Stage 1: Export ONNX + validate (dev PC, `.venv-rfdetr-train`)
+
+```bash
+source .venv-rfdetr-train/bin/activate
+python scripts/detection/optimization/export_onnx.py
+# -> weights/detection/optimization/rfdetr-m.onnx, numerically validated against
+#    the PyTorch reference (mean IoU / confidence diff over real images — see
+#    the script's own validation output; fails loudly if the export is broken)
+
+# Other variants — --model-name is inferred from --checkpoint's path if omitted,
+# and --shape defaults to the variant's native resolution (rfdetr-s=512, rfdetr-m=576):
+python scripts/detection/optimization/export_onnx.py \
+    --checkpoint weights/detection/rfdetr-s/detection_dataset_hardneg/conservative_aug/best.pt
+```
+
+### Stage 2: Transfer + benchmark (on the Jetson)
+
+```bash
+# From the dev PC:
+scp scripts/detection/optimization/{benchmark_jetson.py,_rfdetr_trt_common.py,_video_bench_common.py} jetson:~/perception_optim/scripts/
+scp weights/detection/optimization/rfdetr-m.onnx jetson:~/perception_optim/weights/rfdetr-m/
+scp ~/Music/gaza_road_videos/*.mp4 jetson:~/perception_optim/data/videos/     # or whatever real footage you want FPS on
+scp datasets/detection/Detection_Dataset/valid/images/*.jpg jetson:~/perception_optim/data/val_images/
+scp datasets/detection/Detection_Dataset/valid/labels/*.txt jetson:~/perception_optim/data/val_labels/
+
+# On the Jetson:
+source ~/perception_optim/env.sh
+cd ~/perception_optim
+python3 scripts/benchmark_jetson.py \
+    --onnx weights/rfdetr-m/rfdetr-m.onnx --engine-dir weights/rfdetr-m \
+    --model-name rfdetr-m \
+    --videos-dir data/videos --val-images data/val_images --val-labels data/val_labels \
+    --output results/benchmark_results_rfdetr-m.csv
+# For rfdetr-s: --model-name rfdetr-s --shape 512 512 --onnx weights/rfdetr-s/rfdetr-s.onnx
+#              --engine-dir weights/rfdetr-s --output results/benchmark_results_rfdetr-s.csv
+```
+
+Builds an FP32 and an FP16 `.engine` via `trtexec`, measures real decode+infer FPS/latency over
+every video in `--videos-dir` (not synthetic dummy tensors), and a coarse conf=0.4
+precision/recall/FP-per-image sanity check against the transferred validation subset — this is a
+regression guard, not a publishable mAP number (that machinery is `_ap_utils.py`, which needs the
+full repo + ultralytics/rfdetr, deliberately not transplanted onto this minimal venv). A `notes`
+column flags an automatic `recall < 0.3` warning — see CLAUDE.md's "RF-DETR / YOLO Jetson TensorRT
+Optimization" section for why naive FP16 currently trips this.
+
+**`--harness {naive,optimized,both}`** (default `both`) controls
+`_rfdetr_trt_common.RFDETRTensorRTEngine`'s two independent speedups over the plain per-frame
+CPU-preprocess + full-stream-sync loop: `gpu_preprocess` (resize/normalize on-device instead of
+cv2/numpy) and `cuda_graph` (captures `execute_async_v3` once, replays every frame — falls back to
+plain async execution with a logged warning if capture fails on your TRT build). Confirmed on this
+device's TRT 8.6.2.3: rfdetr-m FP32 goes from 33.2 FPS (naive) to 51.4 FPS (optimized), matching
+`trtexec`'s own 58 FPS benchmark of the identical engine almost exactly — the naive Python loop, not
+the engine, was the bottleneck. Verify power/clocks are still locked first (`nvpmodel -q` → `MAXN`;
+if not, `jetson_clocks`'s effect can lapse after a reboot or idle period — rerun `sudo jetson_clocks`).
+
+### Stage 3: Report + visual comparison (dev PC)
+
+```bash
+# Pull all three models' CSVs back and merge (see generate_report.py's docstring
+# for the merge snippet, or just concatenate — same fieldnames across all three):
+scp jetson:~/perception_optim/results/benchmark_results_rfdetr-m.csv reports/detection/optimization/
+scp jetson:~/perception_optim/results/benchmark_results_rfdetr-s.csv reports/detection/optimization/
+scp jetson:~/perception_optim/results/benchmark_results_yolo11m.csv reports/detection/optimization/
+python scripts/detection/optimization/generate_report.py \
+    --csv reports/detection/optimization/benchmark_results.csv
+# -> reports/detection/optimization/RESULTS.md / RESULTS.html
+
+# Side-by-side comparison — N models, any mix of pytorch:/onnx:/engine:/ultralytics:
+# specs (standalone, doesn't reuse compare_detection_models.py's dispatch):
+python scripts/detection/optimization/compare_models.py --mode video \
+    --models pytorch:weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt \
+             engine:weights/detection/optimization/rfdetr-m_fp16.engine \
+    --source ~/Music/gaza_road_videos/tzir-driving.mp4
+
+# 3-way, mixed RF-DETR + YOLO, any precision:
+python scripts/detection/optimization/compare_models.py --mode video \
+    --models pytorch:weights/detection/rfdetr-s/detection_dataset_hardneg/conservative_aug/best.pt \
+             pytorch:weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt \
+             ultralytics:weights/detection/yolo11m/yolo_dataset_auto_labeled/freeze21/best.pt \
+    --source ~/Music/gaza_road_videos/tzir-driving.mp4
+```
+
+**Full-length 3-way annotated comparison videos for every clip, run ON THE JETSON against the actual
+deployed `.engine` files** (not the dev-PC PyTorch checkpoints — the point is to see what the real
+deployment artifacts produce). All three at FP32 — the one precision tier that's healthy across all
+three models (FP16 is broken for both RF-DETR variants, see above). `--labels` gives each panel a
+short readable title instead of the raw spec string. Saved to `results/3way_comparison/` on-device,
+then pulled back to `reports/detection/optimization/3way_comparison/` on the dev PC:
+
+```bash
+# On the Jetson:
+source ~/perception_optim/env.sh
+export PATH=$HOME/.local/bin:$PATH
+cd ~/perception_optim
+mkdir -p results/3way_comparison
+for src in data/videos/*.mp4; do
+  name=$(basename "$src" .mp4)
+  python3 scripts/compare_models.py --mode video \
+    --models engine:weights/rfdetr-s/rfdetr-s_fp32.engine \
+             engine:weights/rfdetr-m/rfdetr-m_fp32.engine \
+             ultralytics:weights/yolo11m_freeze21/yolo11m_freeze21_fp32.engine \
+    --labels "rfdetr-s FP32" "rfdetr-m FP32" "yolo11m FP32" \
+    --source "$src" --output "results/3way_comparison/${name}_3way.mp4"
+done
+
+# From the dev PC:
+scp "jetson:~/perception_optim/results/3way_comparison/*.mp4" reports/detection/optimization/3way_comparison/
+```
+
+---
+
+## Best-YOLO Optimization
+
+`scripts/detection/optimization/benchmark_yolo_jetson.py` — same measurement methodology as the
+RF-DETR pipeline (`_video_bench_common.py`'s FPS/accuracy code is shared), but exports through
+Ultralytics' own native `.export(format="engine")` instead of a hand-rolled TensorRT wrapper —
+Ultralytics' `YOLO(path)` already loads `.pt`/`.onnx`/`.engine` uniformly, no NMS-free decode logic
+to replicate the way RF-DETR needed. "Best YOLO" per the cached `reports/detection/leaderboard_test.md`
+ranking is `weights/detection/yolo11m/yolo_dataset_auto_labeled/freeze21/best.pt` — same 2-class
+scheme as the RF-DETR checkpoints, so it's directly comparable (no collapse-map needed).
+
+### One-time additional Jetson setup (on top of the RF-DETR setup above)
+
+Two non-obvious fixes needed for this specific JetPack 6.0 / NVIDIA torch 2.4.0a0 combo:
+
+```bash
+source ~/perception_optim/env.sh
+
+# 1. torchvision — no NVIDIA-provided wheel exists for this JetPack version, and a
+#    generic PyPI wheel is ABI-incompatible with NVIDIA's custom torch build
+#    ("operator torchvision::nms does not exist"). Must build from source against
+#    the exact installed torch (~10 min on Orin):
+pip install --user cmake ninja
+export PATH=/usr/local/cuda/bin:$PATH CUDA_HOME=/usr/local/cuda   # nvcc
+git clone --branch v0.19.0 --depth 1 https://github.com/pytorch/vision.git /tmp/torchvision_src
+cd /tmp/torchvision_src
+FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST="8.7" BUILD_VERSION=0.19.0 python3 setup.py bdist_wheel
+pip install --user dist/torchvision-0.19.0-*.whl --no-deps
+cd ~/perception_optim && rm -rf /tmp/torchvision_src   # source tree not needed once the wheel is installed
+# Verify: python3 -c "from torchvision.ops import nms; import torch; \
+#   nms(torch.rand(3,4).cuda(), torch.rand(3).cuda(), 0.5)"
+
+# 2. ultralytics — pin to 8.4.47 (matches the dev PC's main venv), NOT latest.
+#    Ultralytics' exporter unconditionally passes dynamo=False to torch.onnx.export
+#    for any "torch 2.4.x" — but NVIDIA's Jetson snapshot predates upstream torch
+#    actually adding that parameter, so real torch.onnx.export rejects it regardless
+#    of ultralytics version. benchmark_yolo_jetson.py patches this itself
+#    (_patch_torch_onnx_export_for_old_nvidia_torch) rather than patching ultralytics.
+pip install --user "ultralytics==8.4.47" --no-deps
+pip install --user "onnx>=1.12.0,<2.0.0" "onnxslim>=0.1.82" onnxruntime "numpy<2,>=1.24" \
+    psutil polars ultralytics-thop nvidia-ml-py
+# Deliberately NOT installing opencv-python (ultralytics' own declared dep) — it
+# would clobber the system cv2 the same way described in this repo's requirements.txt
+# for the dev PC; verify after every install: python3 -c "import cv2; print(cv2.__version__)"
+```
+
+### Run
+
+```bash
+# From the dev PC:
+scp scripts/detection/optimization/{benchmark_yolo_jetson.py,_video_bench_common.py} jetson:~/perception_optim/scripts/
+scp weights/detection/yolo11m/yolo_dataset_auto_labeled/freeze21/best.pt jetson:~/perception_optim/weights/yolo11m_freeze21/yolo11m_freeze21.pt
+
+# On the Jetson:
+source ~/perception_optim/env.sh
+export PATH=$HOME/.local/bin:$PATH
+cd ~/perception_optim
+python3 scripts/benchmark_yolo_jetson.py \
+    --weights weights/yolo11m_freeze21/yolo11m_freeze21.pt --model-name yolo11m_freeze21 \
+    --videos-dir data/videos --val-images data/val_images --val-labels data/val_labels \
+    --output results/benchmark_results_yolo11m.csv
+```
+
+---
+
 ## FPS Benchmarking
 
 Use `run_headless.py` — it processes all frames and logs `Processed N frames in Xs (Y FPS)` at the end.

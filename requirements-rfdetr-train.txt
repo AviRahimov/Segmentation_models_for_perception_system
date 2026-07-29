@@ -25,6 +25,12 @@ torchvision==0.26.0+cu128
 # which relies on batch_size="auto" and progress_bar="tqdm" — both added
 # after 1.6.0 and confirmed present in 1.7.1's TrainConfig. Re-verify
 # TrainConfig's fields (rfdetr/config.py) before bumping this pin.
-rfdetr[train,loggers,plus]==1.7.1
+#
+# The 'onnx' extra (onnx, onnx_graphsurgeon, polygraphy) is also this venv's
+# home for scripts/detection/optimization/export_onnx.py — RF-DETR's own
+# .export(format="onnx") needs it, and this venv already carries the
+# transformers>=5.1 RF-DETR requires (see header comment above).
+rfdetr[train,loggers,plus,onnx]==1.7.1
+onnxruntime==1.28.0
 
 PyYAML==6.0.2
