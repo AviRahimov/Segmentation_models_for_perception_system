@@ -90,19 +90,42 @@ def decode(
 class RFDETROnnxModel:
     """Runs a ``.onnx`` export through ONNX Runtime."""
 
-    def __init__(self, onnx_path: str | Path, input_size: tuple[int, int] = (576, 576),
+    def __init__(self, onnx_path: str | Path, input_size: tuple[int, int] | None = None,
                  providers: list[str] | None = None) -> None:
         import onnxruntime as ort
 
-        self._input_size = input_size
         providers = providers or ["CUDAExecutionProvider", "CPUExecutionProvider"]
         self._session = ort.InferenceSession(str(onnx_path), providers=providers)
         self._input_name = self._session.get_inputs()[0].name
         out_names = [o.name for o in self._session.get_outputs()]
         self._boxes_idx = out_names.index("dets") if "dets" in out_names else 0
         self._logits_idx = out_names.index("labels") if "labels" in out_names else 1
-        logger.info("ONNX Runtime session ready: %s (providers=%s)",
-                    onnx_path, self._session.get_providers())
+
+        # Auto-detect from the ONNX graph's own declared input shape rather than
+        # trusting a caller-supplied default — see RFDETRTensorRTEngine's docstring
+        # for why a mismatched size silently produces garbage output instead of
+        # erroring (a real bug found this way for rfdetr-s, 512x512, vs the 576x576
+        # default meant for rfdetr-m).
+        onnx_shape = self._session.get_inputs()[0].shape  # e.g. [1, 3, 512, 512] or ['batch', 3, 'h', 'w']
+        detected = None
+        if len(onnx_shape) == 4 and isinstance(onnx_shape[2], int) and isinstance(onnx_shape[3], int):
+            detected = (onnx_shape[2], onnx_shape[3])
+        if detected is not None:
+            if input_size is not None and tuple(input_size) != detected:
+                logger.warning(
+                    "Requested input_size=%s does not match %s's actual ONNX input shape %s "
+                    "— using the ONNX graph's real shape.", input_size, onnx_path, detected,
+                )
+            self._input_size = detected
+        elif input_size is not None:
+            self._input_size = tuple(input_size)
+        else:
+            raise ValueError(
+                f"{onnx_path}: ONNX graph has a dynamic input shape ({onnx_shape}) and no "
+                "input_size was provided to disambiguate it."
+            )
+        logger.info("ONNX Runtime session ready: %s (providers=%s, input_size=%s)",
+                    onnx_path, self._session.get_providers(), self._input_size)
 
     def infer(self, frame_bgr: np.ndarray, threshold: float = 0.35) -> list[Detection]:
         h0, w0 = frame_bgr.shape[:2]
@@ -147,13 +170,12 @@ class RFDETRTensorRTEngine:
     than silently pretending to be optimized.
     """
 
-    def __init__(self, engine_path: str | Path, input_size: tuple[int, int] = (576, 576),
+    def __init__(self, engine_path: str | Path, input_size: tuple[int, int] | None = None,
                  gpu_preprocess: bool = True, cuda_graph: bool = True) -> None:
         import tensorrt as trt
         import torch
 
         self._torch = torch
-        self._input_size = input_size
         self._gpu_preprocess = gpu_preprocess
         self._graph = None  # set below if capture succeeds
 
@@ -175,12 +197,39 @@ class RFDETRTensorRTEngine:
         if self._input_name is None or not self._output_names:
             raise RuntimeError(f"Engine has no recognizable input/output tensors: {engine_path}")
 
+        # Auto-detect from the engine's own binding shape rather than trusting a
+        # caller-supplied default — different RF-DETR variants use different fixed
+        # input resolutions (rfdetr-s=512, rfdetr-m=576) and a caller passing the
+        # wrong size doesn't error, it silently feeds a misinterpreted buffer into
+        # a static-shape engine (wrong strides, no shape-mismatch check anywhere),
+        # producing garbage output that never crosses the confidence threshold —
+        # exactly how a real rfdetr-s "0 detections in every frame" bug looked
+        # before this fix (found via compare_models.py hardcoding 576x576 for
+        # every engine: spec regardless of which model it actually was).
+        engine_shape = tuple(self._engine.get_tensor_shape(self._input_name))
+        if len(engine_shape) == 4 and engine_shape[2] > 0 and engine_shape[3] > 0:
+            detected = (engine_shape[2], engine_shape[3])
+            if input_size is not None and tuple(input_size) != detected:
+                logger.warning(
+                    "Requested input_size=%s does not match %s's actual engine "
+                    "input shape %s — using the engine's real shape.",
+                    input_size, engine_path, detected,
+                )
+            self._input_size = detected
+        elif input_size is not None:
+            self._input_size = tuple(input_size)
+        else:
+            raise ValueError(
+                f"{engine_path}: engine has a dynamic input shape ({engine_shape}) and no "
+                "input_size was provided to disambiguate it."
+            )
+
         def _torch_dtype(name: str):
             np_dtype = trt.nptype(self._engine.get_tensor_dtype(name))
             return torch.from_numpy(np.zeros(1, dtype=np_dtype)).dtype
 
         self._in_dtype = _torch_dtype(self._input_name)
-        self._in_buf = torch.empty((1, 3, *input_size), dtype=self._in_dtype, device="cuda")
+        self._in_buf = torch.empty((1, 3, *self._input_size), dtype=self._in_dtype, device="cuda")
 
         self._out_bufs: dict[str, torch.Tensor] = {}
         for name in self._output_names:
@@ -367,13 +416,19 @@ class UltralyticsModel:
 # Uniform loader                                                               #
 # --------------------------------------------------------------------------- #
 
-def load_model(spec: str, input_size: tuple[int, int] = (576, 576), **engine_kwargs):
+def load_model(spec: str, input_size: tuple[int, int] | None = None, **engine_kwargs):
     """Parses a ``pytorch:``/``onnx:``/``engine:``/``ultralytics:`` model spec and loads it.
 
     Returns an object exposing ``.infer(frame_bgr, threshold) -> list[Detection]``.
     ``engine_kwargs`` (``gpu_preprocess``, ``cuda_graph``) only apply to RF-DETR ``engine:`` specs.
     The first three backends are RF-DETR-specific (NMS-free decode); ``ultralytics:``
     covers YOLO's ``.pt``/``.onnx``/``.engine`` uniformly via Ultralytics' own loader.
+
+    ``input_size`` defaults to ``None`` — both ``onnx:`` and ``engine:`` specs auto-detect
+    the real input resolution from the loaded model/engine itself (different RF-DETR
+    variants use different fixed sizes: rfdetr-s=512, rfdetr-m=576), so callers mixing
+    model sizes in one run (e.g. compare_models.py's N-way comparison) get the correct
+    size for each spec automatically without needing to track it themselves.
     """
     if ":" not in spec:
         raise ValueError(

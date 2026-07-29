@@ -480,6 +480,54 @@ python3 scripts/benchmark_yolo_jetson.py \
 
 ---
 
+## Per-model annotated videos with a live FPS overlay
+
+`compare_models.py` accepts a single `--models` spec too (no comparison, just one annotated video),
+overlaying that model's own rolling-average FPS (last 30 frames, real measured inference latency —
+not the aggregate benchmark number) in the top-right corner. Run once per model, saving each into
+its own subfolder — this is what generated `reports/detection/optimization/videos_by_model/`:
+
+```bash
+# On the Jetson:
+source ~/perception_optim/env.sh
+export PATH=$HOME/.local/bin:$PATH
+cd ~/perception_optim
+mkdir -p results/videos_by_model/{rfdetr-s,rfdetr-m,yolo11m}
+
+for model in rfdetr-s rfdetr-m yolo11m; do
+  case $model in
+    rfdetr-s) spec="engine:weights/rfdetr-s/rfdetr-s_fp32.engine";  label="rfdetr-s FP32" ;;
+    rfdetr-m) spec="engine:weights/rfdetr-m/rfdetr-m_fp32.engine";  label="rfdetr-m FP32" ;;
+    yolo11m)  spec="ultralytics:weights/yolo11m_freeze21/yolo11m_freeze21_fp32.engine"; label="yolo11m FP32" ;;
+  esac
+  for src in data/videos/*.mp4; do
+    name=$(basename "$src" .mp4)
+    python3 scripts/compare_models.py --mode video \
+      --models "$spec" --labels "$label" \
+      --source "$src" --output "results/videos_by_model/$model/${name}.mp4"
+  done
+done
+
+# From the dev PC:
+scp "jetson:~/perception_optim/results/videos_by_model/rfdetr-s/*.mp4" reports/detection/optimization/videos_by_model/rfdetr-s/
+scp "jetson:~/perception_optim/results/videos_by_model/rfdetr-m/*.mp4" reports/detection/optimization/videos_by_model/rfdetr-m/
+scp "jetson:~/perception_optim/results/videos_by_model/yolo11m/*.mp4"  reports/detection/optimization/videos_by_model/yolo11m/
+```
+
+**Bug fix note**: `_rfdetr_trt_common.py`'s `RFDETRTensorRTEngine`/`RFDETROnnxModel` now auto-detect
+the real input resolution from the loaded engine/ONNX graph itself instead of trusting a
+caller-supplied default. This matters because different RF-DETR variants use different fixed sizes
+(rfdetr-s=512, rfdetr-m=576) — a caller passing the wrong size doesn't error, TensorRT just
+misinterprets the buffer according to its own compiled shape, silently producing garbage output
+that never crosses the confidence threshold. This exact bug caused rfdetr-s to show **zero
+detections in every frame** of the first `compare_models.py`-rendered video batch (which hardcoded
+576×576 for every `engine:`/`onnx:` spec) — caught only by visually spot-checking the rendered
+videos, not by any error or the numeric benchmark CSVs (those were unaffected — `benchmark_jetson.py`
+always passed the correct `--shape` explicitly). If you add a new RF-DETR variant, you no longer
+need to track its input size through every caller — the engine/ONNX file is now self-describing.
+
+---
+
 ## FPS Benchmarking
 
 Use `run_headless.py` — it processes all frames and logs `Processed N frames in Xs (Y FPS)` at the end.

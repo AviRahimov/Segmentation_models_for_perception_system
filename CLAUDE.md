@@ -343,8 +343,24 @@ being the top-ranked YOLO checkpoint by collapsed mAP50, this model's real preci
 (0.78/0.57) is meaningfully behind *both* RF-DETR variants (0.90+/0.72+) on the same validation images —
 another instance of this repo's recurring lesson that a single aggregate metric doesn't reliably predict
 real deployment behavior (see the Optuna note above). **rfdetr-s remains the strongest overall
-candidate**: best accuracy, second-best FPS (68.9, only behind YOLO's FP16 71.5), and no FP16 precision
+candidate**: best accuracy, second-best FPS (67.9, only behind YOLO's FP16 73.1), and no FP16 precision
 cliff to work around.
+
+**Bug found and fixed: `compare_models.py` silently fed rfdetr-s the wrong input resolution.**
+Different RF-DETR variants use different fixed engine input sizes (rfdetr-s=512×512,
+rfdetr-m=576×576), but `_rfdetr_trt_common.load_model()` hardcoded a single default (576×576) for
+every `engine:`/`onnx:` spec regardless of which model it actually was. Feeding a 576×576-sized
+buffer into an engine statically compiled for 512×512 doesn't error — TensorRT just reads the
+memory according to its own compiled shape, silently misinterpreting the data — so rfdetr-s
+produced garbage logits that never crossed the confidence threshold: **0 detections in every frame
+of every video**, discovered only by visually spot-checking the rendered comparison videos (the
+numeric benchmark CSVs were unaffected, since `benchmark_jetson.py` always passed the correct
+`--shape` explicitly). Fixed by auto-detecting the real input size from the loaded engine/ONNX
+graph itself (`RFDETRTensorRTEngine`/`RFDETROnnxModel` now read it from
+`engine.get_tensor_shape()`/`session.get_inputs()[0].shape`), so a caller-supplied size is now just
+an optional override that gets corrected (with a logged warning) rather than silently trusted.
+**Lesson: always visually spot-check rendered detection output, not just aggregate metrics** — this
+exact class of bug (silent wrong-shape input) produces no exception anywhere in the stack.
 
 ## Jetson / Production Notes
 
