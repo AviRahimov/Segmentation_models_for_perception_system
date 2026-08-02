@@ -16,7 +16,10 @@ What it does
 For each .onnx file found in --onnx-dir:
   1. Build a TRT engine using trtexec with appropriate flags.
   2. Benchmark latency with trtexec --avgRuns=100 --iterations=200.
-  3. Run real-harness timing via TensorRTBackend (p50, p99).
+  3. Real decode+preprocess+infer FPS/latency over actual video clips, for
+     each requested --harness config (naive: CPU preprocess, no CUDA graph;
+     optimized: GPU preprocess + CUDA-graph replay) — see
+     ``_segformer_trt_common.py``.
   4. Run 30-minute soak test to detect thermal throttling.
   5. Validate mIoU from engine output against the ORFD validation set.
 
@@ -27,6 +30,7 @@ Usage
     python scripts/segmentation/optimization/benchmark_jetson.py \\
         --onnx-dir weights/segmentation/optimization/ \\
         --val-data datasets/segmentation/ORFD \\
+        --videos-dir data/videos \\
         --output reports/segmentation/optimization/benchmark_results.csv
 """
 from __future__ import annotations
@@ -45,12 +49,15 @@ import torch
 from torch.utils.data import DataLoader
 
 _ROOT = Path(__file__).resolve().parents[3]
+_HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(_ROOT / "scripts" / "segmentation" / "training"))
 sys.path.insert(0, str(_ROOT / "scripts" / "segmentation"))
+sys.path.insert(0, str(_HERE))
 
 from _orfd_common import _dice_ce_loss, compute_miou, evaluate
 from _segformer_checkpoint_common import load_remapped_state_dict
+from _segformer_trt_common import SegformerTensorRTEngine, benchmark_videos
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,10 +67,18 @@ logging.basicConfig(
 logger = logging.getLogger("benchmark_jetson")
 
 CSV_FIELDS = [
-    "variant_name", "backbone", "precision", "sparsity", "resolution",
+    "variant_name", "backbone", "precision", "sparsity", "resolution", "harness",
     "miou_pytorch", "miou_engine", "latency_ms_p50", "latency_ms_p99",
     "fps", "sustained_fps_30min", "notes",
 ]
+
+# harness="naive": cv2/numpy CPU preprocess, full stream sync every frame, no CUDA graph.
+# harness="optimized": GPU-side preprocess + CUDA-graph replay (falls back to no-graph if
+# capture fails — see _segformer_trt_common.SegformerTensorRTEngine's docstring).
+_HARNESS_CONFIGS = {
+    "naive":     {"gpu_preprocess": False, "cuda_graph": False},
+    "optimized": {"gpu_preprocess": True,  "cuda_graph": True},
+}
 
 # Jetson Orin workspace: 8 GB is safe for B2.
 _TRT_WORKSPACE_GB = 8
@@ -150,11 +165,14 @@ def _build_engine(onnx_path: Path, engine_path: Path, flags: dict) -> bool:
 
     if trtexec:
         # Use trtexec when available — produces identical engines.
+        # No --shapes flag: export_onnx.py exports with a static (non-dynamic-axes)
+        # input shape, and trtexec rejects --shapes entirely for static models
+        # ("Static model does not take explicit shapes") — same lesson already
+        # applied in scripts/detection/optimization/benchmark_jetson.py.
         cmd = [
             trtexec,
             f"--onnx={onnx_path}",
             f"--saveEngine={engine_path}",
-            f"--shapes=pixel_values:1x3x{res}x{res}",
             f"--memPoolSize=workspace:{_TRT_WORKSPACE_GB * 1024}MiB",
             "--useCudaGraph",
             "--noDataTransfers",
@@ -250,42 +268,6 @@ def _build_engine(onnx_path: Path, engine_path: Path, flags: dict) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# TRT engine helpers (shared by latency, soak, and mIoU sections)              #
-# --------------------------------------------------------------------------- #
-
-def _load_trt_context(engine_path: Path):
-    """Deserialize a TRT engine and return (context, out_buf).
-
-    out_buf dtype is inferred from the engine's logits binding;
-    defaults to FP16 if detection fails.
-    Input binding is always FP32 — matches the ONNX export dtype.
-    """
-    import tensorrt as trt  # type: ignore
-    runtime = trt.Runtime(trt.Logger(trt.Logger.WARNING))
-    engine = runtime.deserialize_cuda_engine(engine_path.read_bytes())
-    context = engine.create_execution_context()
-    out_shape = tuple(context.get_tensor_shape("logits"))
-    try:
-        trt_dt = engine.get_tensor_dtype("logits")
-        out_dtype = torch.float32 if trt_dt == trt.DataType.FLOAT else torch.float16
-    except Exception:
-        out_dtype = torch.float16
-    out_buf = torch.empty(out_shape, dtype=out_dtype, device="cuda")
-    logger.info("Engine output binding: shape=%s dtype=%s (trt=%s)", out_shape, out_dtype, trt_dt)
-    return context, out_buf
-
-
-def _trt_infer(context, pixel_values: torch.Tensor, out_buf: torch.Tensor) -> torch.Tensor:
-    """Run one synchronous TRT inference pass; returns a clone of out_buf."""
-    stream = torch.cuda.current_stream().cuda_stream
-    context.set_tensor_address("pixel_values", pixel_values.data_ptr())
-    context.set_tensor_address("logits", out_buf.data_ptr())
-    context.execute_async_v3(stream)
-    torch.cuda.current_stream().synchronize()
-    return out_buf.clone()
-
-
-# --------------------------------------------------------------------------- #
 # Latency benchmark                                                             #
 # --------------------------------------------------------------------------- #
 
@@ -295,11 +277,9 @@ def _trtexec_latency(engine_path: Path, flags: dict) -> dict:
     if trtexec is None:
         logger.info("trtexec not available — skipping trtexec latency (harness latency used).")
         return {"latency_ms_p50_trtexec": None, "latency_ms_p99_trtexec": None}
-    res = flags["resolution"]
     cmd = [
         trtexec,
         f"--loadEngine={engine_path}",
-        f"--shapes=pixel_values:1x3x{res}x{res}",
         "--avgRuns=100",
         "--iterations=200",
         "--useCudaGraph",
@@ -328,36 +308,39 @@ def _trtexec_latency(engine_path: Path, flags: dict) -> dict:
     return {"latency_ms_p50_trtexec": p50, "latency_ms_p99_trtexec": p99}
 
 
-def _harness_latency(engine_path: Path, resolution: int, n_frames: int = 300) -> dict:
-    """Real-harness latency via direct TRT API.  Returns p50/p99 in ms."""
-    try:
-        context, out_buf = _load_trt_context(engine_path)
-    except Exception as e:
-        logger.warning("Failed to load TRT engine for harness latency: %s", e)
+def _video_harness_fps(engine_path: Path, resolution: int, harness_name: str,
+                        video_paths: list[Path]) -> dict:
+    """Real decode+preprocess+infer FPS/latency over --videos-dir clips.
+
+    Replaces the old synthetic-dummy-tensor timing loop: that never
+    exercised preprocessing at all, so it structurally couldn't show any
+    gain from GPU-side preprocessing. See _segformer_trt_common.py's
+    module docstring.
+    """
+    if not video_paths:
+        logger.warning("No videos found — skipping real-video FPS for harness=%s", harness_name)
         return {"latency_ms_p50": None, "latency_ms_p99": None, "fps": None}
 
-    dummy = torch.zeros(1, 3, resolution, resolution, dtype=torch.float32, device="cuda")
-
-    for _ in range(20):
-        _trt_infer(context, dummy, out_buf)
-
-    times = []
-    for _ in range(n_frames):
-        t0 = time.perf_counter()
-        _trt_infer(context, dummy, out_buf)
-        times.append((time.perf_counter() - t0) * 1000)
-
-    p50 = float(np.percentile(times, 50))
-    p99 = float(np.percentile(times, 99))
-    fps = 1000.0 / p50 if p50 > 0 else 0.0
-    logger.info("Harness latency: p50=%.2f ms  p99=%.2f ms  fps=%.1f", p50, p99, fps)
-    return {"latency_ms_p50": p50, "latency_ms_p99": p99, "fps": fps}
+    engine = SegformerTensorRTEngine(engine_path, input_size=resolution,
+                                      **_HARNESS_CONFIGS[harness_name])
+    stats = benchmark_videos(engine, video_paths)
+    del engine
+    logger.info("harness=%s: p50=%.2f ms  p99=%.2f ms  fps=%.1f",
+                harness_name, stats["p50_ms"], stats["p99_ms"], stats["mean_fps"])
+    return {"latency_ms_p50": stats["p50_ms"], "latency_ms_p99": stats["p99_ms"],
+            "fps": stats["mean_fps"]}
 
 
 def _soak_test(engine_path: Path, resolution: int, duration_s: int = 1800) -> float:
-    """Run sustained inference for duration_s seconds.  Returns sustained FPS."""
+    """Run sustained inference for duration_s seconds.  Returns sustained FPS.
+
+    Naive (no CUDA graph) tensor-in/tensor-out loop, matching the pre-existing
+    soak methodology — this measures raw sustained engine throughput /
+    thermal behavior, not harness-optimization gains.
+    """
     try:
-        context, out_buf = _load_trt_context(engine_path)
+        engine = SegformerTensorRTEngine(engine_path, input_size=resolution,
+                                          gpu_preprocess=False, cuda_graph=False)
     except Exception as e:
         logger.warning("Failed to load TRT engine for soak test: %s", e)
         return 0.0
@@ -369,12 +352,13 @@ def _soak_test(engine_path: Path, resolution: int, duration_s: int = 1800) -> fl
     count = 0
     t_start = time.perf_counter()
     while time.perf_counter() < t_end:
-        _trt_infer(context, dummy, out_buf)
+        engine.infer_tensor(dummy)
         count += 1
 
     elapsed = time.perf_counter() - t_start
     fps = count / elapsed
     logger.info("Soak test done: %.1f FPS sustained over %.1f min", fps, elapsed / 60)
+    del engine
     return fps
 
 
@@ -386,7 +370,8 @@ def _soak_test(engine_path: Path, resolution: int, duration_s: int = 1800) -> fl
 def _engine_miou(engine_path: Path, val_data: str, resolution: int) -> float:
     """Validate mIoU from TRT engine output on the ORFD validation set."""
     try:
-        context, out_buf = _load_trt_context(engine_path)
+        engine = SegformerTensorRTEngine(engine_path, input_size=resolution,
+                                          gpu_preprocess=False, cuda_graph=False)
     except Exception as e:
         logger.warning("Failed to load TRT engine for mIoU: %s", e)
         return float("nan")
@@ -400,7 +385,7 @@ def _engine_miou(engine_path: Path, val_data: str, resolution: int) -> float:
     for images, labels in loader:
         # Input is always FP32 — matches the ONNX input binding.
         images_cuda = images.cuda().float()
-        logits = _trt_infer(context, images_cuda, out_buf)
+        logits = engine.infer_tensor(images_cuda)
         logits = torch.nn.functional.interpolate(
             logits.float(), size=(resolution, resolution),
             mode="bilinear", align_corners=False,
@@ -408,6 +393,7 @@ def _engine_miou(engine_path: Path, val_data: str, resolution: int) -> float:
         preds = logits.argmax(dim=1).cpu()
         all_preds.append(preds)
         all_labels.append(labels)
+    del engine
 
     preds_cat  = torch.cat(all_preds,  dim=0)
     labels_cat = torch.cat(all_labels, dim=0)
@@ -435,7 +421,20 @@ def main() -> int:
                    help="Soak test duration in seconds (default: 1800 = 30 min)")
     p.add_argument("--pytorch-ref",  default="weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth",
                    help="PyTorch baseline for reference mIoU (optional)")
+    p.add_argument("--videos-dir",   default="data/videos",
+                   help="Directory of real video clips for FPS benchmarking (real decode+"
+                        "preprocess+infer, not a synthetic dummy tensor)")
+    p.add_argument("--harness",      choices=["naive", "optimized", "both"], default="both",
+                   help="Which harness configuration(s) to benchmark (see _HARNESS_CONFIGS)")
     args = p.parse_args()
+
+    harness_names = list(_HARNESS_CONFIGS) if args.harness == "both" else [args.harness]
+
+    videos_dir = Path(args.videos_dir)
+    if not videos_dir.is_absolute():
+        videos_dir = _ROOT / videos_dir
+    video_paths = sorted(videos_dir.glob("*.mp4")) if videos_dir.is_dir() else []
+    logger.info("Found %d video clips in %s", len(video_paths), videos_dir)
 
     onnx_dir = Path(args.onnx_dir)
     if not onnx_dir.is_absolute():
@@ -511,6 +510,7 @@ def main() -> int:
                 "precision": flags["precision"],
                 "sparsity": flags["sparsity"],
                 "resolution": res,
+                "harness": "",
                 "miou_pytorch": pytorch_ref_miou.get(res, ""),
                 "miou_engine": "",
                 "latency_ms_p50": "",
@@ -521,46 +521,45 @@ def main() -> int:
             })
             continue
 
-        # Latency from trtexec
+        # Latency from trtexec (independent of --harness — trtexec's own timer)
         trt_lat = _trtexec_latency(engine_path, flags)
 
-        # Latency from harness
-        harness_lat = _harness_latency(engine_path, res)
-
-        # Soak test
+        # Soak test — once per variant, naive raw-executor loop regardless of --harness
         sustained_fps = ""
         if args.soak:
             sustained_fps = round(_soak_test(engine_path, res, args.soak_duration), 1)
 
-        # mIoU from engine
+        # mIoU from engine — once per variant, independent of --harness
         eng_miou = _engine_miou(engine_path, str(val_data), res)
-
-        # Reference mIoU
         ref_miou = pytorch_ref_miou.get(res, "")
 
-        # Flag mIoU drop > 1% vs reference
         notes = ""
         if ref_miou and not (isinstance(eng_miou, float) and eng_miou != eng_miou):
             drop = ref_miou - eng_miou
             if drop > 0.01:
                 notes = f"WARNING: engine mIoU drop {drop:.3f} > 0.01"
 
-        rows.append({
-            "variant_name":       onnx_path.stem,
-            "backbone":           "segformer-b2",
-            "precision":          flags["precision"],
-            "sparsity":           flags["sparsity"],
-            "resolution":         res,
-            "miou_pytorch":       round(ref_miou, 4) if ref_miou else "",
-            "miou_engine":        round(eng_miou, 4) if eng_miou == eng_miou else "",
-            "latency_ms_p50":     round(harness_lat.get("latency_ms_p50") or
-                                        trt_lat.get("latency_ms_p50_trtexec") or 0, 2),
-            "latency_ms_p99":     round(harness_lat.get("latency_ms_p99") or
-                                        trt_lat.get("latency_ms_p99_trtexec") or 0, 2),
-            "fps":                round(harness_lat.get("fps") or 0, 1),
-            "sustained_fps_30min": sustained_fps,
-            "notes":              notes,
-        })
+        for harness_name in harness_names:
+            logger.info("--- %s / harness=%s ---", onnx_path.name, harness_name)
+            harness_lat = _video_harness_fps(engine_path, res, harness_name, video_paths)
+
+            rows.append({
+                "variant_name":       onnx_path.stem,
+                "backbone":           "segformer-b2",
+                "precision":          flags["precision"],
+                "sparsity":           flags["sparsity"],
+                "resolution":         res,
+                "harness":            harness_name,
+                "miou_pytorch":       round(ref_miou, 4) if ref_miou else "",
+                "miou_engine":        round(eng_miou, 4) if eng_miou == eng_miou else "",
+                "latency_ms_p50":     round(harness_lat.get("latency_ms_p50") or
+                                            trt_lat.get("latency_ms_p50_trtexec") or 0, 2),
+                "latency_ms_p99":     round(harness_lat.get("latency_ms_p99") or
+                                            trt_lat.get("latency_ms_p99_trtexec") or 0, 2),
+                "fps":                round(harness_lat.get("fps") or 0, 1),
+                "sustained_fps_30min": sustained_fps,
+                "notes":              notes,
+            })
 
     # ---- Write CSV ----
     with out_path.open("w", newline="") as f:
@@ -571,15 +570,15 @@ def main() -> int:
     logger.info("Benchmark results saved: %s", out_path)
 
     # ---- Print summary ----
-    print("\n" + "=" * 90)
-    print(f"{'Variant':<40}  {'Prec':>5}  {'mIoU_eng':>9}  {'p50ms':>7}  {'FPS':>6}")
-    print("-" * 90)
+    print("\n" + "=" * 100)
+    print(f"{'Variant':<40}  {'Prec':>5}  {'Harness':>10}  {'mIoU_eng':>9}  {'p50ms':>7}  {'FPS':>6}")
+    print("-" * 100)
     for r in rows:
         print(
-            f"{r['variant_name'][:40]:<40}  {r['precision']:>5}  "
+            f"{r['variant_name'][:40]:<40}  {r['precision']:>5}  {str(r.get('harness', '')):>10}  "
             f"{str(r['miou_engine']):>9}  {str(r['latency_ms_p50']):>7}  {str(r['fps']):>6}"
         )
-    print("=" * 90)
+    print("=" * 100)
     return 0
 
 

@@ -48,18 +48,18 @@ def _fmt(val, decimals: int = 3) -> str:
 # Markdown                                                                      #
 # --------------------------------------------------------------------------- #
 
-def _write_markdown(rows: list[dict], out: Path) -> None:
+def _write_markdown(rows: list[dict], out: Path, clocks_note: str) -> None:
     header = (
-        "| Variant | Backbone | Precision | Sparsity | Res | "
+        "| Variant | Backbone | Precision | Sparsity | Res | Harness | "
         "mIoU (PyTorch) | mIoU (Engine) | Latency p50 (ms) | Latency p99 (ms) | "
         "FPS | FPS sustained | Notes |\n"
-        "|---------|----------|-----------|----------|-----|"
+        "|---------|----------|-----------|----------|-----|---------|"
         "----------------|---------------|------------------|------------------|"
         "-----|---------------|-------|\n"
     )
     lines = [
         "# Optimization Benchmark Results\n\n",
-        "> **Hardware**: Jetson AGX Orin 64GB — MAXN power mode, clocks locked.\n",
+        f"> **Hardware**: Jetson AGX Orin 64GB — MAXN power mode. {clocks_note}\n",
         "> **Dataset**: ORFD validation split.  mIoU: higher = better.\n\n",
         header,
     ]
@@ -70,6 +70,7 @@ def _write_markdown(rows: list[dict], out: Path) -> None:
             f"| {r.get('precision', '')} "
             f"| {r.get('sparsity', '')} "
             f"| {r.get('resolution', '')} "
+            f"| {r.get('harness', '')} "
             f"| {_fmt(r.get('miou_pytorch'), 4)} "
             f"| {_fmt(r.get('miou_engine'),  4)} "
             f"| {_fmt(r.get('latency_ms_p50'), 2)} "
@@ -127,7 +128,7 @@ def _row_class(val: str, best_fps: float, best_miou: float) -> dict:
     return classes
 
 
-def _write_html(rows: list[dict], out: Path) -> None:
+def _write_html(rows: list[dict], out: Path, clocks_note: str) -> None:
     valid_fps = [float(r.get("fps") or 0) for r in rows if r.get("fps")]
     best_fps = max(valid_fps) if valid_fps else 0.0
 
@@ -140,6 +141,7 @@ def _write_html(rows: list[dict], out: Path) -> None:
         ("precision",          "Precision"),
         ("sparsity",           "Sparsity"),
         ("resolution",         "Resolution"),
+        ("harness",            "Harness"),
         ("miou_pytorch",       "mIoU (PyTorch)"),
         ("miou_engine",        "mIoU (Engine)"),
         ("latency_ms_p50",     "Latency p50 (ms)"),
@@ -174,7 +176,7 @@ def _write_html(rows: list[dict], out: Path) -> None:
 <body>
 <h1>SegFormer-B2 Optimization Benchmark Results</h1>
 <p class="meta">
-  Hardware: Jetson AGX Orin 64GB — MAXN power mode, clocks locked.<br>
+  Hardware: Jetson AGX Orin 64GB — MAXN power mode. {clocks_note}<br>
   Dataset: ORFD validation split.&nbsp;
   <span style="color:#6fdf6f">■</span> Best FPS &nbsp;
   <span style="color:#ffd966">■</span> mIoU drop 1–2% &nbsp;
@@ -202,7 +204,17 @@ def main() -> int:
     p.add_argument("--csv", default="reports/segmentation/optimization/benchmark_results.csv")
     p.add_argument("--out-dir", default=None,
                    help="Output directory (default: same as CSV directory)")
+    p.add_argument("--clocks-locked", choices=["yes", "no", "unknown"], default="unknown",
+                   help="Whether `sudo jetson_clocks` was applied for this run — FPS numbers are "
+                        "not comparable across locked/unlocked runs (can differ by ~35%%), so this "
+                        "is stated explicitly rather than silently assumed.")
     args = p.parse_args()
+
+    clocks_note = {
+        "yes": "Clocks locked (jetson_clocks applied).",
+        "no": "Clocks NOT locked for this run — FPS is a conservative floor, not the authoritative number.",
+        "unknown": "Clock-lock status not recorded for this run.",
+    }[args.clocks_locked]
 
     csv_path = Path(args.csv)
     if not csv_path.is_absolute():
@@ -223,8 +235,8 @@ def main() -> int:
         out_dir = _ROOT / out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    _write_markdown(rows, out_dir / "RESULTS.md")
-    _write_html(rows,     out_dir / "RESULTS.html")
+    _write_markdown(rows, out_dir / "RESULTS.md",   clocks_note)
+    _write_html(rows,     out_dir / "RESULTS.html", clocks_note)
     return 0
 
 

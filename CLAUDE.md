@@ -242,8 +242,8 @@ src/perception/
 | SegFormer-B2 | Primary semantic | mIoU=0.279 on GOOSE-Ex, ~19 ms/frame on RTX 5090 |
 | SegFormer-B4 | Available | Slightly lower mIoU (0.268), ~24 ms |
 | YOLOE-26L | Primary instance | Text embeds cached at warmup; discovery mode available |
-| DDRNet-39 | Broken | GOOSE-12 channel ordering unconfirmed, IoU≈0.002; do not use |
-| PP-LiteSeg | Shelved | Wrapper exists but raises `NotImplementedError` |
+| DDRNet-39 | Removed | Fully deleted from `src/` — was broken (GOOSE-12 channel ordering unconfirmed, IoU≈0.002) |
+| PP-LiteSeg | Removed | Fully deleted from `src/` — wrapper had raised `NotImplementedError` |
 
 ## Config Knobs
 
