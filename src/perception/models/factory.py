@@ -13,8 +13,12 @@ from .instance.base import InstanceModel
 from .instance.rfdetr.model import RFDETRInstanceModel
 from .instance.yolo.closed import YOLOClosedInstanceModel
 from .instance.yolo.open import YOLOEInstanceModel
+from .semantic.auriganet import AurigaNetSemanticModel
 from .semantic.base import SemanticModel
+from .semantic.dinov2 import DINOv2SemanticModel
+from .semantic.mask2former import Mask2FormerSemanticModel
 from .semantic.segformer import SegFormerSemanticModel
+from .semantic.upernet import UPerNetSemanticModel
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +85,14 @@ SEMANTIC_REGISTRY: dict[str, Type[SemanticModel]] = {
     "segformer":    SegFormerSemanticModel,
     "segformer-b4": SegFormerSemanticModel,
     "segformer_b4": SegFormerSemanticModel,
+    "auriganet":    AurigaNetSemanticModel,
+    "mask2former":       Mask2FormerSemanticModel,
+    "mask2former-base":  Mask2FormerSemanticModel,
+    "mask2former-large": Mask2FormerSemanticModel,
+    "upernet":      UPerNetSemanticModel,
+    "dinov2":       DINOv2SemanticModel,
+    "dinov2-base":  DINOv2SemanticModel,
+    "dinov2-large": DINOv2SemanticModel,
 }
 
 SEMANTIC_DEFAULT_WEIGHTS: dict[str, str] = {
@@ -93,6 +105,14 @@ SEMANTIC_DEFAULT_WEIGHTS: dict[str, str] = {
     "segformer":    "nvidia/segformer-b2-finetuned-ade-512-512",
     "segformer-b4": "nvidia/segformer-b4-finetuned-ade-512-512",
     "segformer_b4": "nvidia/segformer-b4-finetuned-ade-512-512",
+    "auriganet":    "weights/segmentation/orfd/auriganet/best.pth",
+    "mask2former":       "weights/segmentation/orfd/mask2former/best.pth",
+    "mask2former-base":  "weights/segmentation/orfd/mask2former/best.pth",
+    "mask2former-large": "weights/segmentation/orfd/mask2former-large/best.pth",
+    "upernet":      "weights/segmentation/orfd/upernet/best.pth",
+    "dinov2":       "weights/segmentation/orfd/dinov2/best.pth",
+    "dinov2-base":  "weights/segmentation/orfd/dinov2/best.pth",
+    "dinov2-large": "weights/segmentation/orfd/dinov2-large/best.pth",
 }
 
 
@@ -153,7 +173,7 @@ def build_semantic_model(
     )
     if cfg.num_classes is not None:
         kwargs["num_classes"] = cfg.num_classes
-    if "segformer" in name:
+    if "segformer" in name or "mask2former" in name or "dinov2" in name:
         kwargs["name"] = name
         if cfg.processor_size is not None:
             kwargs["processor_size"] = cfg.processor_size

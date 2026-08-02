@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import random
+from typing import Callable
 
 import numpy as np
 import torch
@@ -165,7 +166,14 @@ def train_one_epoch(
     device: str,
     fp16: bool,
     clip_norm: float,
+    forward_fn: Callable[[nn.Module, torch.Tensor], torch.Tensor] | None = None,
 ) -> float:
+    """``forward_fn(model, images_chw) -> logits`` lets non-SegFormer architectures
+    (AurigaNet, Mask2Former, UPerNet, DINOv2, ...) reuse this loop unchanged —
+    default (None) preserves the exact original SegFormer/``processor`` behavior
+    for every existing caller (train_orfd.py, train_qat.py, train_sparse.py, ...).
+    """
+    _forward = forward_fn or (lambda m, imgs: segformer_forward(m, processor, imgs, device, fp16=False))
     model.train()
     total_loss = 0.0
     for images, labels in tqdm(loader, desc="train", leave=False):
@@ -174,7 +182,7 @@ def train_one_epoch(
 
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=fp16):
-            logits = segformer_forward(model, processor, images, device, fp16=False)
+            logits = _forward(model, images)
             loss = criterion(logits, labels)
 
         loss.backward()
@@ -193,8 +201,10 @@ def evaluate(
     criterion: nn.Module,
     device: str,
     fp16: bool,
+    forward_fn: Callable[[nn.Module, torch.Tensor], torch.Tensor] | None = None,
 ) -> tuple[float, float]:
-    """Return (val_loss, mean_iou)."""
+    """Return (val_loss, mean_iou). See train_one_epoch for ``forward_fn``."""
+    _forward = forward_fn or (lambda m, imgs: segformer_forward(m, processor, imgs, device, fp16=False))
     model.eval()
     total_loss = 0.0
     all_preds:  list[torch.Tensor] = []
@@ -205,7 +215,7 @@ def evaluate(
         labels = labels.to(device, non_blocking=True)
 
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=fp16):
-            logits = segformer_forward(model, processor, images, device, fp16=False)
+            logits = _forward(model, images)
             loss = criterion(logits, labels)
 
         total_loss += loss.item()

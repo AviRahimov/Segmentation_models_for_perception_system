@@ -460,6 +460,20 @@ def gt_sanity_panel(gt_gray_u8: np.ndarray) -> np.ndarray:
     return np.hstack([lbl, lc])
 
 
+def _resize_to_native(merged: torch.Tensor, native_hw: tuple[int, int]) -> torch.Tensor:
+    """Some SemanticModel.predict_logits implementations (e.g. SegFormer's,
+    which deliberately halves output resolution for its own reasons) don't
+    return output at the input frame's native size — this script's own
+    masking arithmetic assumes native size, so upsample defensively here
+    rather than assuming every model returns native resolution unchanged."""
+    h, w = native_hw
+    if merged.shape[-2:] == (h, w):
+        return merged
+    return torch.nn.functional.interpolate(
+        merged.unsqueeze(0), size=(h, w), mode="bilinear", align_corners=False,
+    )[0]
+
+
 def _road_ground_channel_index(names: tuple[str, ...]) -> int:
     try:
         return names.index("road_ground")
@@ -711,6 +725,7 @@ def main() -> int:
             for fr in frames_freespace:
                 fk = fr.strip_name
                 merged = mdl.predict_logits(fr.img_bgr)
+                merged = _resize_to_native(merged, fr.img_bgr.shape[:2])
                 mnp = merged.float().cpu().numpy()
                 if trav_tau is None:
                     pred_mc = mnp.argmax(axis=0).astype(np.int32, copy=False)
@@ -753,6 +768,7 @@ def main() -> int:
             for img_path, img_bgr, gt_user in frames_legacy:
                 stem = img_path.stem
                 merged = mdl.predict_logits(img_bgr)
+                merged = _resize_to_native(merged, img_bgr.shape[:2])
                 pred_mc = merged.argmax(dim=0).cpu().numpy().astype(np.int8)
 
                 mu = per_image_mean_iou(pred_mc, gt_user, n_uc)
