@@ -136,7 +136,7 @@ Seeking automatically resets temporal buffers (EMA + tracker) because
 temporal context is broken.
 
 **Video player vs ORFD freespace strips:** The Qt player and
-`scripts/segmentation/evaluation/orfd_semantic_comparison.py` use the same SegFormer (and the same
+`scripts/segmentation/evaluation/compare_semantic_models.py --dataset orfd` use the same SegFormer (and the same
 `config.yaml` weights / class merge rules). The comparison script’s strips
 show **binary traversable** predictions (road_ground vs GT path) for IoU;
 the player draws the full **argmax** terrain overlay, with each class’s

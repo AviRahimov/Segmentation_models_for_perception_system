@@ -15,7 +15,6 @@ import yaml
 logger = logging.getLogger(__name__)
 
 from ..core.colors_named import _NAMED_COLORS, parse_color
-from ..models.semantic._class_catalogues import GOOSE_12_NAMES
 from ..models.semantic._class_catalogues import CATALOGUE_SIZES
 from .schema import (
     AppConfig,
@@ -28,8 +27,6 @@ from .schema import (
     LowConfRecoveryCfg,
     ModelsCfg,
     OrfdSemanticComparisonCfg,
-    OrfdSemanticComparisonGooseCfg,
-    OrfdSemanticComparisonInstanceMaskCfg,
     PlayerCfg,
     PostprocessCfg,
     InstanceTrackerCfg,
@@ -211,74 +208,9 @@ def _build_orfd_semantic_comparison(raw: dict[str, Any]) -> OrfdSemanticComparis
     else:
         tau_f = None
 
-    goose_r = _require_dict(raw.get("goose"), "goose") if raw else {}
-    tcats = goose_r.get("traversable_categories", ["terrain", "road"])
-    if tcats is None:
-        tcats_list: list[str] = []
-    elif isinstance(tcats, (list, tuple)):
-        tcats_list = []
-        for i, item in enumerate(tcats):
-            if not isinstance(item, str) or not item.strip():
-                raise ConfigError(f"goose.traversable_categories[{i}] must be a non-empty string")
-            tcats_list.append(item.strip().lower())
-    elif isinstance(tcats, str):
-        tcats_list = [x.strip().lower() for x in tcats.split(",") if x.strip()]
-    else:
-        raise ConfigError(f"goose.traversable_categories must be a list or string, got {type(tcats).__name__}")
-    if not tcats_list:
-        raise ConfigError("goose.traversable_categories must list at least one GOOSE coarse name")
-
-    allowed = frozenset(GOOSE_12_NAMES)
-    for c in tcats_list:
-        if c not in allowed:
-            raise ConfigError(
-                f"goose.traversable_categories: unknown GOOSE-12 category {c!r} "
-                f"(allowed: {sorted(allowed)})",
-            )
-
-    seen: set[str] = set()
-    tcats_unique: list[str] = []
-    for c in tcats_list:
-        if c not in seen:
-            seen.add(c)
-            tcats_unique.append(c)
-
-    g_samples = goose_r.get("samples", 0)
-    if not isinstance(g_samples, int) or g_samples < 0:
-        raise ConfigError(f"goose.samples must be int >= 0, got {g_samples!r}")
-
-    inst_r = _require_dict(raw.get("instance_mask_subtraction"), "instance_mask_subtraction") if raw else {}
-    subtract = bool(inst_r.get("subtract_from_traversable", False))
-    dilate_px = inst_r.get("dilate_px", 5)
-    if not isinstance(dilate_px, int) or dilate_px < 0:
-        raise ConfigError(f"instance_mask_subtraction.dilate_px must be int >= 0, got {dilate_px!r}")
-
-    goose_cfg = OrfdSemanticComparisonGooseCfg(
-        ex_root=str(goose_r.get(
-            "ex_root",
-            OrfdSemanticComparisonGooseCfg.ex_root,
-        )),
-        label_csv=str(goose_r.get(
-            "label_csv",
-            OrfdSemanticComparisonGooseCfg.label_csv,
-        )),
-        scenario_dir=str(goose_r.get(
-            "scenario_dir",
-            OrfdSemanticComparisonGooseCfg.scenario_dir,
-        )),
-        samples=int(g_samples),
-        traversable_categories=tuple(tcats_unique),
-    )
-    inst_cfg = OrfdSemanticComparisonInstanceMaskCfg(
-        subtract_from_traversable=subtract,
-        dilate_px=int(dilate_px),
-    )
-
     return OrfdSemanticComparisonCfg(
         orfd_trav_gray=int(grey),
         freespace_merged_prob_floor=tau_f,
-        goose=goose_cfg,
-        instance_mask_subtraction=inst_cfg,
     )
 
 

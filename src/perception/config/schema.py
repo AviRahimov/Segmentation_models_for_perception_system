@@ -270,35 +270,12 @@ class SourceCfg:
 
 
 @dataclass(frozen=True)
-class OrfdSemanticComparisonGooseCfg:
-    """GOOSE-Ex val extras for ``scripts/orfd_semantic_comparison.py``."""
-
-    ex_root: str = "datasets/goose/gooseEx_2d_val/gooseEx_2d_val"
-    label_csv: str = (
-        "datasets/goose/gooseEx_2d_val/gooseEx_2d_val/goose_label_mapping.csv"
-    )
-    scenario_dir: str = "spot_scenario03"
-    samples: int = 0
-    traversable_categories: tuple[str, ...] = ("terrain", "road")
-
-
-@dataclass(frozen=True)
-class OrfdSemanticComparisonInstanceMaskCfg:
-    subtract_from_traversable: bool = False
-    dilate_px: int = 5
-
-
-@dataclass(frozen=True)
 class OrfdSemanticComparisonCfg:
-    """Strip comparison harness (ORFD + optional GOOSE val frames)."""
+    """Strip comparison harness (scripts/segmentation/evaluation/compare_semantic_models.py)."""
 
     orfd_trav_gray: int = 255
     #: If set, traversable iff merged P(road_ground) >= this (otherwise argmax).
     freespace_merged_prob_floor: float | None = None
-    goose: OrfdSemanticComparisonGooseCfg = field(default_factory=OrfdSemanticComparisonGooseCfg)
-    instance_mask_subtraction: OrfdSemanticComparisonInstanceMaskCfg = field(
-        default_factory=OrfdSemanticComparisonInstanceMaskCfg,
-    )
 
 
 @dataclass(frozen=True)

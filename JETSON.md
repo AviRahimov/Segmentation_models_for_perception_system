@@ -569,8 +569,7 @@ python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4 --m
 | `run_player.py` | PyQt5 GUI player | `python3 scripts/inference/run_player.py --source samples/video.mp4` |
 | `export_trt.py` | Build TRT `.engine` files (production) | `python3 scripts/tools/export_trt.py --config config/config.yaml` |
 | `train_orfd.py` | Fine-tune segmentation model | `python3 scripts/segmentation/training/train_orfd.py --model segformer-b2 --freeze-backbone ...` |
-| `benchmark_orfd.py` | Accuracy metrics on ORFD val set | `python3 scripts/segmentation/evaluation/benchmark_orfd.py --models segformer-b2-frozen` |
-| `orfd_semantic_comparison.py` | Side-by-side model comparison strips | `python3 scripts/segmentation/evaluation/orfd_semantic_comparison.py` |
+| `compare_semantic_models.py` | Side-by-side model comparison + accuracy metrics (ORFD/zikim/fcdd) | `python3 scripts/segmentation/evaluation/compare_semantic_models.py --dataset orfd --models segformer-b2` |
 | `annotate_images.py` | Annotate a folder of images | `python3 scripts/tools/annotate_images.py --input dir/` |
 | `render_samples.py` | Render annotated sample videos | `python3 scripts/tools/render_samples.py` |
 | `download_datasets.py` | Download ORFD / GOOSE datasets | `python3 scripts/tools/download_datasets.py` |

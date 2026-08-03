@@ -3,17 +3,21 @@
 clips — no ground truth, no metrics, purely for visual inspection of how
 each model handles real-world footage the models were never evaluated on.
 
+Omit --videos-dir and/or --models to pick interactively from what's on disk.
+
 Usage
 -----
     PYTHONPATH=src python scripts/segmentation/evaluation/compare_on_raw_video.py \\
         --videos-dir "datasets/segmentation/Off_Road_ShutterStcok_Videos&Frames" \\
         --models mask2former-large mask2former-base segformer-b2 \\
         --output-dir reports/segmentation/shutterstock_comparison
+
+    # interactive
+    PYTHONPATH=src python scripts/segmentation/evaluation/compare_on_raw_video.py
 """
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import logging
 import sys
 from pathlib import Path
@@ -26,10 +30,18 @@ _HERE = Path(__file__).resolve().parent
 _REPO = _HERE.parents[2]
 sys.path.insert(0, str(_REPO / "src"))
 
+from _semantic_eval_common import (  # noqa: E402
+    BASELINE_CHOICES,
+    ask_choice,
+    ask_multi_choice,
+    parse_model_spec,
+    resolve_weights,
+    scan_semantic_checkpoints,
+)
 from perception.config.loader import load_config
 from perception.config.schema import ClassDef, SemanticModelCfg
 from perception.models.backends.pytorch import PyTorchBackend
-from perception.models.factory import SEMANTIC_DEFAULT_WEIGHTS, build_semantic_model
+from perception.models.factory import build_semantic_model
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger("compare_on_raw_video")
@@ -72,36 +84,70 @@ def _n_way_panel(frame_bgr: np.ndarray, preds: dict[str, np.ndarray], panel_w: i
     return np.concatenate(labelled, axis=1)
 
 
+def _scan_video_dirs(seg_root: Path) -> list[tuple[str, Path]]:
+    """List datasets/segmentation/* subdirs that contain .webm/.mp4 files."""
+    found = []
+    if not seg_root.is_dir():
+        return found
+    for d in sorted(p for p in seg_root.iterdir() if p.is_dir()):
+        if list(d.glob("*.webm")) or list(d.glob("*.mp4")):
+            found.append((d.name, d))
+    return found
+
+
+def _pick_videos_dir_interactively() -> Path:
+    seg_root = _REPO / "datasets" / "segmentation"
+    found = _scan_video_dirs(seg_root)
+    if not found:
+        raise SystemExit(f"No .webm/.mp4 files found under any subdir of {seg_root}. Pass --videos-dir explicitly.")
+    options = [(str(d), f"{name} ({len(list(d.glob('*.webm')) + list(d.glob('*.mp4')))} clips)") for name, d in found]
+    chosen = ask_choice("Which video folder?", options, default_idx=0)
+    return Path(chosen)
+
+
+def _pick_models_interactively() -> list[str]:
+    checkpoints = scan_semantic_checkpoints(_REPO / "weights" / "segmentation" / "orfd")
+    all_choices = list(checkpoints) + list(BASELINE_CHOICES)
+    options = [
+        (f"{c.key}:{c.weights}" if c.weights else c.key, f"{c.key}  [{c.label}]")
+        for c in all_choices
+    ]
+    default_idxs = tuple(range(min(3, len(options))))
+    return ask_multi_choice("Which model(s)? (compare 2+ side by side)", options, default_idxs)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--videos-dir", required=True)
+    p.add_argument("--videos-dir", default=None, help="Omit to pick interactively.")
     p.add_argument("--config", default="config/config.yaml")
-    p.add_argument("--models", nargs="+", default=["mask2former-large", "mask2former-base", "segformer-b2"])
-    p.add_argument("--output-dir", default="reports/segmentation/shutterstock_comparison")
+    p.add_argument("--models", nargs="+", default=None,
+                    help="Model keys, optionally 'key:weights_path'. Omit to pick interactively.")
+    p.add_argument("--output-dir", default="reports/segmentation/raw_video_comparison")
     p.add_argument("--panel-w", type=int, default=480)
     p.add_argument("--max-frames", type=int, default=None)
     args = p.parse_args()
 
-    videos_dir = Path(args.videos_dir)
+    videos_dir = Path(args.videos_dir) if args.videos_dir else _pick_videos_dir_interactively()
     video_paths = sorted(videos_dir.glob("*.webm")) + sorted(videos_dir.glob("*.mp4"))
     if not video_paths:
         logger.error("No .webm/.mp4 files found in %s", videos_dir)
         return 2
     logger.info("Found %d video clips", len(video_paths))
 
+    model_specs = args.models if args.models else _pick_models_interactively()
+
     cfg = load_config(args.config)
     hw = cfg.hardware
     backend = PyTorchBackend()
 
     models = {}
-    for key in args.models:
-        weights = SEMANTIC_DEFAULT_WEIGHTS.get(key.lower().strip(), "")
-        if key.lower().strip() == cfg.models.semantic.name.lower().strip() and cfg.models.semantic.weights:
-            weights = cfg.models.semantic.weights
+    for spec in model_specs:
+        key, explicit_w = parse_model_spec(spec)
+        weights = resolve_weights(key, explicit_w, cfg)
         mdl = build_semantic_model(SemanticModelCfg(name=key, weights=weights), hw, backend)
         mdl.warmup(cfg.classes)
-        models[key] = mdl
-        logger.info("Loaded %s (weights=%s)", key, weights)
+        models[spec] = mdl
+        logger.info("Loaded %s (weights=%s)", spec, weights)
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

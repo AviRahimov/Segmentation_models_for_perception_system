@@ -324,18 +324,11 @@ def test_native_indices_out_of_range_goose_12(tmp_path):
         load_config(_write(tmp_path, body))
 
 
-def test_orfd_semantic_comparison_defaults_and_goose_categories(tmp_path):
-    body = (
-        _VALID_YAML
-        + "\norfd_semantic_comparison:\n  goose:\n    samples: 3\n"
-        + "    traversable_categories: [terrain, road]\n"
-    )
-    cfg = load_config(_write(tmp_path, body))
+def test_orfd_semantic_comparison_defaults(tmp_path):
+    cfg = load_config(_write(tmp_path, _VALID_YAML))
     o = cfg.orfd_semantic_comparison
     assert o.orfd_trav_gray == 255
-    assert o.goose.samples == 3
-    assert o.goose.traversable_categories == ("terrain", "road")
-    assert o.instance_mask_subtraction.subtract_from_traversable is False
+    assert o.freespace_merged_prob_floor is None
 
 
 def test_orfd_semantic_comparison_freespace_prob_floor(tmp_path):
@@ -345,15 +338,6 @@ def test_orfd_semantic_comparison_freespace_prob_floor(tmp_path):
     )
     cfg = load_config(_write(tmp_path, body))
     assert cfg.orfd_semantic_comparison.freespace_merged_prob_floor == pytest.approx(0.35)
-
-
-def test_orfd_semantic_comparison_unknown_goose_category(tmp_path):
-    body = _VALID_YAML + (
-        "\norfd_semantic_comparison:\n  goose:\n"
-        "    traversable_categories: [terrain, not_a_real_class]\n"
-    )
-    with pytest.raises(ConfigError, match="unknown GOOSE-12 category"):
-        load_config(_write(tmp_path, body))
 
 
 def test_instance_class_rejects_native_indices(tmp_path):

@@ -38,7 +38,9 @@ models:
   # Other options: segformer-b0 (fastest), segformer-b1, segformer-b4
   semantic:
     name: "segformer-b2"
-    weights: "weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth"
+    # weights: "weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth"
+    weights: "weights/segmentation/orfd/distilled_segformer-b2/best.pth"
+    # weights: "weights/segmentation/orfd/mask2former-large/best.pth"
     num_classes: 3
     processor_size: 256
 
@@ -343,10 +345,7 @@ source:
   fps_hint: 30.0
 
 # ---------------------------------------------------------------------------
-# Used only by scripts/segmentation/evaluation/orfd_semantic_comparison.py
+# Used only by scripts/segmentation/evaluation/compare_semantic_models.py
 orfd_semantic_comparison:
   orfd_trav_gray: 255
   freespace_merged_prob_floor: 0.25
-  instance_mask_subtraction:
-    subtract_from_traversable: true
-    dilate_px: 5

@@ -13,8 +13,9 @@ with the ORFD ZIP: **brightness encodes freespace**.
 This differs from textual summaries that casually list ``128`` as freespace —
 check ``docs/sanity_gt`` composites if your mirror swapped encodings.
 
-For an escape hatch, see ``--orfd-trav-gray`` on
-``scripts/orfd_semantic_comparison.py``.
+For an escape hatch, see ``orfd_trav_gray`` under ``orfd_semantic_comparison``
+in ``config/config.yaml``, consumed by
+``scripts/segmentation/evaluation/compare_semantic_models.py``.
 """
 from __future__ import annotations
 

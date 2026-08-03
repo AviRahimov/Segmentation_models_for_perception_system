@@ -30,13 +30,15 @@ python scripts/inference/run_headless.py --source samples/clip.mp4 --max-frames 
 # Training (fine-tune SegFormer on ORFD)
 python scripts/segmentation/training/train_orfd.py
 
-# Evaluation
-python scripts/segmentation/evaluation/eval_segformer_on_datasets.py
-python scripts/segmentation/evaluation/orfd_semantic_comparison.py
-# Accuracy metrics (mIoU/P/R/F1) on ORFD val across a registry of trained variants
-python scripts/segmentation/evaluation/benchmark_orfd.py
-# GOOSE-Ex-based B2 vs B4 comparison via the real config/factory path (undocumented elsewhere)
-python scripts/segmentation/evaluation/compare_semantic_models.py
+# Evaluation — compare N models on ORFD/zikim (labeled, mIoU + freespace metrics)
+# or fcdd (qualitative only, no verified label mapping yet); omit --dataset/--models
+# to pick interactively from what's on disk
+python scripts/segmentation/evaluation/compare_semantic_models.py \
+    --dataset orfd --models segformer-b2 mask2former-large
+python scripts/segmentation/evaluation/compare_semantic_models.py  # interactive
+# Params + latency only, any --models, no dataset needed
+python scripts/segmentation/evaluation/compare_semantic_models.py \
+    --latency-only --models segformer-b2 mask2former-large auriganet
 
 # Optimization pipeline (dev PC → Jetson workflow)
 python scripts/segmentation/optimization/resolution_sweep.py --checkpoint weights/.../best.pth --data datasets/segmentation/ORFD
