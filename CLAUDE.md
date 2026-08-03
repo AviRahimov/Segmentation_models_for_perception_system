@@ -239,11 +239,50 @@ src/perception/
 
 | Model | Status | Notes |
 |---|---|---|
-| SegFormer-B2 | Primary semantic | mIoU=0.279 on GOOSE-Ex, ~19 ms/frame on RTX 5090 |
+| SegFormer-B2 | Primary semantic | mIoU=0.279 on GOOSE-Ex, ~19 ms/frame on RTX 5090; ORFD 3-class mIoU=0.8624 |
+| SegFormer-B2 (distilled) | Candidate, not yet promoted | ORFD 3-class mIoU=0.8813 — beats production and its Mask2Former-Large teacher; same architecture/speed as production. See "Segmentation Architecture Comparison + Distillation" below before promoting |
 | SegFormer-B4 | Available | Slightly lower mIoU (0.268), ~24 ms |
 | YOLOE-26L | Primary instance | Text embeds cached at warmup; discovery mode available |
 | DDRNet-39 | Removed | Fully deleted from `src/` — was broken (GOOSE-12 channel ordering unconfirmed, IoU≈0.002) |
 | PP-LiteSeg | Removed | Fully deleted from `src/` — wrapper had raised `NotImplementedError` |
+
+## Segmentation Architecture Comparison + Distillation (ORFD)
+
+Production SegFormer-B2 (`weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth`,
+**0.8624 mIoU**, current 3-class metric) was compared against 6 new architectures fine-tuned on the
+same ORFD split with the identical `compute_miou`: AurigaNet (resurrected, 0.8439), UPerNet/ConvNeXt-B
+(0.8632), DINOv2-Base/Large + linear head (0.8592 / 0.8534 — bigger hurt here), and Mask2Former
+Swin-Base/Large (0.8742 / 0.8780 — bigger helped here). **Important correction**: "0.852", cited
+repeatedly in earlier reporting as production's mIoU, was actually `benchmark_orfd.py`'s stale
+**2-class** metric (no sky) — always use the 3-class metric (`_orfd_common.compute_miou`,
+`NUM_CLASSES=3`) for any new comparison.
+
+**Distillation (Mask2Former-Large → SegFormer-B2) succeeded**: per the user's own visual review of
+real footage (Mask2Former-Large handled two new domains — Zikim and ShutterStock clips — better than
+its own metrics suggested), it was used as a response-based KD teacher for production's
+architecture. Method: student warm-starts from the production checkpoint (not ADE20K cold-start);
+loss = hard-label Dice+CE + temperature-scaled KL divergence (T=3) against the teacher's dense
+per-pixel probabilities (`masks_classes = softmax(class_queries_logits)[...,:-1]`,
+`masks_probs = sigmoid(masks_queries_logits)`, `probs = einsum("bqc,bqhw->bchw", ...)`, normalized).
+Result: **0.8813 mIoU** (`weights/segmentation/orfd/distilled_segformer-b2/best.pth`) — beats
+production (+0.0189) *and its own teacher* (+0.0033), while keeping SegFormer-B2's architecture and
+the Jetson-proven ~150–160 FPS optimized speed unchanged (no re-export/re-optimization needed to
+deploy it). Script: `scripts/segmentation/training/train_distill.py`.
+
+**LoRA-adapting Mask2Former-Large's Swin backbone was tried and rejected**: instead of keeping the
+backbone fully frozen (the recipe that reached 0.8780), `train_mask2former.py --lora` (targeting only
+`attention.self.{query,value}` inside `pixel_level_module.encoder`, everything else left trainable)
+peaked at **0.8639 at epoch 1** and never recovered, oscillating lower for the rest of training —
+partial backbone adaptation made this model worse, not better.
+
+**A genuine, disclosed complication**: on ORFD's own narrower binary-traversable-only spot check (a
+different, stricter metric used elsewhere in this project, not the 3-class mIoU above), production
+SegFormer-B2 still leads (0.947) over Mask2Former-Large (0.909), Mask2Former-Base (0.911), and even
+the distilled model (0.895) — the distilled student appears to have partly inherited the teacher's
+comparatively weaker showing on this specific check along with its strength on the full metric. No
+single number is the whole story here; the distilled checkpoint is the strongest candidate on the
+primary metric and worth deploying, but this tradeoff should be understood, not hidden, before
+promoting it over production.
 
 ## Config Knobs
 
