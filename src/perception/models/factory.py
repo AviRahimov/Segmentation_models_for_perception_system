@@ -93,6 +93,7 @@ SEMANTIC_REGISTRY: dict[str, Type[SemanticModel]] = {
     "dinov2":       DINOv2SemanticModel,
     "dinov2-base":  DINOv2SemanticModel,
     "dinov2-large": DINOv2SemanticModel,
+    "segformer-b2-distilled": SegFormerSemanticModel,
 }
 
 SEMANTIC_DEFAULT_WEIGHTS: dict[str, str] = {
@@ -113,6 +114,7 @@ SEMANTIC_DEFAULT_WEIGHTS: dict[str, str] = {
     "dinov2":       "weights/segmentation/orfd/dinov2/best.pth",
     "dinov2-base":  "weights/segmentation/orfd/dinov2/best.pth",
     "dinov2-large": "weights/segmentation/orfd/dinov2-large/best.pth",
+    "segformer-b2-distilled": "weights/segmentation/orfd/distilled_segformer-b2/best.pth",
 }
 
 
