@@ -74,6 +74,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--clip-norm", type=float, default=1.0)
     p.add_argument("--freeze-backbone", action="store_true",
                    help="Freeze the Swin backbone; train only the pixel decoder + transformer decoder heads")
+    p.add_argument("--lora", action="store_true",
+                   help="Apply LoRA to the Swin backbone's attention Q/V projections instead of fully "
+                        "freezing or fully training it — a middle ground between --freeze-backbone and "
+                        "full fine-tuning. Mutually exclusive with --freeze-backbone.")
+    p.add_argument("--lora-r", type=int, default=16)
+    p.add_argument("--lora-alpha", type=int, default=32)
     p.add_argument("--backbone", default=MASK2FORMER_HF_BASE,
                    help="HF Mask2Former checkpoint id (e.g. facebook/mask2former-swin-large-ade-semantic)")
     return p.parse_args()
@@ -174,6 +180,9 @@ def main() -> None:
     resume_weights = args.resume if args.resume and Path(args.resume).is_file() else ""
     model, processor = build_mask2former(device, fp16, weights=resume_weights, backbone_id=args.backbone)
 
+    if args.freeze_backbone and args.lora:
+        raise SystemExit("--freeze-backbone and --lora are mutually exclusive.")
+
     if args.freeze_backbone:
         frozen = 0
         for name, p in model.named_parameters():
@@ -181,6 +190,27 @@ def main() -> None:
                 p.requires_grad_(False)
                 frozen += p.numel()
         logger.info("Mask2Former: Swin backbone frozen (%.2fM params).", frozen / 1e6)
+
+    if args.lora:
+        from peft import get_peft_model, LoraConfig
+        # target_modules matches by final path component name — confirmed only the
+        # Swin backbone's attention has modules literally named query/value (the
+        # transformer decoder uses different projection names), so this can't
+        # accidentally apply LoRA to the decoder/heads.
+        lora_config = LoraConfig(
+            r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=0.1,
+            target_modules=["query", "value"], bias="none",
+        )
+        model = get_peft_model(model, lora_config)
+        # PEFT freezes everything; re-enable the pixel decoder + transformer decoder
+        # + prediction heads (everything outside the Swin backbone) for full training.
+        for name, p in model.named_parameters():
+            if "pixel_level_module.encoder" not in name:
+                p.requires_grad_(True)
+        logger.info("LoRA applied to Mask2Former's Swin backbone Q/V projections "
+                    "(r=%d, alpha=%d); pixel decoder + transformer decoder left fully trainable.",
+                    args.lora_r, args.lora_alpha)
+        model.print_trainable_parameters()
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total     = sum(p.numel() for p in model.parameters())
@@ -236,7 +266,10 @@ def main() -> None:
         if val_miou > best_miou:
             best_miou = val_miou
             patience_left = args.patience
-            _save_checkpoint(model, out_dir / "best.pth", epoch, val_miou)
+            # If LoRA was used, merge adapters so best.pth is a plain state dict
+            # that build_mask2former()/Mask2FormerSemanticModel can load as-is.
+            save_model = model.merge_and_unload() if args.lora else model
+            _save_checkpoint(save_model, out_dir / "best.pth", epoch, val_miou)
             logger.info("  -> new best mIoU %.4f saved.", best_miou)
         else:
             patience_left -= 1
