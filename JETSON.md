@@ -570,8 +570,8 @@ python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4 --m
 | `export_trt.py` | Build TRT `.engine` files (production) | `python3 scripts/tools/export_trt.py --config config/config.yaml` |
 | `train_orfd.py` | Fine-tune segmentation model | `python3 scripts/segmentation/training/train_orfd.py --model segformer-b2 --freeze-backbone ...` |
 | `compare_semantic_models.py` | Side-by-side model comparison + accuracy metrics (ORFD/zikim/fcdd) | `python3 scripts/segmentation/evaluation/compare_semantic_models.py --dataset orfd --models segformer-b2` |
-| `annotate_images.py` | Annotate a folder of images | `python3 scripts/tools/annotate_images.py --input dir/` |
-| `render_samples.py` | Render annotated sample videos | `python3 scripts/tools/render_samples.py` |
+| `annotate_images.py` | Annotate a folder of images (detection+segmentation together; `--instance-model`/`--semantic-model`/`--pick-models` to choose which) | `python3 scripts/tools/annotate_images.py --input-dir dir/ --pick-models` |
+| `render_samples.py` | Render annotated sample videos (same model-choice flags as above; `--run-all` sweeps every segmentation checkpoint on disk) | `python3 scripts/tools/render_samples.py --instance-model rfdetr-s --semantic-model mask2former-large` |
 | `download_datasets.py` | Download ORFD / GOOSE datasets | `python3 scripts/tools/download_datasets.py` |
 | `yoloe_discovery_dump.py` | Dump YOLOE open-vocab detections | `python3 scripts/detection/tools/yoloe_discovery_dump.py` |
 | **Optimization pipeline** | | |

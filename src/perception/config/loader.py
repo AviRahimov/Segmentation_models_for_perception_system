@@ -77,6 +77,32 @@ def override_source(
     return dataclasses.replace(cfg, source=new)
 
 
+def override_models(
+    cfg: AppConfig,
+    *,
+    instance_name: str | None = None,
+    instance_weights: str | None = None,
+    semantic_name: str | None = None,
+    semantic_weights: str | None = None,
+) -> AppConfig:
+    """Return a new :class:`AppConfig` with the instance and/or semantic model
+    swapped out. Any argument left ``None`` keeps the existing config value —
+    e.g. passing only ``semantic_name``/``semantic_weights`` leaves the
+    instance model untouched."""
+    models = cfg.models
+    new_instance = dataclasses.replace(
+        models.instance,
+        name=instance_name if instance_name is not None else models.instance.name,
+        weights=instance_weights if instance_weights is not None else models.instance.weights,
+    )
+    new_semantic = dataclasses.replace(
+        models.semantic,
+        name=semantic_name if semantic_name is not None else models.semantic.name,
+        weights=semantic_weights if semantic_weights is not None else models.semantic.weights,
+    )
+    return dataclasses.replace(cfg, models=dataclasses.replace(models, instance=new_instance, semantic=new_semantic))
+
+
 def resolve_path_relative_config(config_file: Path, raw: str) -> Path:
     """Resolve ``raw`` absolute or relative to the directory of ``config_file``."""
     p = Path(str(raw).strip()).expanduser()

@@ -6,12 +6,22 @@ state is reset between clips). Default layout::
 
     samples/foo.mp4 -> samples/annotated/foo_annotated.mp4
 
-With ``--run-all`` the script loops over every registered model and writes
+With ``--run-all`` the script loops over every segmentation checkpoint found
+under ``weights/segmentation/orfd/`` (plus the ADE20K baselines) and writes
 outputs to per-model sub-directories::
 
-    samples/annotated/segformer-b2-orfd/foo_annotated.mp4
-    samples/annotated/segformer-b2-final/foo_annotated.mp4
+    samples/annotated/segformer-b2/frozen_backbone/foo_annotated.mp4
+    samples/annotated/mask2former-large/mask2former-large/foo_annotated.mp4
     …
+
+Use ``--instance-model``/``--semantic-model`` (``"key"`` or
+``"key:weights_path"``) to run one specific combination instead of the whole
+config.yaml-pinned default, or ``--pick-models`` to choose both interactively
+from what's on disk. Both models run together every frame via the same
+production ``PerceptionPipeline``/``Renderer`` the GUI and headless entry
+points use — this already dispatches to TensorRT vs PyTorch per
+``hardware.use_tensorrt`` in config.yaml, so no separate Jetson-specific
+script is needed.
 
 ``samples`` is typically gitignored; outputs land alongside under
 ``samples/annotated`` by default (override with ``--out-dir``).
@@ -22,7 +32,6 @@ import argparse
 import logging
 import sys
 import time
-from dataclasses import replace
 from pathlib import Path
 
 import cv2
@@ -31,8 +40,17 @@ import torch
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parents[1]
 sys.path.insert(0, str((_REPO_ROOT / "src").resolve()))
+sys.path.insert(0, str(_HERE))
 
-from perception.config.loader import load_config, override_source  # noqa: E402
+from _model_picker_common import (  # noqa: E402
+    BASELINE_CHOICES,
+    parse_model_spec,
+    pick_instance_and_semantic_model_specs,
+    resolve_instance_weights,
+    resolve_weights,
+    scan_semantic_checkpoints,
+)
+from perception.config.loader import load_config, override_models, override_source  # noqa: E402
 from perception.config.schema import AppConfig                      # noqa: E402
 from perception.io.factory import build_source                      # noqa: E402
 from perception.pipeline.perception import build_pipeline           # noqa: E402
@@ -48,15 +66,14 @@ _VIDEO_EXTENSIONS = frozenset({".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"})
 # --------------------------------------------------------------------------- #
 
 
-def _render_model_registry() -> list[dict]:
-    """All trained models that can be swapped in for visual comparison."""
+def _semantic_model_registry(repo_root: Path) -> list[dict]:
+    """Every segmentation checkpoint on disk, for --run-all (varies the
+    semantic model only; use --instance-model to fix the detector)."""
+    choices = list(scan_semantic_checkpoints(repo_root / "weights" / "segmentation" / "orfd"))
+    choices += list(BASELINE_CHOICES)
     return [
-        {
-            "key":         "segformer-b2-final",
-            "name":        "segformer-b2",
-            "weights":     str(_REPO_ROOT / "weights" / "segmentation" / "orfd" / "full_finetune_regular_aug" / "segformer-b2" / "best.pth"),
-            "num_classes": 3,
-        },
+        {"key": f"{c.key}/{c.label}" if c.label else c.key, "name": c.key, "weights": c.weights}
+        for c in choices
     ]
 
 
@@ -65,15 +82,20 @@ def _render_model_registry() -> list[dict]:
 # --------------------------------------------------------------------------- #
 
 
-def _with_semantic_model(
-    cfg: AppConfig,
-    name: str,
-    weights: str,
-    num_classes: int,
-) -> AppConfig:
-    """Return a copy of cfg with the semantic model swapped out."""
-    sem = replace(cfg.models.semantic, name=name, weights=weights, num_classes=num_classes)
-    return replace(cfg, models=replace(cfg.models, semantic=sem))
+def _with_semantic_model(cfg: AppConfig, spec: str) -> AppConfig:
+    """Return a copy of cfg with the semantic model swapped to ``spec``
+    (``"key"`` or ``"key:weights_path"``)."""
+    key, explicit_w = parse_model_spec(spec)
+    weights = resolve_weights(key, explicit_w, cfg)
+    return override_models(cfg, semantic_name=key, semantic_weights=weights)
+
+
+def _with_instance_model(cfg: AppConfig, spec: str) -> AppConfig:
+    """Return a copy of cfg with the instance/detection model swapped to
+    ``spec`` (``"key"`` or ``"key:weights_path"``)."""
+    key, explicit_w = parse_model_spec(spec)
+    weights = resolve_instance_weights(key, explicit_w, cfg)
+    return override_models(cfg, instance_name=key, instance_weights=weights)
 
 
 def _collect_videos(
@@ -208,10 +230,23 @@ def main() -> int:
         "--run-all",
         action="store_true",
         help=(
-            "Loop over all registered trained models. "
-            "Outputs go to <out-dir>/<model-key>/. "
-            "Skips any model whose checkpoint file is missing."
+            "Loop over every segmentation checkpoint found on disk (varies the semantic "
+            "model only). Outputs go to <out-dir>/<model-key>/. Combine with --instance-model "
+            "to fix the detector across the whole sweep."
         ),
+    )
+    p.add_argument(
+        "--instance-model", default=None, metavar="KEY[:weights_path]",
+        help="Override the detection model (default: whatever config.yaml has pinned).",
+    )
+    p.add_argument(
+        "--semantic-model", default=None, metavar="KEY[:weights_path]",
+        help="Override the segmentation model for a single combination (ignored with --run-all).",
+    )
+    p.add_argument(
+        "--pick-models", action="store_true",
+        help="Interactively choose both models from what's on disk (ignores "
+             "--instance-model/--semantic-model if also given).",
     )
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args()
@@ -222,6 +257,18 @@ def main() -> int:
     )
 
     cfg_template = load_config(args.config)
+
+    if args.pick_models:
+        instance_spec, semantic_spec = pick_instance_and_semantic_model_specs(cfg_template, _REPO_ROOT)
+        args.instance_model, args.semantic_model = instance_spec, semantic_spec
+        logger.info("Picked instance=%s semantic=%s", instance_spec, semantic_spec)
+
+    if args.instance_model:
+        cfg_template = _with_instance_model(cfg_template, args.instance_model)
+    if args.semantic_model and not args.run_all:
+        cfg_template = _with_semantic_model(cfg_template, args.semantic_model)
+    elif args.semantic_model and args.run_all:
+        logger.warning("--semantic-model is ignored with --run-all (which already varies the semantic model).")
 
     if args.video is not None:
         video_path = Path(args.video).resolve()
@@ -254,17 +301,15 @@ def main() -> int:
 
     # ── Determine which models to run ──────────────────────────────────────
     if args.run_all:
-        registry = [
-            m for m in _render_model_registry()
-            if Path(m["weights"]).exists()
-        ]
+        all_entries = _semantic_model_registry(_REPO_ROOT)
+        registry = [m for m in all_entries if not m["weights"] or Path(m["weights"]).exists()]
         if not registry:
             logger.error(
-                "No checkpoint files found for any registered model. "
-                "Train first with scripts/train_orfd.py."
+                "No segmentation checkpoints found under weights/segmentation/orfd/. "
+                "Train first with scripts/segmentation/training/train_orfd.py."
             )
             return 1
-        missing = [m["key"] for m in _render_model_registry() if not Path(m["weights"]).exists()]
+        missing = [m["key"] for m in all_entries if m["weights"] and not Path(m["weights"]).exists()]
         if missing:
             logger.warning("Skipping models with missing checkpoints: %s", ", ".join(missing))
         models_to_run = registry
@@ -309,12 +354,8 @@ def main() -> int:
 
     if models_to_run:
         for model_def in models_to_run:
-            cfg = _with_semantic_model(
-                cfg_template,
-                name=model_def["name"],
-                weights=model_def["weights"],
-                num_classes=model_def["num_classes"],
-            )
+            spec = f"{model_def['name']}:{model_def['weights']}" if model_def["weights"] else model_def["name"]
+            cfg = _with_semantic_model(cfg_template, spec)
             _run_model(cfg, out_dir / model_def["key"], model_def["key"])
     else:
         # Single-model mode: use config as-is, flat output directory.

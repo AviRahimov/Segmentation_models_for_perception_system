@@ -39,6 +39,11 @@ python scripts/segmentation/evaluation/compare_semantic_models.py  # interactive
 # Params + latency only, any --models, no dataset needed
 python scripts/segmentation/evaluation/compare_semantic_models.py \
     --latency-only --models segformer-b2 mask2former-large auriganet
+# Qualitative-only N-way comparison on raw, unlabeled video clips (no GT/metrics);
+# omit --videos-dir/--models to pick interactively
+python scripts/segmentation/evaluation/compare_on_raw_video.py \
+    --videos-dir "datasets/segmentation/Off_Road_ShutterStcok_Videos&Frames" \
+    --models mask2former-large mask2former-base segformer-b2
 
 # Optimization pipeline (dev PC → Jetson workflow)
 python scripts/segmentation/optimization/resolution_sweep.py --checkpoint weights/.../best.pth --data datasets/segmentation/ORFD

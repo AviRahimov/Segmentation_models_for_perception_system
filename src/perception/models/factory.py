@@ -177,6 +177,10 @@ def build_semantic_model(
         kwargs["num_classes"] = cfg.num_classes
     if "segformer" in name or "mask2former" in name or "dinov2" in name:
         kwargs["name"] = name
+    if "segformer" in name:
+        # processor_size/trt_engine_path are SegFormer-specific (its HF processor's
+        # resize behavior / TensorRT export path) -- Mask2Former/DINOv2's wrappers
+        # don't accept either kwarg.
         if cfg.processor_size is not None:
             kwargs["processor_size"] = cfg.processor_size
         if cfg.trt_engine_path:

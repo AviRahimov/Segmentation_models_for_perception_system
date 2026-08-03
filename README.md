@@ -162,6 +162,15 @@ python scripts/tools/render_samples.py --config config/config.yaml
 
 python scripts/tools/render_samples.py --samples-dir /data/clips --out-dir /data/out_overlays
 python scripts/tools/render_samples.py --recursive --max-frames 300   # smoke test per clip
+
+# Run one specific detection+segmentation combo instead of the config.yaml default
+# ("key" or "key:weights_path" for either flag):
+python scripts/tools/render_samples.py --instance-model rfdetr-s --semantic-model mask2former-large
+# Or choose both interactively from what's on disk:
+python scripts/tools/render_samples.py --pick-models
+# --run-all now sweeps every segmentation checkpoint found under weights/segmentation/orfd/
+# (combine with --instance-model to fix the detector across the whole sweep)
+python scripts/tools/render_samples.py --run-all --instance-model rfdetr-s
 ```
 
 ### Download test datasets

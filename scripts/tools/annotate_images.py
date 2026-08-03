@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Annotate every image in a folder with YOLOE + SegFormer and save PNGs.
+"""Annotate every image in a folder with the instance + semantic models and save PNGs.
 
 Default layout::
 
     <input-dir>/foo.jpg  ->  <input-dir>/annotated/foo_annotated.png
 
 Override the output directory with ``--out-dir``.
-The model used is whatever is active in ``config/config.yaml``
-(or override with ``--config``).
+The models used are whatever is active in ``config/config.yaml``
+(or override with ``--config``), unless overridden per-run with
+``--instance-model``/``--semantic-model``/``--pick-models``.
 
 Usage::
 
-    python scripts/annotate_images.py
-    python scripts/annotate_images.py --input-dir /path/to/imgs
-    python scripts/annotate_images.py --input-dir /path/to/imgs --out-dir /tmp/out
+    python scripts/tools/annotate_images.py --input-dir /path/to/imgs
+    python scripts/tools/annotate_images.py --input-dir /path/to/imgs --out-dir /tmp/out
 """
 from __future__ import annotations
 
@@ -28,16 +28,21 @@ import cv2
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parents[1]
 sys.path.insert(0, str((_REPO_ROOT / "src").resolve()))
+sys.path.insert(0, str(_HERE))
 
-from perception.config.loader import load_config          # noqa: E402
+from _model_picker_common import (  # noqa: E402
+    parse_model_spec,
+    pick_instance_and_semantic_model_specs,
+    resolve_instance_weights,
+    resolve_weights,
+)
+from perception.config.loader import load_config, override_models  # noqa: E402
 from perception.pipeline.perception import build_pipeline  # noqa: E402
 from perception.render.renderer import Renderer            # noqa: E402
 
 logger = logging.getLogger("annotate_images")
 
 _IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".webp"})
-
-_DEFAULT_INPUT_DIR = Path("/home/avi/Documents/subset_dataset/img")
 
 
 def _collect_images(folder: Path, skip_under: Path) -> list[Path]:
@@ -59,13 +64,13 @@ def _collect_images(folder: Path, skip_under: Path) -> list[Path]:
 
 def main() -> int:
     p = argparse.ArgumentParser(
-        description="Run YOLOE + SegFormer on all images in a folder and save annotated PNGs.",
+        description="Run the instance + semantic models on all images in a folder and save annotated PNGs.",
     )
     p.add_argument(
         "--input-dir",
         type=Path,
-        default=_DEFAULT_INPUT_DIR,
-        help="Folder containing input images (default: %(default)s)",
+        required=True,
+        help="Folder containing input images",
     )
     p.add_argument(
         "--out-dir",
@@ -77,6 +82,19 @@ def main() -> int:
         "--config",
         default=str(_REPO_ROOT / "config" / "config.yaml"),
         help="Path to config.yaml (default: %(default)s)",
+    )
+    p.add_argument(
+        "--instance-model", default=None, metavar="KEY[:weights_path]",
+        help="Override the detection model (default: whatever config.yaml has pinned).",
+    )
+    p.add_argument(
+        "--semantic-model", default=None, metavar="KEY[:weights_path]",
+        help="Override the segmentation model (default: whatever config.yaml has pinned).",
+    )
+    p.add_argument(
+        "--pick-models", action="store_true",
+        help="Interactively choose both models from what's on disk (ignores "
+             "--instance-model/--semantic-model if also given).",
     )
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args()
@@ -103,6 +121,19 @@ def main() -> int:
     logger.info("Output → %s", out_dir)
 
     cfg = load_config(args.config)
+
+    if args.pick_models:
+        instance_spec, semantic_spec = pick_instance_and_semantic_model_specs(cfg, _REPO_ROOT)
+        args.instance_model, args.semantic_model = instance_spec, semantic_spec
+        logger.info("Picked instance=%s semantic=%s", instance_spec, semantic_spec)
+
+    if args.instance_model:
+        i_key, i_w = parse_model_spec(args.instance_model)
+        cfg = override_models(cfg, instance_name=i_key, instance_weights=resolve_instance_weights(i_key, i_w, cfg))
+    if args.semantic_model:
+        s_key, s_w = parse_model_spec(args.semantic_model)
+        cfg = override_models(cfg, semantic_name=s_key, semantic_weights=resolve_weights(s_key, s_w, cfg))
+
     pipeline = build_pipeline(cfg)
     pipeline.warmup()
     renderer = Renderer(
