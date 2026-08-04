@@ -65,11 +65,11 @@ def main() -> int:
     fcdd_root = _REPO / "datasets" / "segmentation" / "FCDD"
 
     samples = []
-    for fr in _orfd_frames(orfd_root, split="training", samples=2, seed=7):
+    for fr in _orfd_frames(orfd_root, split="training", samples=5, seed=7):
         samples.append(("ORFD", fr))
-    for fr in _zikim_frames(zikim_root, val_subdir="m24", samples=2, seed=7):
+    for fr in _zikim_frames(zikim_root, val_subdir="m24", samples=4, seed=7):
         samples.append(("zikim", fr))
-    for fr in _fcdd_frames(fcdd_root, split="val", samples=2, seed=7):
+    for fr in _fcdd_frames(fcdd_root, split="val", samples=5, seed=7):
         samples.append(("FCDD", fr))
 
     out_dir = _REPO / "reports" / "segmentation" / "threshold_effect_comparison"
@@ -111,9 +111,9 @@ def main() -> int:
         title_a = f"[{ds_name}] {fr.img_path.name} -- ARGMAX (current)"
         title_f = f"[{ds_name}] {fr.img_path.name} -- FLOOR={FLOOR} (proposed)"
         render_panel(title=title_a, image_bgr=fr.img_bgr, gt_userclass=gt_vis, preds=preds_argmax,
-                     user_classes=list(_TRAV_CLASSES), out_path=pane_a, target_w=300)
+                     user_classes=list(_TRAV_CLASSES), out_path=pane_a, target_w=230)
         render_panel(title=title_f, image_bgr=fr.img_bgr, gt_userclass=gt_vis, preds=preds_floor,
-                     user_classes=list(_TRAV_CLASSES), out_path=pane_f, target_w=300)
+                     user_classes=list(_TRAV_CLASSES), out_path=pane_f, target_w=230)
         row_a = cv2.imread(str(pane_a))
         row_f = cv2.imread(str(pane_f))
         pane_a.unlink(missing_ok=True)
