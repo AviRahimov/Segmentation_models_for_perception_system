@@ -438,8 +438,9 @@ FP16 identical — SegFormer has no FP16 precision cliff, unlike RF-DETR), FPS o
 as expected (same architecture/resolution).
 
 Real combined (sequential, both models every frame, `tzir-driving.mp4`, det-conf=0.35, MAXN power
-mode confirmed via `nvpmodel -q`; `jetson_clocks` lock state not independently re-verified this
-session — no sudo access):
+mode confirmed via `nvpmodel -q`, `sudo jetson_clocks` applied and the full sweep re-run afterward —
+numbers below are unchanged from before the explicit clock lock, within ±0.3 FPS noise, confirming
+the device was already at its real ceiling and clock throttling was never the bottleneck):
 
 | Detection | Segmentation | Combined FPS | Detection-only | Segmentation-only |
 |---|---|---:|---:|---:|
