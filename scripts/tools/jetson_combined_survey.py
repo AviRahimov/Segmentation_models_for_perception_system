@@ -257,7 +257,25 @@ def run(det_key: str, seg_key: str, video_path: Path, det_conf: float,
     return result
 
 
+def _check_environment() -> None:
+    """Fail fast, with a clear message, before the interactive survey --
+    otherwise a missing `source ~/perception_optim/env.sh` only surfaces as a
+    raw ImportError (libcusparseLt.so.0 missing from LD_LIBRARY_PATH) at
+    model-load time, after the user has already answered every prompt."""
+    try:
+        import torch  # noqa: F401
+        import tensorrt  # noqa: F401
+    except ImportError as e:
+        raise SystemExit(
+            f"Environment not set up ({e}).\n"
+            f"Run this first, in the same shell:\n"
+            f"    source ~/perception_optim/env.sh\n"
+            f"then re-run this script."
+        )
+
+
 def main() -> int:
+    _check_environment()
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--detection", choices=list(DETECTION_REGISTRY), default=None)
     p.add_argument("--segmentation", choices=list(SEGMENTATION_REGISTRY), default=None)
