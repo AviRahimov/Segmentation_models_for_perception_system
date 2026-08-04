@@ -458,6 +458,17 @@ All six combinations stay comfortably above real-time (30 FPS). rfdetr-m/rfdetr-
 deliberately not offered in this script's registry — both have the confirmed real precision collapse
 documented above (recall→0), not a speed tradeoff worth exposing as a default choice.
 
+**GPU-stream concurrency was tried and didn't help.** Both engines currently run fully sequentially
+(each `.infer()` call blocks on a `cudaEvent` sync before returning) on the default CUDA stream.
+`scripts/tools/_stream_overlap_probe.py` (one-off, not part of the survey script) tested putting each
+engine's CUDA-graph replay + GPU preprocessing on its own dedicated stream and syncing both only at
+the end, so the GPU scheduler could interleave their kernels if there was spare SM capacity — measured
+**52.5 FPS vs 54.1 FPS sequential (rfdetr-s + distilled, same clip) — 3% *slower*, not faster.**
+Orin's iGPU has no real concurrency headroom left once one model (rfdetr-s alone already uses most of
+it) is running; the extra stream-management overhead is pure loss. The sequential design is already
+close to this hardware's ceiling for this pairing — the effective lever for combined FPS is detection
+model choice (see table above), not execution scheduling.
+
 ## Jetson / Production Notes
 
 - Development target: RTX 5090 (sm_120) — requires `cu128` PyTorch wheels.
