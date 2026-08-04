@@ -523,6 +523,14 @@ def main() -> int:
     p.add_argument("--no-stitch-video", dest="stitch_video", action="store_false",
                     help="Disable, overriding the zikim auto-on default.")
     p.add_argument("--fps", type=float, default=4.0, help="Output FPS if --stitch-video.")
+    p.add_argument(
+        "--traversable-threshold", type=float, default=None, metavar="P",
+        help=(
+            "Binary-traversable metric only (does not affect the 3-class mIoU): "
+            "traversable iff merged P(road_ground)>=P, instead of argmax. Omit to use "
+            "config.yaml's orfd_semantic_comparison.freespace_merged_prob_floor (default: argmax)."
+        ),
+    )
     p.add_argument("--no-performance-summary", action="store_true")
     p.add_argument("--latency-only", action="store_true",
                     help="Skip the dataset entirely; just measure params+latency for --models.")
@@ -572,6 +580,14 @@ def main() -> int:
         logger.error("config has no semantic classes")
         return 2
     rg_idx = _road_ground_channel_index(tuple(c.name for c in sem_classes)) if has_gt else None
+    trav_tau = (
+        args.traversable_threshold
+        if args.traversable_threshold is not None
+        else cfg.orfd_semantic_comparison.freespace_merged_prob_floor
+    )
+    if trav_tau is not None and not (0.0 < float(trav_tau) < 1.0):
+        logger.error("traversable probability floor must lie in (0, 1); check CLI or YAML.")
+        return 2
 
     out_dir = Path(args.output_dir) if args.output_dir else _REPO / "reports" / "segmentation" / f"{dataset_kind}_comparison"
     strips_dir = out_dir / "strips"
@@ -603,7 +619,10 @@ def main() -> int:
 
             if has_gt:
                 pred_mc = mnp.argmax(axis=0).astype(np.int64, copy=False)
-                pred_trav = pred_mc == int(rg_idx)
+                if trav_tau is None:
+                    pred_trav = pred_mc == int(rg_idx)
+                else:
+                    pred_trav = mnp[int(rg_idx)] >= float(trav_tau)
 
                 gt_trav, valid = _gt_trav_valid(fr.gt_user)
                 perf_n_frames[spec] += 1
@@ -621,7 +640,15 @@ def main() -> int:
                 # non_traversable/sky by construction of _TRAV_CLASSES' order —
                 # models compared here always expose exactly the 3 ORFD classes).
                 miou_preds[spec].append(torch.from_numpy(pred_mc).unsqueeze(0))
-                pred_store.setdefault(fr.strip_name, {})[spec] = pred_mc.astype(np.int8, copy=False)
+                if trav_tau is None:
+                    pred_vis = pred_mc.astype(np.int8, copy=False)
+                else:
+                    # Reflect the threshold override in the panel too, not just the
+                    # aggregate metrics -- otherwise a --traversable-threshold sweep's
+                    # visual spot-check would silently keep showing pure argmax.
+                    pred_vis = np.where(pred_trav, np.int8(1), pred_mc.astype(np.int8, copy=False))
+                    pred_vis = np.where((~pred_trav) & (pred_mc == 1), np.int8(0), pred_vis)
+                pred_store.setdefault(fr.strip_name, {})[spec] = pred_vis
             else:
                 pred_mc = mnp.argmax(axis=0).astype(np.int8, copy=False)
                 pred_store.setdefault(fr.strip_name, {})[spec] = pred_mc

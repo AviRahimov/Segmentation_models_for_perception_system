@@ -58,7 +58,15 @@ class Mask2FormerSemanticModel(SemanticModel):
             )
             ckpt = torch.load(weights, map_location="cpu", weights_only=True)
             state_dict = ckpt.get("net", ckpt) if isinstance(ckpt, dict) else ckpt
-            self._model.load_state_dict(state_dict, strict=True)
+            try:
+                self._model.load_state_dict(state_dict, strict=True)
+            except RuntimeError as e:
+                raise ValueError(
+                    f"Checkpoint at {weights!r} does not match the Mask2Former architecture "
+                    f"(name={name!r}). Check that config.yaml's models.semantic.name actually "
+                    f"matches this checkpoint's architecture -- name and weights must be "
+                    f"changed together."
+                ) from e
             logger.info("Mask2Former loaded from local checkpoint %s (%d classes)",
                         weights, self._num_classes)
         else:

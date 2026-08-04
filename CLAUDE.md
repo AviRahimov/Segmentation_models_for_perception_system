@@ -291,6 +291,17 @@ single number is the whole story here; the distilled checkpoint is the strongest
 primary metric and worth deploying, but this tradeoff should be understood, not hidden, before
 promoting it over production.
 
+**The binary-traversable metric above is argmax-based by default, but doesn't have to be** —
+`compare_semantic_models.py --traversable-threshold P` (or `orfd_semantic_comparison.freespace_merged_prob_floor`
+in `config.yaml`) scores traversable as `P(road_ground) >= P` instead. This knob only affects that
+one eval metric, not the live deployed pipeline (`PerceptionPipeline`/`Renderer` always argmax
+regardless of this setting). A quick sweep on production SegFormer-B2 (200 ORFD training-split
+samples, 2 seeds) found the config's current default (0.25, mean binary-trav IoU 0.852/0.852 across
+seeds) is actually *worse* than plain argmax (0.895/0.890), and a floor around **0.75-0.78** does
+meaningfully better than either (0.914/0.901) — a real, reproducible +6-9 point gap on this metric,
+not yet applied anywhere (config.yaml's default is unchanged pending a decision on whether to adopt
+it, and this hasn't been checked against zikim/fcdd or other checkpoints).
+
 ## Config Knobs
 
 Key fields in `config/config.yaml` to know about:
@@ -407,6 +418,45 @@ graph itself (`RFDETRTensorRTEngine`/`RFDETROnnxModel` now read it from
 an optional override that gets corrected (with a logged warning) rather than silently trusted.
 **Lesson: always visually spot-check rendered detection output, not just aggregate metrics** — this
 exact class of bug (silent wrong-shape input) produces no exception anywhere in the stack.
+
+## Combined Detection+Segmentation Jetson Benchmark
+
+`scripts/tools/jetson_combined_survey.py` — standalone (no `src/perception`, see JETSON.md's
+"Combined detection + segmentation survey"), runs one detection engine + one segmentation engine
+together per frame on a real video and reports real combined FPS on the AGX Orin. Neither
+`~/perception_optim/` nor `~/perception_optim/segformer_repo/` can run the full
+`PerceptionPipeline` (no `models`/`pipeline`/`render` package installed on-device), so this reuses
+each family's own proven TensorRT-spec loader (`_rfdetr_trt_common.load_model()` /
+`_segformer_trt_common.SegformerTensorRTEngine`) directly instead.
+
+The distilled SegFormer-B2 checkpoint (see "Segmentation Architecture Comparison + Distillation"
+above) was exported to ONNX/TensorRT for the first time this session, using the exact same
+`export_onnx.py` → `benchmark_jetson.py` pipeline already proven for production SegFormer-B2 (no new
+export code needed — same architecture, different weights). Real engine mIoU: **0.8720** (FP32 and
+FP16 identical — SegFormer has no FP16 precision cliff, unlike RF-DETR), FPS optimized (GPU-preprocess
++ CUDA graph): **156.3 FP16 / 158.1 FP32** — matching production SegFormer-B2's speed almost exactly,
+as expected (same architecture/resolution).
+
+Real combined (sequential, both models every frame, `tzir-driving.mp4`, det-conf=0.35, MAXN power
+mode confirmed via `nvpmodel -q`; `jetson_clocks` lock state not independently re-verified this
+session — no sudo access):
+
+| Detection | Segmentation | Combined FPS | Detection-only | Segmentation-only |
+|---|---|---:|---:|---:|
+| rfdetr-s (FP32) | distilled (FP16) | 51.0 | 70.3 | 185.1 |
+| rfdetr-s (FP32) | production (FP16) | 51.1 | 70.5 | 184.9 |
+| rfdetr-m (FP32) | distilled (FP16) | 40.8 | 52.3 | 186.0 |
+| rfdetr-m (FP32) | production (FP16) | 40.8 | 52.2 | 186.0 |
+| yolo11m_freeze21 (FP16) | distilled (FP16) | 57.6 | 82.8 | 189.4 |
+| yolo11m_freeze21 (FP16) | production (FP16) | 58.2 | 83.7 | 191.7 |
+
+Detection-only numbers here are consistent with the isolated detection-only phase above (rfdetr-s
+~69 FPS, rfdetr-m ~51 FPS, yolo11m FP16 ~71.5 FPS there vs ~70-84 FPS here — real hardware run-to-run
+variance, not a methodology change). **Which segmentation checkpoint is paired barely matters for
+combined FPS** (both are the same architecture/resolution) — **detection model choice dominates**.
+All six combinations stay comfortably above real-time (30 FPS). rfdetr-m/rfdetr-s FP16 are
+deliberately not offered in this script's registry — both have the confirmed real precision collapse
+documented above (recall→0), not a speed tradeoff worth exposing as a default choice.
 
 ## Jetson / Production Notes
 

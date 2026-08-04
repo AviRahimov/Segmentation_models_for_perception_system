@@ -266,6 +266,49 @@ production `rfdetr-m` checkpoint. Deliberately standalone: `_rfdetr_trt_common.p
     benchmark_results_{rfdetr-m,rfdetr-s,yolo11m}.csv
 ```
 
+The segmentation side of this same dev kit uses a second, separate on-device tree,
+`~/perception_optim/segformer_repo/` (a partial repo checkout — `src/perception/` there only has
+`datasets/`, not the full `models/`/`pipeline/`/`render/` package, so it cannot run
+`PerceptionPipeline`/`build_pipeline`; it only runs `benchmark_jetson.py`'s standalone TRT-spec path):
+
+```
+~/perception_optim/segformer_repo/
+  src/perception/datasets/       # only the dataset/label-decoding subset needed for mIoU eval
+  scripts/segmentation/          # benchmark_jetson.py, _segformer_trt_common.py, _orfd_common.py, ...
+  datasets/segmentation/ORFD/validation/
+  weights/segmentation/
+    optimization/                 # production SegFormer-B2: baseline_fp32/fp16, qat_int8, sparse_qat_int8 (256x256)
+    optimization_distilled/       # NEW: the Mask2Former-Large-distilled checkpoint, same export pipeline
+  reports/segmentation/optimization{,_distilled}/benchmark_results.csv
+```
+
+### Combined detection + segmentation survey (`~/perception_optim/combined/`)
+
+Neither on-device tree can run both models together (no full `src/perception/`), so
+`scripts/tools/jetson_combined_survey.py` is a third, standalone script — deploy it alongside a copy
+of `_rfdetr_trt_common.py` and `_segformer_trt_common.py` in one folder:
+
+```bash
+mkdir -p ~/perception_optim/combined
+scp scripts/tools/jetson_combined_survey.py \
+    scripts/detection/optimization/_rfdetr_trt_common.py \
+    scripts/segmentation/optimization/_segformer_trt_common.py \
+    jetson:~/perception_optim/combined/
+
+ssh jetson
+cd ~/perception_optim/combined && source ~/perception_optim/env.sh
+python3 jetson_combined_survey.py                     # interactive: pick detection/segmentation/video/confidence
+python3 jetson_combined_survey.py --detection rfdetr-s --segmentation distilled_fp16 \
+    --video tzir-driving.mp4 --det-conf 0.35 --max-frames 300   # scripted
+```
+
+Edit `DETECTION_REGISTRY`/`SEGMENTATION_REGISTRY` at the top of the script to point at whatever
+engines you've built — paths are absolute against `~/perception_optim/` and
+`~/perception_optim/segformer_repo/` by default. Reports detection-only, segmentation-only, and real
+combined (sequential, both models per frame) FPS, and writes an annotated `.mp4` under
+`~/perception_optim/results/`. See CLAUDE.md's "Combined Detection+Segmentation Jetson Benchmark"
+section for real measured numbers.
+
 One subfolder per model under `weights/` is deliberate, not just tidiness — an earlier flat layout
 (`weights/*.onnx`, `weights/*.engine` for every model in one directory) led to a real incident: a
 `rm -f weights/*.onnx weights/*.engine` meant to clear a bad export wiped out a *different* model's

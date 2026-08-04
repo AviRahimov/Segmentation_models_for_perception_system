@@ -183,6 +183,13 @@ class SegFormerSemanticModel(SemanticModel):
             ckpt = torch.load(weights, map_location="cpu", weights_only=True)
             state_dict = ckpt.get("net", ckpt) if isinstance(ckpt, dict) else ckpt
             state_dict = _remap_segformer_keys(state_dict)
+            if "decode_head.classifier.weight" not in state_dict:
+                raise ValueError(
+                    f"Checkpoint at {weights!r} does not look like a SegFormer checkpoint "
+                    f"(missing 'decode_head.classifier.weight'). Check that config.yaml's "
+                    f"models.semantic.name ({name!r}) actually matches this checkpoint's "
+                    f"architecture -- name and weights must be changed together."
+                )
             # Auto-detect from checkpoint so old 2-class and new 3-class checkpoints
             # both load correctly regardless of what num_classes the caller passes.
             n_labels = state_dict["decode_head.classifier.weight"].shape[0]

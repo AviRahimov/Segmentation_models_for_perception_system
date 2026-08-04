@@ -70,6 +70,13 @@ class AurigaNetSemanticModel(SemanticModel):
             ckpt = torch.load(weights, map_location="cpu", weights_only=True)
             state_dict = ckpt.get("net", ckpt) if isinstance(ckpt, dict) else ckpt
             missing, unexpected = self._model.load_state_dict(state_dict, strict=False)
+            total = len(self._model.state_dict())
+            if len(missing) + len(unexpected) > 0.1 * total:
+                raise ValueError(
+                    f"Checkpoint at {weights!r} does not look like an AurigaNet checkpoint "
+                    f"({len(missing)} missing / {len(unexpected)} unexpected of {total} keys). "
+                    f"Check that config.yaml's models.semantic.name/weights are paired correctly."
+                )
             if missing:
                 logger.warning("AurigaNet: %d missing keys in checkpoint", len(missing))
             if unexpected:

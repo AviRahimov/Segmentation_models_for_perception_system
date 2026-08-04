@@ -48,7 +48,13 @@ class UPerNetSemanticModel(SemanticModel):
         if _is_local and Path(weights).is_file():
             ckpt = torch.load(weights, map_location="cpu", weights_only=True)
             state_dict = ckpt.get("net", ckpt) if isinstance(ckpt, dict) else ckpt
-            self._model.load_state_dict(state_dict, strict=True)
+            try:
+                self._model.load_state_dict(state_dict, strict=True)
+            except RuntimeError as e:
+                raise ValueError(
+                    f"Checkpoint at {weights!r} does not match the UPerNet architecture. "
+                    f"Check that config.yaml's models.semantic.name/weights are paired correctly."
+                ) from e
             logger.info("UPerNet loaded from local checkpoint %s (%d classes)",
                         weights, self._num_classes)
         elif weights:

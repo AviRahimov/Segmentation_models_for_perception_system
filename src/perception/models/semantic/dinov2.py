@@ -58,8 +58,18 @@ class DINOv2SemanticModel(SemanticModel):
             ckpt = torch.load(weights, map_location="cpu", weights_only=True)
             state_dict = ckpt.get("net", ckpt) if isinstance(ckpt, dict) else ckpt
             missing, unexpected = self._model.load_state_dict(state_dict, strict=False)
+            total = len(self._model.state_dict())
+            if len(missing) + len(unexpected) > 0.1 * total:
+                raise ValueError(
+                    f"Checkpoint at {weights!r} does not look like a DINOv2 ({name!r}) "
+                    f"checkpoint ({len(missing)} missing / {len(unexpected)} unexpected of "
+                    f"{total} keys). Check that config.yaml's models.semantic.name/weights "
+                    f"are paired correctly."
+                )
             if missing:
                 logger.warning("DINOv2: %d missing keys in checkpoint", len(missing))
+            if unexpected:
+                logger.warning("DINOv2: %d unexpected keys in checkpoint", len(unexpected))
             logger.info("DINOv2 loaded from %s (%d classes)", weights, self._num_classes)
         elif weights:
             logger.warning("DINOv2: weights path %r not found; head is randomly initialised.", weights)
