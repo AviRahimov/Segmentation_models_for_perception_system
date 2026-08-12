@@ -1,10 +1,16 @@
 # Off-Road Robotics Perception System
 
-Real-time perception stack for off-road robots. Combines **open-vocabulary
-instance segmentation** (YOLOE-26L), **closed-vocab terrain segmentation**
+Real-time perception stack for off-road robots. Combines **closed-vocabulary
+instance detection** (RF-DETR), **closed-vocab terrain segmentation**
 (SegFormer-B2), **causal temporal smoothing** (logit EMA + IoU-backed instance
 association), and a non-blocking **PyQt5 video player**. Everything is driven
 by a single `config.yaml`; adding a new class is a single YAML edit.
+
+> Note: an earlier version of this project used YOLOE-26L (open-vocabulary,
+> text-prompt-driven) as the instance model. It was researched, trained, and
+> directly compared against RF-DETR/YOLO on this project's own footage before
+> being superseded — see CLAUDE.md's Active Models table for that comparison.
+> Its wrapper/config/training code has since been removed from `src/`.
 
 ```
 +--------------------------------------------------------------------------+
@@ -14,8 +20,8 @@ by a single `config.yaml`; adding a new class is a single YAML edit.
 |                              +-----------------------------------+        |
 |                              v                                            |
 |         +-----------------+  +--------------------+  +----------------+   |
-|         |  YOLOE  (Inst.) |  |  SegFormer (Sem.)  |  |   SceneCut     |   |
-|         |  cached text PE |  |   raw merged       |  |  Bhattacharyya |   |
+|         |  RF-DETR (Inst.)|  |  SegFormer (Sem.)  |  |   SceneCut     |   |
+|         |  closed-vocab   |  |   raw merged       |  |  Bhattacharyya |   |
 |         +--------+--------+  |   user-class logits|  +----+-----------+   |
 |                  |           +----------+---------+       |               |
 |                  v                      v                 |               |
@@ -92,28 +98,11 @@ arch-agnostic.
 
 ### Model weights
 
-- **YOLOE-26L** is downloaded automatically into `./weights/` on first
-run (mirrors: GitHub `ultralytics/assets` v8.4.0 → HF Hub
-`openvision/yoloe26-l-seg`).
+- **RF-DETR** checkpoints live under `weights/detection/` — point
+`models.instance.weights` at a fine-tuned checkpoint (see CLAUDE.md's
+detection training commands to produce one).
 - **SegFormer-B2** is fetched by `transformers` into the standard
 Hugging Face cache.
-
-### YOLOE discovery mode (large vocabulary)
-
-Set `models.instance.prompt_mode` to `discovery` and
-`discovery_vocabulary_path` to a text file next to your YAML (one prompt
-per line; see [`config/yoloe_discovery_vocab.example.txt`](config/yoloe_discovery_vocab.example.txt)).
-Use `discovery_conf_floor` (e.g. `0.05`) and optional `discovery_max_det`
-to control clutter. The player draws every hit in a single highlight
-colour with the **winning prompt string** on the bbox; the legend shows
-**semantic** classes only. Switch back to `prompt_mode: production` to
-use `classes[*].text_prompt` again.
-
-```bash
-python scripts/detection/tools/yoloe_discovery_dump.py --config config/config.yaml \
-  --source samples/recording.mp4 --max-frames 200 \
-  --jsonl runs/discovery.jsonl --summary-tsv runs/discovery_summary.tsv
-```
 
 ---
 
@@ -192,15 +181,19 @@ ORFD is hosted on Google Drive; if the upstream id changes set
 Append one entry to `config/config.yaml` under `classes:`. **Zero code
 changes.**
 
-Open-vocab instance class (just a text prompt):
+Closed-vocab instance class (map to a COCO category the detector already supports):
 
 ```yaml
 - name: "tent"
-  text_prompt: "tent or temporary shelter"
+  text_prompt: "tent"           # documentary label only; matching uses coco_classes
+  coco_classes: [1]             # standard COCO id(s), 1-indexed
   display_mode: "both"          # both | bbox_only | mask_only | none
   color_rgb: [255, 0, 200]
   is_semantic: false
 ```
+
+Detecting a genuinely new object type (no COCO equivalent) requires
+fine-tuning the detector on that class — this is not a YAML-only change.
 
 Semantic terrain class (text prompt for the legend + ADE20K channels to
 merge):
@@ -224,26 +217,21 @@ drawn in its assigned colour with the requested display mode.
 
 | Field                                            | Default                                     | Description                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------------------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `models.instance.name`                           | `yoloe26l`                                  | Registered instance model. See `INSTANCE_REGISTRY`.                                                                                                                                                                                                                                                                                                                                                                                               |
-| `models.instance.weights`                        | `yoloe-26l-seg.pt`                          | Ultralytics YOLOE-seg weights file.                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `models.instance.confidence_threshold`           | `0.35`                                      | YOLOE detection threshold (global default; per-class override available - see below).                                                                                                                                                                                                                                                                                                                                                             |
-| `models.instance.prompt_mode`                     | `production`                                | `production` uses `classes[*].text_prompt`; `discovery` loads many lines from `discovery_vocabulary_path` for exploratory labelling (warmer/embed cost scales with vocab size).                                                                                                                                                                                                                                                                                                                           |
-| `models.instance.discovery_vocabulary_path`       | _(empty)_                                   | Required when `prompt_mode: discovery`; path relative to `config.yaml` unless absolute.                                                                                                                                                                                                                                                                                                                                                          |
-| `models.instance.discovery_conf_floor`            | `0.05`                                      | Ultralytics `predict(conf=…)` floor in discovery mode; keep low but non-zero.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `models.instance.discovery_max_det`               | _(omit)_                                     | Optional cap passed to Ultralytics predict (helps reduce duplicate boxes).                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `models.instance.imgsz`                          | `640`                                       | Ultralytics inference image size (square). `512` saves ~25% with negligible quality loss for large objects; `640` is the YOLOE-26L default.                                                                                                                                                                                                                                                                                                       |
+| `models.instance.name`                           | `rfdetr-m`                                  | Registered instance model. See `INSTANCE_REGISTRY`.                                                                                                                                                                                                                                                                                                                                                                                               |
+| `models.instance.weights`                        | (fine-tuned checkpoint path)                | Local `.pt` checkpoint path.                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `models.instance.confidence_threshold`           | `0.35`                                      | Detection threshold (global default; per-class override available - see below).                                                                                                                                                                                                                                                                                                                                                                  |
+| `models.instance.imgsz`                          | `640`                                       | Inference image size (square); ignored by RF-DETR (fixed per-variant resolution).                                                                                                                                                                                                                                                                                                                                                                 |
 | `models.semantic.name`                           | `segformer-b2`                              | Registered semantic model.                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `models.semantic.weights`                        | `nvidia/segformer-b2-finetuned-ade-512-512` | HF Hub id or local path.                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `models.semantic.processor_size`                 | _(model default, 512)_                      | SegFormer preprocessor input resolution (square). `null` = model default (512×512). `256` = ~2× faster with slightly coarser class boundaries; `384` = middle ground. YAML-only — no code change or Docker rebuild needed to adjust.                                                                                                                                                                                                             |
 | `classes[*]`                                     | (required)                                  | Class definitions; see "How to add a class".                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `classes[*].confidence_threshold`                | (inherits global)                           | Optional per-class override of `models.instance.confidence_threshold`. Instance classes only. Range `[0, 1]`. Lower for classes the model misses (e.g. small or partially-occluded cars), raise for classes with frequent false positives. The YOLOE wrapper internally calls Ultralytics with the lowest configured threshold across all classes, then per-class filters the output, so a low override on one class does not pollute the others. |
+| `classes[*].confidence_threshold`                | (inherits global)                           | Optional per-class override of `models.instance.confidence_threshold`. Instance classes only. Range `[0, 1]`. Lower for classes the model misses (e.g. small or partially-occluded cars), raise for classes with frequent false positives. The wrapper internally runs inference at the lowest configured threshold across all classes, then per-class filters the output, so a low override on one class does not pollute the others. |
 | `temporal.semantic_ema.alpha`                    | `0.35`                                      | EMA weight on the *current* frame's logits.                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `temporal.semantic_ema.reset_on_scene_cut`       | `true`                                      | Drop EMA + tracker state on scene cut.                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `temporal.semantic_ema.scene_cut_threshold`      | `0.45`                                      | Bhattacharyya distance threshold in [0, 1].                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `hardware.device`                                | `cuda`                                      | Torch device.                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `hardware.fp16`                                  | `true`                                      | Run models in half precision on GPU.                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `hardware.use_tensorrt`                          | `false`                                     | Use TensorRT backend (see backends/tensorrt.py).                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `hardware.text_embed_cache`                      | `true`                                      | Cache YOLOE text embeddings at startup (always recommended).                                                                                                                                                                                                                                                                                                                                                                                      |
 | `player.mask_alpha`                              | `0.45`                                      | Mask blend opacity.                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `player.show_fps`                                | `true`                                      | Show FPS overlay.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `player.show_class_legend`                       | `true`                                      | Show colour legend.                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -268,7 +256,7 @@ src/perception/
   io/          FrameSource ABC + video / camera / image-dir
   models/
     backends/  PyTorch (default), TensorRT (documented stub)
-    instance/  YOLOE wrapper (cached text embeds)
+    instance/  YOLO closed-vocab wrapper + RF-DETR
     semantic/  SegFormer wrapper (raw merged logits via ADE20K LUT)
     factory.py registry-based dispatch
   temporal/    LogitsEMA, scene-cut, IoU instance tracker

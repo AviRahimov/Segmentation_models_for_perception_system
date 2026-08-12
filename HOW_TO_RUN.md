@@ -223,7 +223,7 @@ docker compose -f docker-compose.jetson.yml --profile gui up perception-gui
 
 | Field | Effect |
 |---|---|
-| `models.instance.enabled` | `false` → skip YOLOE (semantic-only, ~2× faster) |
+| `models.instance.enabled` | `false` → skip the instance model (semantic-only, ~2× faster) |
 | `models.semantic.name` | `segformer-b0/b1/b2/b4` (see OPTION A–E comments) |
 | `models.semantic.weights` | Path to fine-tuned `.pth` checkpoint |
 | `models.semantic.processor_size` | `256` / `384` / `512` — lower = faster, coarser boundaries |

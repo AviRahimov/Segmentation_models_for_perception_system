@@ -47,7 +47,7 @@ logs/
 # PyTorch / model weights
 *.pt
 *.pth
-# TorchScript serialized models (e.g. distilled YOLOE text encoders)
+# TorchScript serialized models
 *.ts
 *.onnx
 *.engine

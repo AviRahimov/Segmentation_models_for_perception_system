@@ -26,9 +26,7 @@ cd /mnt/nvme/avi_ws/Segmentation_models_for_perception_system
 # Weights are mounted at runtime — not baked into the image.
 # Make sure your trained checkpoints are in the weights/ directory:
 ls weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth   # expected
-
-# The CLIP model used by YOLOE must be present in the repo root:
-ls weights/mobileclip2_b.ts   # ~240 MB — downloaded during Docker build or copy manually
+ls weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt   # expected
 
 # HuggingFace models (SegFormer base) are cached in a Docker volume (hf_cache)
 # and downloaded automatically on first run.
@@ -71,7 +69,7 @@ docker build --target headless -t perception:headless -f Dockerfile.jetson .
 docker build --target gui -t perception:gui -f Dockerfile.jetson .
 ```
 
-Build takes ~10–15 minutes on first run (pip installs + mobileclip2 download).
+Build takes ~10–15 minutes on first run (pip installs).
 Subsequent builds use the layer cache and finish in < 1 minute if only source files changed.
 
 ---
@@ -144,30 +142,25 @@ python3 scripts/inference/run_headless.py \
 Run **once** on the Jetson to build `.engine` files. Engines are tied to the
 exact GPU + TRT version — rebuild after any JetPack upgrade.
 
+`scripts/tools/export_trt.py` covers SegFormer only. RF-DETR/YOLO instance-model
+TensorRT export is a separate, dedicated pipeline — see this doc's own
+"RF-DETR Optimization" / "Best-YOLO Optimization" sections below.
+
 ```bash
 source venv/bin/activate
 cd /mnt/nvme/avi_ws/Segmentation_models_for_perception_system
 
-# Export both YOLOE and SegFormer (recommended)
 python3 scripts/tools/export_trt.py --config config/config.yaml
-
-# Export only one model
-python3 scripts/tools/export_trt.py --config config/config.yaml --model yoloe
-python3 scripts/tools/export_trt.py --config config/config.yaml --model segformer
 ```
 
-Expected build times on Jetson AGX Orin:
-- YOLOE-26L: ~3–5 minutes
+Expected build time on Jetson AGX Orin:
 - SegFormer-B2 (512px): ~10–15 minutes
 - SegFormer-B1 (512px): ~8–12 minutes
 
-After the script prints the engine paths, update `config/config.yaml`:
+After the script prints the engine path, update `config/config.yaml`:
 
 ```yaml
 models:
-  instance:
-    weights: "weights/detection/yoloe-26l-seg.engine"   # printed by export_trt.py
-
   semantic:
     trt_engine_path: "weights/segmentation/orfd/frozen_backbone/segformer-b2/best-512x512.engine"
 
@@ -579,10 +572,10 @@ Use `run_headless.py` — it processes all frames and logs `Processed N frames i
 source venv/bin/activate
 cd /mnt/nvme/avi_ws/Segmentation_models_for_perception_system
 
-# ── Full pipeline: YOLOE + SegFormer-B2 frozen (PyTorch FP16) ──────────────
+# ── Full pipeline: RF-DETR + SegFormer-B2 frozen (PyTorch FP16) ────────────
 python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4
 
-# ── Semantic-only: disable YOLOE, SegFormer-B2 frozen (PyTorch FP16) ───────
+# ── Semantic-only: disable the instance model, SegFormer-B2 frozen (PyTorch FP16) ───────
 # Edit config.yaml first: models.instance.enabled: false
 python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4
 
@@ -616,7 +609,6 @@ python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4 --m
 | `annotate_images.py` | Annotate a folder of images (detection+segmentation together; `--instance-model`/`--semantic-model`/`--pick-models` to choose which) | `python3 scripts/tools/annotate_images.py --input-dir dir/ --pick-models` |
 | `render_samples.py` | Render annotated sample videos (same model-choice flags as above; `--run-all` sweeps every segmentation checkpoint on disk) | `python3 scripts/tools/render_samples.py --instance-model rfdetr-s --semantic-model mask2former-large` |
 | `download_datasets.py` | Download ORFD / GOOSE datasets | `python3 scripts/tools/download_datasets.py` |
-| `yoloe_discovery_dump.py` | Dump YOLOE open-vocab detections | `python3 scripts/detection/tools/yoloe_discovery_dump.py` |
 | **Optimization pipeline** | | |
 | `optimization/benchmark_jetson.py` | Stage 4 — TRT engine build + authoritative benchmark | `python3 scripts/segmentation/optimization/benchmark_jetson.py --onnx-dir weights/segmentation/optimization/ --val-data datasets/segmentation/ORFD` |
 | `optimization/compare_models.py` | Stage 6a — side-by-side image / video comparison | `python3 scripts/segmentation/optimization/compare_models.py --mode video --model-a pytorch:... --model-b engine:...` |
@@ -628,12 +620,12 @@ python3 scripts/inference/run_headless.py --source samples/off_road_vid1.mp4 --m
 
 | Field | What it does |
 |---|---|
-| `models.instance.enabled` | `false` → skip YOLOE entirely (semantic-only, ~2× faster) |
+| `models.instance.enabled` | `false` → skip the instance model entirely (semantic-only, ~2× faster) |
 | `models.semantic.name` | `segformer-b0/b1/b2/b4` (see OPTION A–E comments in config.yaml) |
 | `models.semantic.weights` | Path to fine-tuned `.pth` checkpoint |
 | `models.semantic.processor_size` | `256` / `384` / `512` — lower = faster, coarser boundaries |
 | `models.semantic.trt_engine_path` | Path to TRT `.engine` file (requires `hardware.use_tensorrt: true`) |
-| `models.instance.weights` | `*.engine` for TRT YOLOE, `*.pt` for PyTorch |
+| `models.instance.weights` | `.pt` checkpoint path (RF-DETR/YOLO TensorRT is a separate pipeline — see "RF-DETR Optimization" below) |
 | `models.instance.imgsz` | `512` saves ~25% vs default `640` with negligible quality loss |
 | `hardware.fp16` | `true` — always on for Jetson |
 | `hardware.use_tensorrt` | `true` after running `export_trt.py` |

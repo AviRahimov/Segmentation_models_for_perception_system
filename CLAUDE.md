@@ -90,14 +90,8 @@ python scripts/detection/optimization/compare_models.py --mode video \
              ultralytics:weights/detection/yolo11m/yolo_dataset_auto_labeled/freeze21/best.pt \
     --source samples/clip.mp4
 
-# YOLOE discovery mode dump
-python scripts/detection/tools/yoloe_discovery_dump.py --config config/config.yaml \
-    --source samples/recording.mp4 --max-frames 200 \
-    --jsonl runs/discovery.jsonl --summary-tsv runs/discovery_summary.tsv
-
-# Detection training — Round 1 (YOLO26 and YOLOE-26, scales s/m/l)
+# Detection training — Round 1 (YOLO11/YOLO26, scales s/m/l)
 python scripts/detection/training/train_round1.py --model yolo26m
-python scripts/detection/training/train_round1.py --model yoloe-26m
 # Output: weights/detection/{model_name}/round1/best.pt
 
 # Detection training — general (interactive survey: scans datasets/detection/, Enter = defaults)
@@ -150,10 +144,10 @@ python scripts/detection/evaluation/fit_calibration.py \
 python scripts/detection/evaluation/compare_detection_models.py --mode table \
     --models pytorch:weights/detection/yolo26s/round1/best.pt \
              pytorch:weights/detection/yolo26m/round1/best.pt \
-             pytorch:weights/detection/yoloe-26m/round1/best.pt
+             pytorch:weights/detection/rfdetr-m/round1/best.pt
 python scripts/detection/evaluation/compare_detection_models.py --mode images \
     --models pytorch:weights/detection/yolo26m/round1/best.pt \
-             pytorch:weights/detection/yoloe-26m/round1/best.pt \
+             pytorch:weights/detection/rfdetr-m/round1/best.pt \
     --test-data datasets/detection/Detection_Dataset/valid/images --n-samples 20
 python scripts/detection/evaluation/compare_detection_models.py --mode video \
     --models pytorch:weights/detection/yolo26m/round1/best.pt \
@@ -206,7 +200,7 @@ python scripts/detection/tools/promote_inpainted_negatives.py --from-preview \
 
 ## Architecture
 
-The system is a real-time off-road perception pipeline that runs **SegFormer-B2** (semantic segmentation) and **YOLOE-26L** (open-vocabulary instance detection) in parallel on each frame, applies causal temporal smoothing, and renders the result to either a PyQt5 GUI player or an MP4 file.
+The system is a real-time off-road perception pipeline that runs **SegFormer-B2** (semantic segmentation) and **RF-DETR** (closed-vocabulary instance detection) in parallel on each frame, applies causal temporal smoothing, and renders the result to either a PyQt5 GUI player or an MP4 file.
 
 ```
 src/perception/
@@ -215,7 +209,7 @@ src/perception/
   io/          FrameSource ABC + video / camera / image-dir implementations
   models/
     backends/  InferenceBackend ABC — pytorch.py (default) + tensorrt.py (Jetson)
-    instance/  YOLOE wrappers (yolo/open.py, yolo/closed.py) + RFDeTR; null.py for disabled
+    instance/  YOLO closed-vocab wrapper (yolo/closed.py) + RFDeTR; null.py for disabled
     semantic/  SegFormer wrapper (segformer.py) + _class_catalogues.py for ADE20K LUT
     factory.py registry-based dispatch keyed on YAML model name
   temporal/    LogitsEMA (ema_logits.py), SceneCutDetector (scene_cut.py), IoUTracker
@@ -228,7 +222,7 @@ src/perception/
 
 **Import graph (strictly enforced):** `core` → nothing. `models` → `core`+`config`. `temporal` → `core`. `pipeline` → abstract bases of `models`+`temporal`. `ui` → `pipeline`+`render`+`io`. Breaking this layering is a bug.
 
-**Class system is entirely YAML-driven** (`config/config.yaml`). Adding or changing a class is a YAML-only edit — no code changes. Semantic classes merge ADE20K channel logits via a LUT in `_class_catalogues.py`; instance classes use text prompts passed to YOLOE.
+**Class system is entirely YAML-driven** (`config/config.yaml`). Adding or changing a class is a YAML-only edit — no code changes. Semantic classes merge ADE20K channel logits via a LUT in `_class_catalogues.py`; instance classes match a closed-vocab detector's (RF-DETR / YOLO) output via `coco_classes`.
 
 **Adding a new model:** subclass the relevant ABC (`semantic/base.py` or `instance/base.py`), register the name in `models/factory.py`, add a YAML entry. That's the entire integration surface.
 
@@ -239,7 +233,6 @@ src/perception/
 - **Softmax-then-merge** (not raw-logit sum) when combining ADE20K channels into user classes — preserves probability semantics.
 - **Causal EMA only** (`temporal/ema_logits.py`) — never looks ahead; safe for real-time streams. EMA and IoU tracker are reset on scene cuts detected via Bhattacharyya distance on HSV histograms.
 - **Frozen dataclasses** for `Detection`, `FrameResult`, etc. — thread-safe pass-by-reference between the decoder thread and inference thread.
-- **YOLOE text embeddings cached at warmup** — calling `cache_text_embeddings()` once avoids repeated GPU encode calls per frame.
 - **opencv-python-headless** (not `opencv-python`) — prevents Qt plugin conflict with PyQt5.
 
 ## Active Models
@@ -249,7 +242,8 @@ src/perception/
 | SegFormer-B2 | Primary semantic | mIoU=0.279 on GOOSE-Ex, ~19 ms/frame on RTX 5090; ORFD 3-class mIoU=0.8624 |
 | SegFormer-B2 (distilled) | Candidate, not yet promoted | ORFD 3-class mIoU=0.8813 — beats production and its Mask2Former-Large teacher; same architecture/speed as production. See "Segmentation Architecture Comparison + Distillation" below before promoting |
 | SegFormer-B4 | Available | Slightly lower mIoU (0.268), ~24 ms |
-| YOLOE-26L | Primary instance | Text embeds cached at warmup; discovery mode available |
+| RF-DETR-M | Primary instance | Closed-vocab (`coco_classes`); see "RF-DETR / YOLO Jetson TensorRT Optimization" below |
+| YOLOE-26L | Removed from `src/` | Was the original primary instance model (open-vocabulary, text-prompt-driven) — researched, trained, and directly compared against closed-vocab YOLO variants before RF-DETR was adopted for production. Superseded because RF-DETR gave better real accuracy/FPS on this project's own footage (see the Jetson optimization section below); YOLOE's wrapper/config/training code was fully deleted from `src/` once no longer used, but this evaluation history is intentionally kept here rather than erased. |
 | DDRNet-39 | Removed | Fully deleted from `src/` — was broken (GOOSE-12 channel ordering unconfirmed, IoU≈0.002) |
 | PP-LiteSeg | Removed | Fully deleted from `src/` — wrapper had raised `NotImplementedError` |
 
@@ -308,11 +302,10 @@ Key fields in `config/config.yaml` to know about:
 
 | Field | Effect |
 |---|---|
-| `models.instance.enabled` | `false` → skip YOLOE (~2× faster, semantic-only) |
-| `models.instance.profile` | Selects the active class block from `instance_profiles:` (`2class` / `6class` / `yoloe`) — must match the checkpoint's scheme |
+| `models.instance.enabled` | `false` → skip the instance model (~2× faster, semantic-only) |
+| `models.instance.profile` | Selects the active class block from `instance_profiles:` (`2class` / `6class` / `rfdetr_2class` / `rfdetr_6class`) — must match the checkpoint's scheme |
 | `models.semantic.processor_size` | `256`/`384`/`512` — lower = faster, coarser boundaries |
 | `models.semantic.trt_engine_path` | Path to `.engine` (requires `hardware.use_tensorrt: true`) |
-| `models.instance.prompt_mode` | `production` (text_prompt per class) or `discovery` (vocab file) |
 | `temporal.semantic_ema.alpha` | EMA weight on current frame's logits (default 0.35) |
 | `postprocess.duplicate_filter.enabled` | Drop same-class nested/overlapping duplicate boxes before tracking |
 | `temporal.instance_tracker.enabled` | `false` → bypass tracking entirely (raw per-frame detections, no smoothing/hold) |
