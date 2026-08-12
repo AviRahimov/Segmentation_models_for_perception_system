@@ -72,7 +72,12 @@ class GazaDomainDataset(Dataset):
     CLASSES = ORFDDataset.CLASSES
     IGNORE_INDEX = _IGNORE_INDEX
 
-    def __init__(self, root: str | Path, augment: bool = True, input_size: int = TRAIN_SIZE) -> None:
+    def __init__(self, root: str | Path, augment: bool = True, input_size: int = TRAIN_SIZE,
+                 stems: set[str] | None = None) -> None:
+        """``stems``, if given, restricts the dataset to only those image
+        stems -- used to serve clip-grouped train/val splits (see
+        scripts/segmentation/tools/split_gaza_domain.py) from this same
+        class without duplicating the pairing/weighting logic below."""
         super().__init__()
         root = Path(root)
         images_dir, labels_dir = root / "images", root / "labels"
@@ -84,6 +89,8 @@ class GazaDomainDataset(Dataset):
         self._pairs: list[tuple[Path, Path]] = []
         for img_path in sorted(images_dir.iterdir()):
             if img_path.suffix.lower() not in (".jpg", ".jpeg", ".png"):
+                continue
+            if stems is not None and img_path.stem not in stems:
                 continue
             label_path = labels_dir / f"{img_path.stem}.png"
             if label_path.is_file():

@@ -171,7 +171,14 @@ def parse_args() -> argparse.Namespace:
                         "to fine-tune a checkpoint that's already trained on ORFD, on just the "
                         "225 new images, fast since the set is small. --data's validation split "
                         "is still used every epoch (unchanged) specifically to catch forgetting/"
-                        "regression on the original distribution. Requires --gaza-data.")
+                        "regression on the original distribution. Requires --gaza-data. If "
+                        "<gaza-data>/splits/{train,val}.txt exist (see split_gaza_domain.py), "
+                        "checkpoint selection/early-stopping switches to Gaza-val mIoU instead of "
+                        "ORFD-val mIoU -- selecting on ORFD-val for a Gaza-only run is a real "
+                        "source/target domain-mismatch bug (confirmed to produce near-identical "
+                        "checkpoints regardless of hyperparameters, since 'best' was always "
+                        "captured in the first few epochs); ORFD-val is still computed and logged "
+                        "every epoch as a regression guard either way.")
     p.add_argument("--warm-start", default=None,
                    help="Path to a checkpoint to load ONLY the model weights from before training "
                         "(fresh optimizer/scheduler/epoch-0, unlike --resume which restores full "
@@ -214,6 +221,7 @@ def main() -> None:
     val_ds   = ORFDDataset(str(data_path), split="validation", augment=False)
 
     sampler = None
+    gaza_val_loader = None
     if args.gaza_data:
         from torch.utils.data import ConcatDataset, WeightedRandomSampler
         from perception.datasets.gaza_domain_torch import GazaDomainDataset
@@ -231,6 +239,23 @@ def main() -> None:
             # split is untouched (val_ds below) so it still catches
             # forgetting/regression each epoch even though ORFD isn't in
             # the training set anymore.
+            train_split_file = gaza_path / "splits" / "train.txt"
+            val_split_file   = gaza_path / "splits" / "val.txt"
+            if train_split_file.is_file() and val_split_file.is_file():
+                train_stems = set(train_split_file.read_text().split())
+                val_stems   = set(val_split_file.read_text().split())
+                gaza_ds = GazaDomainDataset(str(gaza_path), augment=True, stems=train_stems)
+                gaza_val_ds = GazaDomainDataset(str(gaza_path), augment=False, stems=val_stems)
+                gaza_val_loader = DataLoader(
+                    gaza_val_ds, batch_size=args.batch, shuffle=False,
+                    num_workers=args.workers, pin_memory=True,
+                )
+                logger.info("Gaza-val split found: %d train / %d val (clip-grouped, see split_gaza_domain.py) "
+                            "-- checkpoint selection uses Gaza-val mIoU, not ORFD-val.",
+                            len(gaza_ds), len(gaza_val_ds))
+            else:
+                logger.warning("No %s found -- falling back to ORFD-val for checkpoint selection "
+                                "(run split_gaza_domain.py to fix this).", train_split_file.parent)
             sampler = WeightedRandomSampler(gaza_ds.sample_weights, num_samples=len(gaza_ds), replacement=True)
             train_ds = gaza_ds
             logger.info("Gaza-domain-only training: %d samples (ORFD validation still used to catch forgetting)",
@@ -370,36 +395,58 @@ def main() -> None:
         val_loss, val_miou = evaluate(
             model, processor, val_loader, criterion, device, fp16,
         )
+
+        gaza_val_loss = gaza_val_miou = None
+        if gaza_val_loader is not None:
+            gaza_val_loss, gaza_val_miou = evaluate(
+                model, processor, gaza_val_loader, criterion, device, fp16,
+            )
+        # Checkpoint selection/early-stopping target: Gaza-val when available
+        # (this is a Gaza-only run, so that's the domain that actually
+        # matters), else ORFD-val (unchanged behavior for every other path).
+        select_miou = gaza_val_miou if gaza_val_miou is not None else val_miou
+
         scheduler.step()
 
         elapsed = time.perf_counter() - t0
-        logger.info(
-            "Epoch %3d/%d  train_loss=%.4f  val_loss=%.4f  val_mIoU=%.4f  (%.1fs)",
-            epoch, args.epochs, train_loss, val_loss, val_miou, elapsed,
-        )
+        if gaza_val_miou is not None:
+            logger.info(
+                "Epoch %3d/%d  train_loss=%.4f  orfd_val_loss=%.4f  orfd_val_mIoU=%.4f  "
+                "gaza_val_loss=%.4f  gaza_val_mIoU=%.4f  (%.1fs)",
+                epoch, args.epochs, train_loss, val_loss, val_miou,
+                gaza_val_loss, gaza_val_miou, elapsed,
+            )
+        else:
+            logger.info(
+                "Epoch %3d/%d  train_loss=%.4f  val_loss=%.4f  val_mIoU=%.4f  (%.1fs)",
+                epoch, args.epochs, train_loss, val_loss, val_miou, elapsed,
+            )
 
         entry = dict(epoch=epoch, train_loss=train_loss,
-                     val_loss=val_loss, val_miou=val_miou)
+                     val_loss=val_loss, val_miou=val_miou,
+                     gaza_val_loss=gaza_val_loss, gaza_val_miou=gaza_val_miou,
+                     select_miou=select_miou)
         log_entries.append(entry)
         log_path.write_text(json.dumps(log_entries, indent=2))
 
         # last.pth: full state for resume.
         _save_checkpoint(
-            model, out_dir / "last.pth", epoch, val_miou,
+            model, out_dir / "last.pth", epoch, select_miou,
             optimizer=optimizer, scheduler=scheduler, best_miou=best_miou,
         )
 
-        if val_miou > best_miou:
-            best_miou = val_miou
+        if select_miou > best_miou:
+            best_miou = select_miou
             patience_left = args.patience
             # best.pth: weights only (used by run_player.py).
             # If LoRA was used, merge adapters so the checkpoint is a plain state dict.
             if args.lora:
                 merged = model.merge_and_unload()
-                _save_checkpoint(merged, out_dir / "best.pth", epoch, val_miou)
+                _save_checkpoint(merged, out_dir / "best.pth", epoch, select_miou)
             else:
-                _save_checkpoint(model, out_dir / "best.pth", epoch, val_miou)
-            logger.info("  → new best mIoU %.4f saved.", best_miou)
+                _save_checkpoint(model, out_dir / "best.pth", epoch, select_miou)
+            logger.info("  -> new best %s mIoU %.4f saved.",
+                        "Gaza-val" if gaza_val_miou is not None else "val", best_miou)
         else:
             patience_left -= 1
             if patience_left <= 0:
