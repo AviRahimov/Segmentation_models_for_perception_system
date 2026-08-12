@@ -42,6 +42,7 @@ from perception.config.loader import load_config
 from perception.config.schema import ClassDef, SemanticModelCfg
 from perception.models.backends.pytorch import PyTorchBackend
 from perception.models.factory import build_semantic_model
+from perception.temporal.ema_logits import LogitsEMA
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger("compare_on_raw_video")
@@ -129,6 +130,15 @@ def main() -> int:
     p.add_argument("--output-dir", default="reports/segmentation/raw_video_comparison")
     p.add_argument("--panel-w", type=int, default=480)
     p.add_argument("--max-frames", type=int, default=None)
+    p.add_argument("--ema-alpha", type=float, default=None,
+                    help="Optional causal LogitsEMA smoothing (same class the deployed "
+                         "PerceptionPipeline always applies -- see temporal/ema_logits.py). "
+                         "This tool otherwise renders raw per-frame predictions with no "
+                         "temporal smoothing at all, which can look jittery/flickery in a way "
+                         "the deployed pipeline never does; pass e.g. 0.35 (config.yaml's "
+                         "temporal.semantic_ema.alpha default) to check whether jitter you're "
+                         "seeing is a tooling artifact rather than a real model regression. "
+                         "Reset per video clip, never across clips.")
     args = p.parse_args()
 
     videos_dir = Path(args.videos_dir) if args.videos_dir else _pick_videos_dir_interactively()
@@ -148,12 +158,15 @@ def main() -> int:
     backend = PyTorchBackend()
 
     models = {}
+    smoothers: dict[str, LogitsEMA] = {}
     for spec, label in zip(model_specs, labels):
         key, explicit_w = parse_model_spec(spec)
         weights = resolve_weights(key, explicit_w, cfg)
         mdl = build_semantic_model(SemanticModelCfg(name=key, weights=weights), hw, backend)
         mdl.warmup(cfg.classes)
         models[label] = mdl
+        if args.ema_alpha is not None:
+            smoothers[label] = LogitsEMA(args.ema_alpha)
         logger.info("Loaded %s (weights=%s)", spec, weights)
 
     out_dir = Path(args.output_dir)
@@ -164,6 +177,8 @@ def main() -> int:
         if not cap.isOpened():
             logger.warning("Could not open %s — skipping.", vp)
             continue
+        for smoother in smoothers.values():
+            smoother.reset()  # causal EMA must never carry state across clips
         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         writer = None
         n = 0
@@ -180,6 +195,8 @@ def main() -> int:
                     logits = torch.nn.functional.interpolate(
                         logits.unsqueeze(0), size=frame.shape[:2], mode="bilinear", align_corners=False,
                     )[0]
+                if key in smoothers:
+                    logits = smoothers[key].update(logits)
                 preds[key] = logits.argmax(dim=0).cpu().numpy().astype(np.int8)
 
             panel = _n_way_panel(frame, preds, args.panel_w)
