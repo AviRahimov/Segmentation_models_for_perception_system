@@ -82,6 +82,24 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lora-alpha", type=int, default=32)
     p.add_argument("--backbone", default=MASK2FORMER_HF_BASE,
                    help="HF Mask2Former checkpoint id (e.g. facebook/mask2former-swin-large-ade-semantic)")
+    p.add_argument("--gaza-data", default=None,
+                   help="Optional path to the promoted Gaza-domain dataset "
+                        "(datasets/segmentation/gaza_domain, see promote_gaza_labels.py). Mirrors "
+                        "train_orfd.py's --gaza-data/--gaza-only -- see --gaza-only below.")
+    p.add_argument("--gaza-only", action="store_true",
+                   help="Train on --gaza-data ALONE (not jointly with ORFD) -- for continuing to "
+                        "fine-tune a checkpoint already trained on ORFD, on just the new Gaza "
+                        "images. Requires --gaza-data. If <gaza-data>/splits/{train,val}.txt exist "
+                        "(see split_gaza_domain.py), checkpoint selection/early-stopping switches "
+                        "to Gaza-val mIoU instead of ORFD-val mIoU -- see train_orfd.py's --gaza-only "
+                        "for why selecting on ORFD-val for a Gaza-only run is a domain-mismatch bug. "
+                        "ORFD-val is still computed and logged every epoch as a regression guard.")
+    p.add_argument("--warm-start", default=None,
+                   help="Path to a checkpoint to load ONLY the model weights from before training "
+                        "(fresh optimizer/scheduler/epoch-0, unlike --resume which restores full "
+                        "training state) -- e.g. weights/segmentation/orfd/mask2former-large/best.pth, "
+                        "to continue training on --gaza-data without restarting from ADE20K. Mirrors "
+                        "train_orfd.py's --warm-start.")
     return p.parse_args()
 
 
@@ -163,11 +181,57 @@ def main() -> None:
     if not data_path.is_absolute():
         data_path = _ROOT / data_path
 
+    if args.gaza_only and not args.gaza_data:
+        raise SystemExit("--gaza-only requires --gaza-data")
+
     train_ds = ORFDDataset(str(data_path), split="training",   augment=True)
     val_ds   = ORFDDataset(str(data_path), split="validation", augment=False)
 
+    sampler = None
+    gaza_val_loader = None
+    if args.gaza_data:
+        from torch.utils.data import WeightedRandomSampler
+        from perception.datasets.gaza_domain_torch import GazaDomainDataset
+
+        gaza_path = Path(args.gaza_data)
+        if not gaza_path.is_absolute():
+            gaza_path = _ROOT / gaza_path
+        gaza_ds = GazaDomainDataset(str(gaza_path), augment=True)
+
+        if args.gaza_only:
+            train_split_file = gaza_path / "splits" / "train.txt"
+            val_split_file   = gaza_path / "splits" / "val.txt"
+            if train_split_file.is_file() and val_split_file.is_file():
+                train_stems = set(train_split_file.read_text().split())
+                val_stems   = set(val_split_file.read_text().split())
+                gaza_ds = GazaDomainDataset(str(gaza_path), augment=True, stems=train_stems)
+                gaza_val_ds = GazaDomainDataset(str(gaza_path), augment=False, stems=val_stems)
+                gaza_val_loader = DataLoader(
+                    gaza_val_ds, batch_size=args.batch, shuffle=False,
+                    num_workers=args.workers, pin_memory=True,
+                )
+                logger.info("Gaza-val split found: %d train / %d val -- checkpoint selection uses "
+                            "Gaza-val mIoU, not ORFD-val.", len(gaza_ds), len(gaza_val_ds))
+            else:
+                logger.warning("No %s found -- falling back to ORFD-val for checkpoint selection "
+                                "(run split_gaza_domain.py to fix this).", train_split_file.parent)
+            sampler = WeightedRandomSampler(gaza_ds.sample_weights, num_samples=len(gaza_ds), replacement=True)
+            train_ds = gaza_ds
+            logger.info("Gaza-domain-only training: %d samples (ORFD validation still used to catch forgetting)",
+                        len(gaza_ds))
+        else:
+            from torch.utils.data import ConcatDataset
+            domain_balance = len(train_ds) / len(gaza_ds)
+            weights = [1.0] * len(train_ds) + [domain_balance * w for w in gaza_ds.sample_weights]
+            combined_train_ds = ConcatDataset([train_ds, gaza_ds])
+            sampler = WeightedRandomSampler(weights, num_samples=len(combined_train_ds), replacement=True)
+            logger.info("Joint training: ORFD (%d) + Gaza-domain (%d), domain_balance=%.2f",
+                        len(train_ds), len(gaza_ds), domain_balance)
+            train_ds = combined_train_ds
+
     train_loader = DataLoader(
-        train_ds, batch_size=args.batch, shuffle=True,
+        train_ds, batch_size=args.batch,
+        shuffle=(sampler is None), sampler=sampler,
         num_workers=args.workers, pin_memory=True, drop_last=True,
         worker_init_fn=_worker_init_fn if args.seed is not None else None,
     )
@@ -178,7 +242,10 @@ def main() -> None:
     logger.info("Train: %d samples  Val: %d samples", len(train_ds), len(val_ds))
 
     resume_weights = args.resume if args.resume and Path(args.resume).is_file() else ""
-    model, processor = build_mask2former(device, fp16, weights=resume_weights, backbone_id=args.backbone)
+    init_weights = args.warm_start or resume_weights
+    model, processor = build_mask2former(device, fp16, weights=init_weights, backbone_id=args.backbone)
+    if args.warm_start:
+        logger.info("Model warm-started from %s (fresh optimizer/scheduler, epoch 0)", args.warm_start)
 
     if args.freeze_backbone and args.lora:
         raise SystemExit("--freeze-backbone and --lora are mutually exclusive.")
@@ -249,28 +316,44 @@ def main() -> None:
 
         train_loss = train_one_epoch(model, processor, train_loader, optimizer, device, fp16, args.clip_norm)
         val_loss, val_miou = evaluate(model, processor, val_loader, device, fp16)
+
+        gaza_val_loss = gaza_val_miou = None
+        if gaza_val_loader is not None:
+            gaza_val_loss, gaza_val_miou = evaluate(model, processor, gaza_val_loader, device, fp16)
+        select_miou = gaza_val_miou if gaza_val_miou is not None else val_miou
+
         scheduler.step()
 
         elapsed = time.perf_counter() - t0
-        logger.info(
-            "Epoch %3d/%d  train_loss=%.4f  val_loss=%.4f  val_mIoU=%.4f  (%.1fs)",
-            epoch, args.epochs, train_loss, val_loss, val_miou, elapsed,
-        )
+        if gaza_val_miou is not None:
+            logger.info(
+                "Epoch %3d/%d  train_loss=%.4f  orfd_val_loss=%.4f  orfd_val_mIoU=%.4f  "
+                "gaza_val_loss=%.4f  gaza_val_mIoU=%.4f  (%.1fs)",
+                epoch, args.epochs, train_loss, val_loss, val_miou,
+                gaza_val_loss, gaza_val_miou, elapsed,
+            )
+        else:
+            logger.info(
+                "Epoch %3d/%d  train_loss=%.4f  val_loss=%.4f  val_mIoU=%.4f  (%.1fs)",
+                epoch, args.epochs, train_loss, val_loss, val_miou, elapsed,
+            )
 
-        log_entries.append(dict(epoch=epoch, train_loss=train_loss, val_loss=val_loss, val_miou=val_miou))
+        log_entries.append(dict(epoch=epoch, train_loss=train_loss, val_loss=val_loss, val_miou=val_miou,
+                                 gaza_val_loss=gaza_val_loss, gaza_val_miou=gaza_val_miou, select_miou=select_miou))
         log_path.write_text(json.dumps(log_entries, indent=2))
 
-        _save_checkpoint(model, out_dir / "last.pth", epoch, val_miou,
+        _save_checkpoint(model, out_dir / "last.pth", epoch, select_miou,
                           optimizer=optimizer, scheduler=scheduler, best_miou=best_miou)
 
-        if val_miou > best_miou:
-            best_miou = val_miou
+        if select_miou > best_miou:
+            best_miou = select_miou
             patience_left = args.patience
             # If LoRA was used, merge adapters so best.pth is a plain state dict
             # that build_mask2former()/Mask2FormerSemanticModel can load as-is.
             save_model = model.merge_and_unload() if args.lora else model
-            _save_checkpoint(save_model, out_dir / "best.pth", epoch, val_miou)
-            logger.info("  -> new best mIoU %.4f saved.", best_miou)
+            _save_checkpoint(save_model, out_dir / "best.pth", epoch, select_miou)
+            logger.info("  -> new best %s mIoU %.4f saved.",
+                        "Gaza-val" if gaza_val_miou is not None else "val", best_miou)
         else:
             patience_left -= 1
             if patience_left <= 0:

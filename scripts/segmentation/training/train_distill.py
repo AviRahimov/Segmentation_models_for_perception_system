@@ -95,6 +95,21 @@ def parse_args() -> argparse.Namespace:
                    help="Weight on the KD term; (1 - kd_weight) implicitly on the hard-label term "
                         "via --hard-weight, kept independent so both can be tuned")
     p.add_argument("--hard-weight", type=float, default=1.0)
+    p.add_argument("--gaza-data", default=None,
+                   help="Optional path to the promoted Gaza-domain dataset "
+                        "(datasets/segmentation/gaza_domain, see promote_gaza_labels.py). Mirrors "
+                        "train_orfd.py's --gaza-data/--gaza-only -- see --gaza-only below. Point "
+                        "--teacher-weights at a Gaza-adapted teacher (see train_mask2former.py's "
+                        "own --gaza-data/--gaza-only) to distill Gaza-domain knowledge, not just "
+                        "ORFD, into the student.")
+    p.add_argument("--gaza-only", action="store_true",
+                   help="Distill on --gaza-data ALONE (not jointly with ORFD) -- for continuing to "
+                        "distill a checkpoint already trained on ORFD, on just the new Gaza images. "
+                        "Requires --gaza-data. If <gaza-data>/splits/{train,val}.txt exist (see "
+                        "split_gaza_domain.py), checkpoint selection/early-stopping switches to "
+                        "Gaza-val mIoU instead of ORFD-val mIoU -- see train_orfd.py's --gaza-only "
+                        "for why selecting on ORFD-val for a Gaza-only run is a domain-mismatch bug. "
+                        "ORFD-val is still computed and logged every epoch as a regression guard.")
     return p.parse_args()
 
 
@@ -215,10 +230,57 @@ def main() -> int:
     if not data_path.is_absolute():
         data_path = _ROOT / data_path
 
+    if args.gaza_only and not args.gaza_data:
+        raise SystemExit("--gaza-only requires --gaza-data")
+
     train_ds = ORFDDataset(str(data_path), split="training",   augment=True)
     val_ds   = ORFDDataset(str(data_path), split="validation", augment=False)
+
+    sampler = None
+    gaza_val_loader = None
+    if args.gaza_data:
+        from torch.utils.data import WeightedRandomSampler
+        from perception.datasets.gaza_domain_torch import GazaDomainDataset
+
+        gaza_path = Path(args.gaza_data)
+        if not gaza_path.is_absolute():
+            gaza_path = _ROOT / gaza_path
+        gaza_ds = GazaDomainDataset(str(gaza_path), augment=True)
+
+        if args.gaza_only:
+            train_split_file = gaza_path / "splits" / "train.txt"
+            val_split_file   = gaza_path / "splits" / "val.txt"
+            if train_split_file.is_file() and val_split_file.is_file():
+                train_stems = set(train_split_file.read_text().split())
+                val_stems   = set(val_split_file.read_text().split())
+                gaza_ds = GazaDomainDataset(str(gaza_path), augment=True, stems=train_stems)
+                gaza_val_ds = GazaDomainDataset(str(gaza_path), augment=False, stems=val_stems)
+                gaza_val_loader = DataLoader(
+                    gaza_val_ds, batch_size=args.batch, shuffle=False,
+                    num_workers=args.workers, pin_memory=True,
+                )
+                logger.info("Gaza-val split found: %d train / %d val -- checkpoint selection uses "
+                            "Gaza-val mIoU, not ORFD-val.", len(gaza_ds), len(gaza_val_ds))
+            else:
+                logger.warning("No %s found -- falling back to ORFD-val for checkpoint selection "
+                                "(run split_gaza_domain.py to fix this).", train_split_file.parent)
+            sampler = WeightedRandomSampler(gaza_ds.sample_weights, num_samples=len(gaza_ds), replacement=True)
+            train_ds = gaza_ds
+            logger.info("Gaza-domain-only distillation: %d samples (ORFD validation still used to catch forgetting)",
+                        len(gaza_ds))
+        else:
+            from torch.utils.data import ConcatDataset
+            domain_balance = len(train_ds) / len(gaza_ds)
+            weights = [1.0] * len(train_ds) + [domain_balance * w for w in gaza_ds.sample_weights]
+            combined_train_ds = ConcatDataset([train_ds, gaza_ds])
+            sampler = WeightedRandomSampler(weights, num_samples=len(combined_train_ds), replacement=True)
+            logger.info("Joint distillation: ORFD (%d) + Gaza-domain (%d), domain_balance=%.2f",
+                        len(train_ds), len(gaza_ds), domain_balance)
+            train_ds = combined_train_ds
+
     train_loader = DataLoader(
-        train_ds, batch_size=args.batch, shuffle=True,
+        train_ds, batch_size=args.batch,
+        shuffle=(sampler is None), sampler=sampler,
         num_workers=args.workers, pin_memory=True, drop_last=True,
         worker_init_fn=_worker_init_fn if args.seed is not None else None,
     )
@@ -292,6 +354,9 @@ def main() -> int:
     # Baseline: student's mIoU before any distillation, for a clean before/after comparison.
     _, baseline_miou = evaluate(student, processor, val_loader, device, fp16)
     logger.info("Student baseline mIoU (before distillation): %.4f", baseline_miou)
+    if gaza_val_loader is not None:
+        _, gaza_baseline_miou = evaluate(student, processor, gaza_val_loader, device, fp16)
+        logger.info("Student baseline Gaza-val mIoU (before distillation): %.4f", gaza_baseline_miou)
 
     patience_left = args.patience
     for epoch in range(start_epoch, args.epochs + 1):
@@ -302,34 +367,55 @@ def main() -> int:
             device, fp16, args.clip_norm, args.temperature, args.kd_weight, args.hard_weight,
         )
         val_loss, val_miou = evaluate(student, processor, val_loader, device, fp16)
+
+        gaza_val_loss = gaza_val_miou = None
+        if gaza_val_loader is not None:
+            gaza_val_loss, gaza_val_miou = evaluate(student, processor, gaza_val_loader, device, fp16)
+        select_miou = gaza_val_miou if gaza_val_miou is not None else val_miou
+
         scheduler.step()
 
         elapsed = time.perf_counter() - t0
-        logger.info(
-            "Epoch %3d/%d  hard_loss=%.4f  kd_loss=%.4f  val_loss=%.4f  val_mIoU=%.4f  (%.1fs)",
-            epoch, args.epochs, hard_loss, kd, val_loss, val_miou, elapsed,
-        )
+        if gaza_val_miou is not None:
+            logger.info(
+                "Epoch %3d/%d  hard_loss=%.4f  kd_loss=%.4f  orfd_val_loss=%.4f  orfd_val_mIoU=%.4f  "
+                "gaza_val_loss=%.4f  gaza_val_mIoU=%.4f  (%.1fs)",
+                epoch, args.epochs, hard_loss, kd, val_loss, val_miou,
+                gaza_val_loss, gaza_val_miou, elapsed,
+            )
+        else:
+            logger.info(
+                "Epoch %3d/%d  hard_loss=%.4f  kd_loss=%.4f  val_loss=%.4f  val_mIoU=%.4f  (%.1fs)",
+                epoch, args.epochs, hard_loss, kd, val_loss, val_miou, elapsed,
+            )
 
         log_entries.append(dict(epoch=epoch, hard_loss=hard_loss, kd_loss=kd,
-                                 val_loss=val_loss, val_miou=val_miou))
+                                 val_loss=val_loss, val_miou=val_miou,
+                                 gaza_val_loss=gaza_val_loss, gaza_val_miou=gaza_val_miou,
+                                 select_miou=select_miou))
         log_path.write_text(json.dumps(log_entries, indent=2))
 
-        _save_checkpoint(student, out_dir / "last.pth", epoch, val_miou,
+        _save_checkpoint(student, out_dir / "last.pth", epoch, select_miou,
                           optimizer=optimizer, scheduler=scheduler, best_miou=best_miou)
 
-        if val_miou > best_miou:
-            best_miou = val_miou
+        if select_miou > best_miou:
+            best_miou = select_miou
             patience_left = args.patience
-            _save_checkpoint(student, out_dir / "best.pth", epoch, val_miou)
-            logger.info("  -> new best mIoU %.4f saved.", best_miou)
+            _save_checkpoint(student, out_dir / "best.pth", epoch, select_miou)
+            logger.info("  -> new best %s mIoU %.4f saved.",
+                        "Gaza-val" if gaza_val_miou is not None else "val", best_miou)
         else:
             patience_left -= 1
             if patience_left <= 0:
                 logger.info("Early stopping: no improvement for %d epochs.", args.patience)
                 break
 
-    logger.info("Distillation done. Baseline mIoU: %.4f  Best distilled mIoU: %.4f  (delta %+.4f)",
-                baseline_miou, best_miou, best_miou - baseline_miou)
+    if gaza_val_loader is not None:
+        logger.info("Distillation done. Baseline Gaza-val mIoU: %.4f  Best Gaza-val mIoU: %.4f  (delta %+.4f)",
+                    gaza_baseline_miou, best_miou, best_miou - gaza_baseline_miou)
+    else:
+        logger.info("Distillation done. Baseline mIoU: %.4f  Best distilled mIoU: %.4f  (delta %+.4f)",
+                    baseline_miou, best_miou, best_miou - baseline_miou)
     logger.info("Best checkpoint: %s", out_dir / "best.pth")
     return 0
 
