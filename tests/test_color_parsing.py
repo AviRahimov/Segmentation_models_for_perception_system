@@ -69,7 +69,7 @@ def test_parse_non_string_raises():
 
 _LEGACY_YAML = """
 models:
-  instance: {name: "yoloe26l"}
+  instance: {name: "rfdetr-m"}
   semantic: {name: "segformer-b2"}
 
 classes:

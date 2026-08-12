@@ -323,11 +323,7 @@ def main() -> int:
     def _run_model(cfg: AppConfig, model_out_dir: Path, model_label: str) -> None:
         pipeline = build_pipeline(cfg)
         pipeline.warmup()
-        renderer = Renderer(
-            cfg.classes,
-            cfg.player,
-            yoloe_prompt_mode=cfg.models.instance.prompt_mode,
-        )
+        renderer = Renderer(cfg.classes, cfg.player)
         logger.info("=== Model: %s → %s ===", model_label, model_out_dir)
         try:
             for vid in videos:

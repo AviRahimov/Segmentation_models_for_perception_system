@@ -23,7 +23,6 @@ from .schema import (
     DuplicateFilterCfg,
     HardwareCfg,
     InstanceModelCfg,
-    InstancePromptMode,
     LowConfRecoveryCfg,
     ModelsCfg,
     OrfdSemanticComparisonCfg,
@@ -35,7 +34,6 @@ from .schema import (
     SourceCfg,
     TemporalCfg,
     VALID_DISPLAY_MODES,
-    VALID_INSTANCE_PROMPT_MODES,
     VALID_NATIVE_CATALOGUES,
     VALID_SOURCE_TYPES,
 )
@@ -135,25 +133,6 @@ def _build_app_config(raw: dict[str, Any], *, config_file: Path) -> AppConfig:
     classes = _resolve_classes(raw, models_cfg.instance.profile,
                                allow_empty_native_indices=fine_tuned)
 
-    # Guard the common footgun: model family and profile disagreeing (e.g.
-    # YOLOE weights running with the 2class profile's prompts/thresholds).
-    inst_name = models_cfg.instance.name.lower()
-    profile = models_cfg.instance.profile
-    if profile is not None:
-        if inst_name.startswith("yoloe") and profile != "yoloe":
-            logger.warning(
-                "models.instance.name=%r looks like YOLOE but profile=%r — "
-                "YOLOE will use that profile's text prompts and thresholds. "
-                "Did you mean profile: yoloe?",
-                models_cfg.instance.name, profile,
-            )
-        elif not inst_name.startswith("yoloe") and profile == "yoloe":
-            logger.warning(
-                "profile 'yoloe' is active but models.instance.name=%r is a "
-                "closed-vocabulary model — its classes need coco_classes, "
-                "text prompts are ignored. Did you mean profile: 2class/6class?",
-                models_cfg.instance.name,
-            )
     return AppConfig(
         models=models_cfg,
         classes=classes,
@@ -444,20 +423,6 @@ def _validate_catalogue_range(
 def _build_models(raw: dict[str, Any], *, config_file: Path) -> ModelsCfg:
     inst_raw = _require_dict(raw.get("instance"), "models.instance")
     sem_raw = _require_dict(raw.get("semantic"), "models.semantic")
-    pm = str(inst_raw.get("prompt_mode", "production") or "production").strip().lower()
-    if pm not in VALID_INSTANCE_PROMPT_MODES:
-        raise ConfigError(
-            f"models.instance.prompt_mode must be one of {sorted(VALID_INSTANCE_PROMPT_MODES)}, got {pm!r}"
-        )
-    d_path = ""
-    max_det_raw = inst_raw.get("discovery_max_det")
-    discovery_max_det: int | None
-    if max_det_raw is None or max_det_raw == "":
-        discovery_max_det = None
-    else:
-        discovery_max_det = int(max_det_raw)
-        if discovery_max_det < 1:
-            raise ConfigError("models.instance.discovery_max_det must be >= 1 when set")
 
     imgsz_raw = inst_raw.get("imgsz", 640)
     try:
@@ -468,25 +433,6 @@ def _build_models(raw: dict[str, Any], *, config_file: Path) -> ModelsCfg:
         ) from None
     if inst_imgsz < 32:
         raise ConfigError(f"models.instance.imgsz must be >= 32, got {inst_imgsz}")
-
-    if pm == "discovery":
-        vp = str(inst_raw.get("discovery_vocabulary_path", "") or "").strip()
-        if not vp:
-            raise ConfigError(
-                "models.instance.discovery_vocabulary_path is required when prompt_mode is discovery",
-            )
-        abs_vp = resolve_path_relative_config(config_file, vp)
-        if not abs_vp.is_file():
-            raise ConfigError(f"Discovery vocabulary file not found or not a file: {abs_vp}")
-        d_path = str(abs_vp)
-
-    d_conf = float(inst_raw.get("discovery_conf_floor", 0.05))
-    if not 0.0 < d_conf <= 1.0:
-        raise ConfigError(
-            f"models.instance.discovery_conf_floor must be in (0, 1], got {d_conf}",
-        )
-
-    ipm: InstancePromptMode = "discovery" if pm == "discovery" else "production"
 
     profile_raw = inst_raw.get("profile")
     lcr_raw = inst_raw.get("low_conf_recovery") or {}
@@ -504,13 +450,9 @@ def _build_models(raw: dict[str, Any], *, config_file: Path) -> ModelsCfg:
 
     inst = InstanceModelCfg(
         enabled=bool(inst_raw.get("enabled", True)),
-        name=str(inst_raw.get("name", "yoloe26l")),
+        name=str(inst_raw.get("name", "rfdetr-m")),
         confidence_threshold=float(inst_raw.get("confidence_threshold", 0.35)),
         weights=inst_raw.get("weights"),
-        prompt_mode=ipm,
-        discovery_vocabulary_path=d_path,
-        discovery_conf_floor=d_conf,
-        discovery_max_det=discovery_max_det,
         imgsz=inst_imgsz,
         profile=str(profile_raw) if profile_raw else None,
         low_conf_recovery=lcr,

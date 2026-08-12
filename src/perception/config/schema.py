@@ -32,8 +32,6 @@ from typing import Literal
 
 DisplayMode = Literal["both", "bbox_only", "mask_only", "none"]
 SourceType = Literal["video", "camera", "image_dir"]
-InstancePromptMode = Literal["production", "discovery"]
-VALID_INSTANCE_PROMPT_MODES: frozenset[str] = frozenset({"production", "discovery"})
 
 VALID_DISPLAY_MODES: frozenset[str] = frozenset({"both", "bbox_only", "mask_only", "none"})
 VALID_SOURCE_TYPES: frozenset[str] = frozenset({"video", "camera", "image_dir"})
@@ -50,8 +48,9 @@ class ClassDef:
 
     Attributes:
         name:           Stable identifier used everywhere (e.g. ``"person"``).
-        text_prompt:    Open-vocabulary prompt for the instance model and the
-                        legend label for semantic classes.
+        text_prompt:    Legend label for semantic classes; documentary label
+                        for instance classes (closed-vocab detectors match
+                        via ``coco_classes``, not this field).
         display_mode:   One of ``both | bbox_only | mask_only | none``.
         color_rgb:      Display color as ``(R, G, B)`` 0-255. Set internally
                         by the loader from the YAML ``color: <name-or-hex>``
@@ -111,22 +110,15 @@ class LowConfRecoveryCfg:
 
 @dataclass(frozen=True)
 class InstanceModelCfg:
-    enabled: bool = True   # set False in config.yaml to skip YOLOE (semantic-only mode)
-    name: str = "yoloe26l"
+    enabled: bool = True   # set False in config.yaml to skip the instance model (semantic-only mode)
+    name: str = "rfdetr-m"
     confidence_threshold: float = 0.35
     weights: str | None = None  # default per-model when None
-    #: ``production`` uses ``classes[*].text_prompt`` for YOLOE ``set_classes``.
-    #: ``discovery`` loads many prompts from ``discovery_vocabulary_path`` for exploration.
-    prompt_mode: InstancePromptMode = "production"
-    #: Absolute path after load (when ``prompt_mode == "discovery"``); empty in production.
-    discovery_vocabulary_path: str = ""
-    discovery_conf_floor: float = 0.05
-    discovery_max_det: int | None = None
-    #: Ultralytics inference image size (square). Lower = faster at cost of small-object recall.
-    #: 640 is the YOLOE-26L default; 512 saves ~25% with negligible quality loss for large objects.
+    #: Ultralytics/RF-DETR inference image size (square). Lower = faster at
+    #: cost of small-object recall. 640 is the common default.
     imgsz: int = 640
     #: Selects an entry from the top-level ``instance_profiles`` mapping as the
-    #: active instance class list (e.g. "2class" | "6class" | "yoloe").
+    #: active instance class list (e.g. "2class" | "6class").
     #: None = classic mode: instance classes live directly in ``classes``.
     profile: str | None = None
     low_conf_recovery: LowConfRecoveryCfg = field(default_factory=LowConfRecoveryCfg)
@@ -302,10 +294,8 @@ class AppConfig:
         return tuple(c for c in self.classes if c.is_semantic)
 
     @property
-    def runs_yoloe_instance_inference(self) -> bool:
-        """True when the pipeline should run YOLOE (production classes or discovery vocab)."""
+    def runs_instance_inference(self) -> bool:
+        """True when the pipeline should run the instance (detection) model."""
         if not self.models.instance.enabled:
             return False
-        if self.models.instance.prompt_mode == "discovery":
-            return True
         return bool(self.instance_classes)

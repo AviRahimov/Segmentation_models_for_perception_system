@@ -2,7 +2,7 @@
 
 models:
   # Model + profile must match: 2-class checkpoints -> profile 2class,
-  # merged_6class checkpoints -> profile 6class, YOLOE -> profile yoloe,
+  # merged_6class checkpoints -> profile 6class,
   # a fine-tuned RF-DETR checkpoint -> profile rfdetr_2class / rfdetr_6class
   # (own profiles, NOT 2class/6class — see the rfdetr_2class block below for why).
   # Previous production pair: profile 6class +
@@ -15,14 +15,11 @@ models:
     # your real footage.
     name: "rfdetr-m"                    # <-- switch here: rfdetr-m | rfdetr-2xl (higher mAP, ~4x heavier) | yolo11s
     # name: "yolo11s"
-    profile: rfdetr_2class               # <-- switch here: 2class | 6class | yoloe | rfdetr_2class | rfdetr_6class
+    profile: rfdetr_2class               # <-- switch here: 2class | 6class | rfdetr_2class | rfdetr_6class
     # weights: "weights/detection/rfdetr-m/merged_2class/coco/best.pt"
     # weights: "weights/detection/rfdetr-2xl/merged_6class/coco/best.pt"      # best of the 3 (mAP50=0.654)
     weights: "weights/detection/rfdetr-m/detection_dataset_hardneg/conservative_aug/best.pt"    # 2-class — pair with profile: rfdetr_2class
     # weights: "weights/detection/yolo11s/merged_6class/noaug/best.pt"
-    prompt_mode: production             # production | discovery
-    discovery_vocabulary_path: "yoloe_discovery_vocab.example.txt"
-    discovery_conf_floor: 0.05
     # Ignored by RF-DETR — fixed per-variant input resolution (576px for
     # -m, 880px for -2xl); only affects YOLO models. Harmless to leave set.
     imgsz: 1280
@@ -195,61 +192,6 @@ instance_profiles:
       color: "#00c8ff"
       is_semantic: false
       confidence_threshold: 0.30
-
-  # ── yoloe ── open-vocabulary text prompts (kept pending the YOLOE verdict)
-  yoloe:
-    # - name: "vehicle"
-    #   text_prompt: >-
-    #     cargo truck, car barrier, military supply truck, military convoy vehicle,
-    #     armored personnel carrier, military transport vehicle, delivery truck, mine-resistant vehicle, engineering vehicle
-    #   coco_classes: []
-    #   display_mode: "both"
-    #   color: "#ffc800"
-    #   is_semantic: false
-    #   confidence_threshold: 0.30
-
-    - name: "military vehicle"
-      text_prompt: >-
-        mine-resistant vehicle, engineering vehicle
-      coco_classes: []
-      display_mode: "both"
-      color: "#ffc800"
-      is_semantic: false
-      confidence_threshold: 0.50
-
-    # - name: "building"
-    #   text_prompt: >-
-    #     destroyed building, building, smoked building, black building, high-rise building
-    #   coco_classes: []
-    #   display_mode: "both"
-    #   color: "#ff4040"
-    #   is_semantic: false
-    #   confidence_threshold: 0.50
-
-    - name: "person"
-      text_prompt: "person"
-      coco_classes: []
-      display_mode: "both"
-      color: "#00ff80"
-      is_semantic: false
-      confidence_threshold: 0.50
-
-    - name: "obstacle"
-      text_prompt: >-
-        rock, log, debris, boulder, large rock, fallen tree, tree stump,
-        deep rut, ditch, berm, earthwork
-      coco_classes: []
-      display_mode: "bbox_only"
-      color: "#ff4040"
-      is_semantic: false
-      
-    - name: "unnecessary_detection"   # false-positive sink for display
-      text_prompt: "portacabin, building, high-rise building, tower, destroyed building, RV, bridge-laying tank, motorhome, gazebo, truck, trash, container, barrier, traffic cone, traffic light, traffic sign, boom barrier, road block, street light, pole, mobile generator, box truck"
-      coco_classes: []
-      display_mode: "none"
-      color: "#000000"
-      is_semantic: false
-      confidence_threshold: 0.10
 
 # ---------------------------------------------------------------------------
 # Semantic classes only (instance classes live in instance_profiles above).

@@ -1,5 +1,4 @@
-"""Instance segmentation models (open-vocabulary)."""
+"""Instance detection models (closed-vocabulary)."""
 from .base import InstanceModel
-from .yolo.open import YOLOEInstanceModel
 
-__all__ = ["InstanceModel", "YOLOEInstanceModel"]
+__all__ = ["InstanceModel"]

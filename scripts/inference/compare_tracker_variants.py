@@ -116,7 +116,7 @@ def main() -> int:
 
     cfg = load_config(args.config)
     cfg = override_source(cfg, source_type=None, path=args.source, camera=None)
-    if not cfg.runs_yoloe_instance_inference:
+    if not cfg.runs_instance_inference:
         logger.error("models.instance is disabled in this config — nothing to track/compare.")
         return 2
 
@@ -206,7 +206,7 @@ def main() -> int:
         for label, mh, floor, trk_backend in variants
     ]
     dedup_cfg = cfg.postprocess.duplicate_filter
-    renderer = Renderer(cfg.classes, cfg.player, yoloe_prompt_mode=cfg.models.instance.prompt_mode)
+    renderer = Renderer(cfg.classes, cfg.player)
     logger.info("Comparing %s on %s", [label for label, _, _ in trackers], args.source)
 
     src = build_source(cfg.source)

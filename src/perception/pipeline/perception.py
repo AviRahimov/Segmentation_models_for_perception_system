@@ -40,7 +40,7 @@ class PerceptionPipeline:
         self._scene_cut = scene_cut_detector
         self._cfg = config
         self._has_semantic = bool(config.semantic_classes)
-        self._has_instance = config.runs_yoloe_instance_inference
+        self._has_instance = config.runs_instance_inference
         self._reset_on_cut = config.temporal.semantic_ema.reset_on_scene_cut
         self._dedup = config.postprocess.duplicate_filter
         self._calib = config.postprocess.calibration
@@ -172,7 +172,7 @@ def build_pipeline(cfg: AppConfig) -> PerceptionPipeline:
     )
 
     backend = build_backend(cfg.hardware.use_tensorrt)
-    if cfg.runs_yoloe_instance_inference:
+    if cfg.runs_instance_inference:
         instance_model = build_instance_model(cfg.models.instance, cfg.hardware, backend)
     else:
         from ..models.instance.null import NullInstanceModel

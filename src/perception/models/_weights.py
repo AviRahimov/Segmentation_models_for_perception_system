@@ -1,6 +1,6 @@
 """Model-weight resolver and downloader.
 
-Given a checkpoint *name* (e.g. ``"yoloe-26l-seg.pt"``) and an ordered list
+Given a checkpoint *name* (e.g. ``"some-model.pt"``) and an ordered list
 of mirrors, returns a local path inside ``./weights/`` after downloading
 the file if it isn't already cached. Used by the model wrappers so that
 adding a new instance/semantic model to the project requires zero manual
@@ -10,9 +10,8 @@ resolver does the rest.
 Why a separate resolver instead of relying on Ultralytics' built-in
 auto-download? Ultralytics only auto-downloads files whose names appear
 in its hard-coded ``GITHUB_ASSETS_NAMES`` list, which is updated
-release-by-release. ``yoloe-26l-seg.pt`` was published to
-``ultralytics/assets`` v8.4.0 but is not yet on the auto-download list of
-older Ultralytics versions, so a generic resolver is more robust.
+release-by-release and can lag behind newly published checkpoints, so a
+generic resolver is more robust for anything not yet on that list.
 """
 from __future__ import annotations
 
@@ -164,24 +163,7 @@ def _download_hf_hub(repo_id: str, filename: str, dst: Path) -> None:
 # Add a new model = add an entry here + register the wrapper in              #
 # perception.models.factory. No other code changes required.                 #
 # --------------------------------------------------------------------------- #
-INSTANCE_WEIGHT_SOURCES: dict[str, list[WeightSource]] = {
-    "yoloe-26l-seg.pt": [
-        # Primary: official Ultralytics asset release v8.4.0.
-        WeightSource(
-            kind="http",
-            url="https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26l-seg.pt",
-        ),
-        # Fallback: Hugging Face mirror by the OpenVision org.
-        # The file in that repo is named "model.pt"; we save it locally
-        # under the canonical "yoloe-26l-seg.pt" so Ultralytics' filename-
-        # based dispatch still recognizes it.
-        WeightSource(
-            kind="hf_hub",
-            repo_id="openvision/yoloe26-l-seg",
-            filename="model.pt",
-        ),
-    ],
-}
+INSTANCE_WEIGHT_SOURCES: dict[str, list[WeightSource]] = {}
 
 
 def resolve_instance_weights(name_or_path: str) -> Path:

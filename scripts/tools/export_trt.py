@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
-"""One-time TensorRT FP16 engine export for YOLOE and SegFormer.
+"""One-time TensorRT FP16 engine export for SegFormer.
 
-Run this script ONCE on the Jetson to produce optimised ``.engine`` files.
+Run this script ONCE on the Jetson to produce an optimised ``.engine`` file.
 Engines are tied to the exact GPU, driver, and TensorRT version — rebuild
 after any JetPack upgrade or if you change ``models.semantic.processor_size``.
 
+Instance-model (detection) TensorRT export is handled by the dedicated
+``scripts/detection/optimization/export_onnx.py`` pipeline — see CLAUDE.md's
+"RF-DETR / YOLO Jetson TensorRT Optimization" section.
+
 Usage
 -----
-Build both models (recommended):
     python scripts/export_trt.py --config config/config.yaml
 
-Build one model only:
-    python scripts/export_trt.py --config config/config.yaml --model yoloe
-    python scripts/export_trt.py --config config/config.yaml --model segformer
-
-After the script prints the engine paths, edit config.yaml:
-    models.instance.weights:         "<yoloe engine path>"
+After the script prints the engine path, edit config.yaml:
     models.semantic.trt_engine_path: "<segformer engine path>"
     hardware.use_tensorrt:            true
 
@@ -32,49 +30,6 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str((_HERE.parents[1] / "src").resolve()))
 
 logger = logging.getLogger("export_trt")
-
-
-# --------------------------------------------------------------------------- #
-# YOLOE export (via Ultralytics native TRT path)                               #
-# --------------------------------------------------------------------------- #
-
-def export_yoloe(cfg) -> Path:
-    """Export YOLOE .pt → .engine using Ultralytics' built-in TRT exporter."""
-    from perception.models.instance._ultralytics_compat import apply_patches
-    from perception.models._weights import resolve_instance_weights
-
-    apply_patches()
-
-    weights_path = str(resolve_instance_weights(cfg.models.instance.weights or "yoloe-26l-seg.pt"))
-    if weights_path.endswith(".engine"):
-        raise ValueError(
-            f"models.instance.weights already points to an engine file: {weights_path}\n"
-            "Point it back to the .pt file before exporting."
-        )
-
-    logger.info("Exporting YOLOE: %s → TRT FP16 (imgsz=%d, workspace=%dGB)",
-                weights_path, cfg.models.instance.imgsz, cfg.hardware.trt_workspace_gb)
-
-    try:
-        from ultralytics import YOLOE as _Cls  # type: ignore
-    except ImportError:
-        try:
-            from ultralytics.models.yoloe import YOLOE as _Cls  # type: ignore
-        except ImportError:
-            from ultralytics import YOLO as _Cls  # type: ignore
-
-    model = _Cls(weights_path)
-    model.export(
-        format="engine",
-        imgsz=cfg.models.instance.imgsz,
-        half=True,
-        workspace=cfg.hardware.trt_workspace_gb,
-        dynamic=False,
-    )
-    # Ultralytics saves the engine next to the .pt file, same stem + .engine
-    engine_path = Path(weights_path).with_suffix(".engine")
-    logger.info("YOLOE engine: %s", engine_path)
-    return engine_path
 
 
 # --------------------------------------------------------------------------- #
@@ -205,30 +160,20 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    p = argparse.ArgumentParser(description="Export TRT FP16 engines for YOLOE and SegFormer")
+    p = argparse.ArgumentParser(description="Export a TRT FP16 engine for SegFormer")
     p.add_argument("--config",  default="config/config.yaml")
-    p.add_argument("--model",   choices=["yoloe", "segformer", "both"], default="both")
     args = p.parse_args()
 
     from perception.config.loader import load_config
     cfg = load_config(args.config)
 
+    ep = export_segformer(cfg)
     instructions: list[str] = [
         "",
         "=" * 70,
         "ENGINE EXPORT COMPLETE — update config.yaml then rebuild Docker:",
         "=" * 70,
-    ]
-
-    if args.model in ("yoloe", "both"):
-        ep = export_yoloe(cfg)
-        instructions.append(f"  models.instance.weights:         \"{ep}\"")
-
-    if args.model in ("segformer", "both"):
-        ep = export_segformer(cfg)
-        instructions.append(f"  models.semantic.trt_engine_path: \"{ep}\"")
-
-    instructions += [
+        f"  models.semantic.trt_engine_path: \"{ep}\"",
         "  hardware.use_tensorrt:           true",
         "=" * 70,
         "",

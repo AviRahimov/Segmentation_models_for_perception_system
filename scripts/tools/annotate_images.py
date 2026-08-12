@@ -136,11 +136,7 @@ def main() -> int:
 
     pipeline = build_pipeline(cfg)
     pipeline.warmup()
-    renderer = Renderer(
-        cfg.classes,
-        cfg.player,
-        yoloe_prompt_mode=cfg.models.instance.prompt_mode,
-    )
+    renderer = Renderer(cfg.classes, cfg.player)
 
     failed = 0
     t_start = time.perf_counter()

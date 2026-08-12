@@ -81,7 +81,7 @@ def test_empty_and_single_passthrough():
 
 _MINIMAL_YAML = """
 models:
-  instance: {name: "yoloe26l"}
+  instance: {name: "rfdetr-m"}
   semantic: {name: "segformer-b2"}
 classes:
   - name: "person"

@@ -7,12 +7,11 @@ from __future__ import annotations
 
 from typing import Type
 
-from ..config.schema import HardwareCfg, InstanceModelCfg, InstancePromptMode, SemanticModelCfg
+from ..config.schema import HardwareCfg, InstanceModelCfg, SemanticModelCfg
 from .backends.base import InferenceBackend
 from .instance.base import InstanceModel
 from .instance.rfdetr.model import RFDETRInstanceModel
 from .instance.yolo.closed import YOLOClosedInstanceModel
-from .instance.yolo.open import YOLOEInstanceModel
 from .semantic.auriganet import AurigaNetSemanticModel
 from .semantic.base import SemanticModel
 from .semantic.dinov2 import DINOv2SemanticModel
@@ -26,10 +25,6 @@ from .semantic.upernet import UPerNetSemanticModel
 # ---------------------------------------------------------------------------
 
 INSTANCE_REGISTRY: dict[str, Type[InstanceModel]] = {
-    # YOLOE — open-vocabulary (existing aliases preserved for backward compat)
-    "yoloe26l":  YOLOEInstanceModel,
-    "yoloe-26l": YOLOEInstanceModel,
-    "yoloe":     YOLOEInstanceModel,
     # YOLO11 — closed-vocabulary (COCO-80, 0-indexed internally)
     "yolo11n": YOLOClosedInstanceModel, "yolo11s": YOLOClosedInstanceModel,
     "yolo11m": YOLOClosedInstanceModel, "yolo11l": YOLOClosedInstanceModel,
@@ -53,9 +48,6 @@ INSTANCE_REGISTRY: dict[str, Type[InstanceModel]] = {
 #: there by Ultralytics/rfdetr if not already present).
 _BASE_CKPT_DIR = "weights/base_checkpoints/"
 INSTANCE_DEFAULT_WEIGHTS: dict[str, str] = {
-    "yoloe26l":  _BASE_CKPT_DIR + "yoloe-26l-seg.pt",
-    "yoloe-26l": _BASE_CKPT_DIR + "yoloe-26l-seg.pt",
-    "yoloe":     _BASE_CKPT_DIR + "yoloe-26l-seg.pt",
     "yolo11n": _BASE_CKPT_DIR + "yolo11n.pt", "yolo11s": _BASE_CKPT_DIR + "yolo11s.pt",
     "yolo11m": _BASE_CKPT_DIR + "yolo11m.pt",
     "yolo11l": _BASE_CKPT_DIR + "yolo11l.pt", "yolo11x": _BASE_CKPT_DIR + "yolo11x.pt",
@@ -141,10 +133,6 @@ def build_instance_model(
         backend=backend,
         device=hw.device,
         fp16=hw.fp16,
-        prompt_mode=cfg.prompt_mode,
-        discovery_vocab_path=cfg.discovery_vocabulary_path,
-        discovery_conf_floor=cfg.discovery_conf_floor,
-        discovery_max_det=cfg.discovery_max_det,
         imgsz=cfg.imgsz,
         recovery_conf_floor=(
             cfg.low_conf_recovery.recovery_conf_floor

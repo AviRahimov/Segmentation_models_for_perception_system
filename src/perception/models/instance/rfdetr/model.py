@@ -83,8 +83,8 @@ def _load_rfdetr(model_name: str, weights: str | None) -> Any:
 class RFDETRInstanceModel(InstanceModel):
     """Wraps an RF-DETR variant for closed-vocabulary COCO detection.
 
-    Text-prompt and discovery kwargs are accepted but ignored so the factory
-    can pass a uniform constructor signature regardless of model type.
+    ``recovery_conf_floor`` is accepted but has no effect yet — low-confidence
+    recovery is not implemented for RF-DETR (see config.yaml's own note).
     """
 
     def __init__(
@@ -97,12 +97,6 @@ class RFDETRInstanceModel(InstanceModel):
         *,
         model_name: str = "rfdetr-m",
         imgsz: int = 640,
-        # ignored open-vocab / discovery / recovery kwargs (factory passes
-        # these universally across all model types)
-        prompt_mode: Any = None,
-        discovery_vocab_path: Any = None,
-        discovery_conf_floor: Any = None,
-        discovery_max_det: Any = None,
         recovery_conf_floor: Any = None,
     ) -> None:
         self._model_name = model_name

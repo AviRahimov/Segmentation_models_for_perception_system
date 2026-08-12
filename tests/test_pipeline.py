@@ -83,7 +83,7 @@ class _NoopSceneCut(SceneCutDetector):
 
 _YAML = """
 models:
-  instance: {{name: "yoloe26l"}}
+  instance: {{name: "rfdetr-m"}}
   semantic: {{name: "segformer-b2"}}
 classes:
   - name: "person"

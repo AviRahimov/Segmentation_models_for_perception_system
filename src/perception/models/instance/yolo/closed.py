@@ -6,7 +6,7 @@ class IDs, so each COCO ID is decremented by 1 internally.
 
 Classes with an empty ``coco_classes`` list are silently skipped — they will
 not appear in detections from this model (no COCO equivalent, e.g. "obstacle").
-Switch to YOLOE or a fine-tuned model to detect those classes.
+Fine-tune a checkpoint on those classes to detect them.
 """
 from __future__ import annotations
 
@@ -27,11 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class YOLOClosedInstanceModel(InstanceModel):
-    """Wraps any Ultralytics YOLO11/YOLO12/YOLO26 checkpoint for fixed-class detection.
-
-    Text-prompt and discovery kwargs are accepted but ignored so the factory
-    can pass a uniform constructor signature regardless of model type.
-    """
+    """Wraps any Ultralytics YOLO11/YOLO12/YOLO26 checkpoint for fixed-class detection."""
 
     def __init__(
         self,
@@ -43,11 +39,6 @@ class YOLOClosedInstanceModel(InstanceModel):
         *,
         imgsz: int = 640,
         recovery_conf_floor: float | None = None,
-        # ignored kwargs (factory passes these universally across all model types)
-        prompt_mode: Any = None,
-        discovery_vocab_path: Any = None,
-        discovery_conf_floor: Any = None,
-        discovery_max_det: Any = None,
         model_name: Any = None,
     ) -> None:
         # Ultralytics handles auto-download for a not-yet-downloaded .pt path
@@ -94,7 +85,7 @@ class YOLOClosedInstanceModel(InstanceModel):
             logger.warning(
                 "YOLOClosed (%s): no coco_classes defined for any instance class — "
                 "predict() will return no detections. Add coco_classes to instance "
-                "classes in config.yaml or switch to yoloe for open-vocab detection.",
+                "classes in config.yaml.",
                 self._weights,
             )
             self._ready = True

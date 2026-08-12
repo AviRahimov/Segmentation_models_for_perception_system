@@ -9,7 +9,7 @@ from perception.config.loader import ConfigError, load_config, override_source
 _VALID_YAML = """
 models:
   instance:
-    name: "yoloe26l"
+    name: "rfdetr-m"
     confidence_threshold: 0.4
   semantic:
     name: "segformer-b2"
@@ -52,7 +52,7 @@ def _write(tmp: Path, body: str) -> Path:
 
 def test_round_trip(tmp_path):
     cfg = load_config(_write(tmp_path, _VALID_YAML))
-    assert cfg.models.instance.name == "yoloe26l"
+    assert cfg.models.instance.name == "rfdetr-m"
     assert cfg.models.instance.confidence_threshold == 0.4
     assert len(cfg.classes) == 2
     assert cfg.classes[0].is_semantic is False
@@ -189,35 +189,9 @@ def test_override_source(tmp_path):
     assert cfg.source.type == "video"
 
 
-def test_discovery_mode_requires_vocab_path(tmp_path):
-    disc = _VALID_YAML.replace(
-        "    name: \"yoloe26l\"\n    confidence_threshold: 0.4\n",
-        "    name: \"yoloe26l\"\n    confidence_threshold: 0.4\n"
-        "    prompt_mode: discovery\n",
-        1,
-    )
-    with pytest.raises(ConfigError, match="discovery_vocabulary_path"):
-        load_config(_write(tmp_path, disc))
-
-
-def test_discovery_mode_resolves_vocab_relative_to_yaml(tmp_path):
-    (tmp_path / "voc.txt").write_text("# h\nperson\ncar\n", encoding="utf-8")
-    disc = _VALID_YAML.replace(
-        "    name: \"yoloe26l\"\n    confidence_threshold: 0.4\n",
-        "    name: \"yoloe26l\"\n    confidence_threshold: 0.4\n"
-        "    prompt_mode: discovery\n"
-        '    discovery_vocabulary_path: "voc.txt"\n',
-        1,
-    )
-    cfg = load_config(_write(tmp_path, disc))
-    assert cfg.models.instance.prompt_mode == "discovery"
-    assert cfg.models.instance.discovery_vocabulary_path.endswith("voc.txt")
-    assert cfg.runs_yoloe_instance_inference is True
-
-
-def test_runs_yoloe_instance_inference_production_follows_classes(tmp_path):
+def test_runs_instance_inference_production_follows_classes(tmp_path):
     cfg = load_config(_write(tmp_path, _VALID_YAML))
-    assert cfg.runs_yoloe_instance_inference is True
+    assert cfg.runs_instance_inference is True
 
 
 def test_missing_classes(tmp_path):
@@ -515,7 +489,7 @@ def test_instance_class_in_classes_rejected_in_profile_mode(tmp_path):
 _LCR_YAML = """
 models:
   instance:
-    name: "yoloe26l"
+    name: "rfdetr-m"
     low_conf_recovery: {{{lcr_body}}}
   semantic:
     name: "segformer-b2"

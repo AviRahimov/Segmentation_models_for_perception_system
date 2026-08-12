@@ -1,6 +1,6 @@
 """Tests for the model and source factories.
 
-We cannot actually instantiate YOLOE / SegFormer (they require weight
+We cannot actually instantiate RF-DETR / SegFormer (they require weight
 downloads and a GPU), so we test the registry dispatch logic and the
 clear-error path for unknown names.
 """
@@ -17,11 +17,6 @@ from perception.models import factory as model_factory
 from perception.models.backends.factory import build_backend
 from perception.models.backends.pytorch import PyTorchBackend
 from perception.models.backends.tensorrt import TensorRTBackend
-
-
-def test_instance_registry_known_names():
-    for n in ("yoloe26l", "yoloe-26l", "yoloe", "YoloE26L"):
-        assert n.lower().strip() in model_factory.INSTANCE_REGISTRY
 
 
 def test_unknown_instance_model_raises():
