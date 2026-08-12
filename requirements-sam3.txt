@@ -1,0 +1,30 @@
+# SAM3 auto-labeling — separate venv, deliberately isolated from requirements.txt.
+#
+# SAM3 (facebook/sam3) needs transformers>=5.0 for the Sam3Model/Sam3Processor
+# classes; this project's main venv pins transformers==4.46.3 for SegFormer.
+# Same rationale as requirements-rfdetr-train.txt: a new, newer-transformers
+# dependency gets its own venv rather than risking the segmentation/detection
+# pipelines with an untested transformers major-version bump. This venv is
+# only used to produce label manifests (JSON + polygons) for the Gaza-domain
+# image set -- its output is plain data, consumed by the main venv's
+# rasterize_sam3_labels.py same as any other file.
+#
+# Setup:
+#   python3.12 -m venv .venv-sam3
+#   source .venv-sam3/bin/activate
+#   pip install -r requirements-sam3.txt
+#   python scripts/segmentation/tools/run_sam3_labeling.py --images-dir <214-image dir> \
+#       --output-dir datasets/segmentation/gaza_domain_review
+#
+# See requirements.txt's header comment for why cu128 wheels are required
+# on this project's RTX 5090 dev target.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+transformers>=5.0.0
+accelerate>=1.0.0
+huggingface_hub>=0.27.0
+pillow
+numpy
+opencv-python-headless==4.10.0.84
+tqdm

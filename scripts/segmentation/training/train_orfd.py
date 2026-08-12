@@ -45,6 +45,7 @@ from torch.utils.data import DataLoader
 # Make sure the src package is importable when running as a script.
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "src"))
+sys.path.insert(0, str(_ROOT / "scripts" / "segmentation"))
 
 from perception.datasets.orfd_torch import ORFDDataset
 from _orfd_common import (
@@ -158,6 +159,25 @@ def parse_args() -> argparse.Namespace:
                    help="Freeze encoder; only train the segmentation head (and LoRA adapters if --lora)")
     p.add_argument("--lora", action="store_true",
                    help="Apply LoRA to SegFormer encoder Q/V projections")
+    p.add_argument("--gaza-data", default=None,
+                   help="Optional path to the promoted Gaza-domain dataset "
+                        "(datasets/segmentation/gaza_domain, see promote_gaza_labels.py). By "
+                        "default trained jointly with --data via ConcatDataset + a "
+                        "WeightedRandomSampler that balances the two domains and up-weights "
+                        "rare-class Gaza-domain samples (see --gaza-only to change this). Omit "
+                        "entirely to train on --data alone (unchanged behavior).")
+    p.add_argument("--gaza-only", action="store_true",
+                   help="Train on --gaza-data ALONE (not jointly with ORFD) -- for continuing "
+                        "to fine-tune a checkpoint that's already trained on ORFD, on just the "
+                        "225 new images, fast since the set is small. --data's validation split "
+                        "is still used every epoch (unchanged) specifically to catch forgetting/"
+                        "regression on the original distribution. Requires --gaza-data.")
+    p.add_argument("--warm-start", default=None,
+                   help="Path to a checkpoint to load ONLY the model weights from before training "
+                        "(fresh optimizer/scheduler/epoch-0, unlike --resume which restores full "
+                        "training state) -- e.g. the current production best.pth, to continue "
+                        "training on --gaza-data without restarting from ADE20K. Mirrors "
+                        "train_distill.py's --student-init.")
     return p.parse_args()
 
 
@@ -187,11 +207,51 @@ def main() -> None:
     if not data_path.is_absolute():
         data_path = _ROOT / data_path
 
+    if args.gaza_only and not args.gaza_data:
+        raise SystemExit("--gaza-only requires --gaza-data")
+
     train_ds = ORFDDataset(str(data_path), split="training",   augment=True)
     val_ds   = ORFDDataset(str(data_path), split="validation", augment=False)
 
+    sampler = None
+    if args.gaza_data:
+        from torch.utils.data import ConcatDataset, WeightedRandomSampler
+        from perception.datasets.gaza_domain_torch import GazaDomainDataset
+
+        gaza_path = Path(args.gaza_data)
+        if not gaza_path.is_absolute():
+            gaza_path = _ROOT / gaza_path
+        gaza_ds = GazaDomainDataset(str(gaza_path), augment=True)
+
+        if args.gaza_only:
+            # Train on the 225 Gaza-domain images alone -- the checkpoint
+            # being warm-started from is already trained on ORFD, so this
+            # continues fine-tuning it on just the new domain rather than
+            # re-mixing ORFD back into every batch. --data's validation
+            # split is untouched (val_ds below) so it still catches
+            # forgetting/regression each epoch even though ORFD isn't in
+            # the training set anymore.
+            sampler = WeightedRandomSampler(gaza_ds.sample_weights, num_samples=len(gaza_ds), replacement=True)
+            train_ds = gaza_ds
+            logger.info("Gaza-domain-only training: %d samples (ORFD validation still used to catch forgetting)",
+                        len(gaza_ds))
+        else:
+            # Domain balance: give the (much smaller) Gaza-domain set equal
+            # expected sampling mass to ORFD per epoch, on top of which its
+            # own rare-class samples get an additional boost
+            # (gaza_ds.sample_weights) -- see the GOOSE Class-Aware Repeat
+            # Sampling technique this mirrors.
+            domain_balance = len(train_ds) / len(gaza_ds)
+            weights = [1.0] * len(train_ds) + [domain_balance * w for w in gaza_ds.sample_weights]
+            combined_train_ds = ConcatDataset([train_ds, gaza_ds])
+            sampler = WeightedRandomSampler(weights, num_samples=len(combined_train_ds), replacement=True)
+            logger.info("Joint training: ORFD (%d) + Gaza-domain (%d), domain_balance=%.2f",
+                        len(train_ds), len(gaza_ds), domain_balance)
+            train_ds = combined_train_ds
+
     train_loader = DataLoader(
-        train_ds, batch_size=args.batch, shuffle=True,
+        train_ds, batch_size=args.batch,
+        shuffle=(sampler is None), sampler=sampler,
         num_workers=args.workers, pin_memory=True, drop_last=True,
         worker_init_fn=_worker_init_fn if args.seed is not None else None,
     )
@@ -203,6 +263,17 @@ def main() -> None:
 
     # --- Model ---
     model, processor = build_segformer(args.model, device, fp16)
+
+    if args.warm_start:
+        warm_start_path = Path(args.warm_start)
+        if not warm_start_path.is_absolute():
+            warm_start_path = _ROOT / warm_start_path
+        if not warm_start_path.is_file():
+            raise FileNotFoundError(f"--warm-start checkpoint not found: {warm_start_path}")
+        from _segformer_checkpoint_common import load_remapped_state_dict
+        state_dict = load_remapped_state_dict(warm_start_path)
+        model.load_state_dict(state_dict, strict=True)
+        logger.info("Model warm-started from %s (fresh optimizer/scheduler, epoch 0)", warm_start_path)
 
     # --- Optional: LoRA for SegFormer encoder ---
     if args.lora:

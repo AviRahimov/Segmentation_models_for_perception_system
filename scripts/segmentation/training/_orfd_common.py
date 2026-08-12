@@ -69,17 +69,27 @@ def _dice_ce_loss(
     ignore_index: int = IGNORE_INDEX,
     dice_weight: float = 0.5,
     label_smoothing: float = 0.0,
+    class_weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Dice + CrossEntropy combined loss.
 
     CE stabilises gradients; Dice directly optimises IoU and handles class
     imbalance.  Ignore-index pixels are masked out of the Dice computation.
+
+    class_weights (optional, shape (num_classes,)): up-weights rare classes
+    in both terms -- CE via F.cross_entropy's own `weight=`, Dice via a
+    weighted mean over the per-class dice scores instead of a plain mean.
+    Added for the Gaza-domain fine-grained classes (animal/vehicle/rubble
+    are rare in a 241-image set, the same long-tail problem GOOSE has at
+    64 classes, just smaller scale) -- unused (None) leaves ORFD's existing
+    3-class training numerically unchanged.
     """
     import torch.nn.functional as F
 
     ce = F.cross_entropy(logits, labels,
                          ignore_index=ignore_index,
-                         label_smoothing=label_smoothing)
+                         label_smoothing=label_smoothing,
+                         weight=class_weights)
 
     # Build valid-pixel mask (ignore 255 pixels).
     valid = (labels != ignore_index)  # (B, H, W) bool
@@ -101,8 +111,12 @@ def _dice_ce_loss(
     dims = (0, 2, 3)  # average over batch + spatial
     intersection = (probs * labels_oh).sum(dim=dims)
     union        = probs.sum(dim=dims) + labels_oh.sum(dim=dims)
-    dice = 1.0 - (2.0 * intersection + 1e-6) / (union + 1e-6)
-    dice = dice.mean()
+    dice = 1.0 - (2.0 * intersection + 1e-6) / (union + 1e-6)  # (C,) per-class
+    if class_weights is not None:
+        w = class_weights.to(dice.device, dice.dtype)
+        dice = (dice * w).sum() / w.sum()
+    else:
+        dice = dice.mean()
 
     return ce + dice_weight * dice
 

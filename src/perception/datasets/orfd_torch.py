@@ -197,7 +197,8 @@ def _augment_train(
         3. Random rotation ±15° (p=0.5)           [image+label]
         4. Random 512×512 crop (or pad if smaller)
         5. Gaussian blur (p=0.3)                   [image only]
-        6. Colour + hue jitter                     [image only]
+        6. Colour + hue jitter, each op independently gated at p=0.5
+           (see _color_jitter)                     [image only]
         7. Coarse dropout (p=0.4)                  [image+label → ignore]
     """
     h, w = rgb.shape[:2]
@@ -279,21 +280,36 @@ def _color_jitter(
     contrast: float = 0.4,
     saturation: float = 0.4,
     hue: float = 0.1,
+    op_prob: float = 0.5,
 ) -> np.ndarray:
-    """Independent random brightness, contrast, saturation, and hue jitter."""
-    b = 1.0 + np.random.uniform(-brightness, brightness)
-    c = 1.0 + np.random.uniform(-contrast, contrast)
-    s = 1.0 + np.random.uniform(-saturation, saturation)
-    h_shift = np.random.uniform(-hue * 180, hue * 180)  # OpenCV H is 0–180
+    """Brightness, contrast, saturation, and hue jitter -- each independently
+    GATED at op_prob (default 0.5), not just independently sampled in
+    magnitude, so the four perturbations combine into 2**4=16 distinct
+    combinations per call instead of always applying all four together.
 
+    This is the single biggest lever found in the ICRA 2026 GOOSE 2D
+    challenge's SAM3 entry (+0.86 composite mIoU, their largest gain from
+    any change) -- richer combinatorial diversity from independent gating,
+    at zero inference cost since this is train-time only.
+    """
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV).astype(np.float32)
-    hsv[..., 0] = (hsv[..., 0] + h_shift) % 180          # hue shift
-    hsv[..., 1] = np.clip(hsv[..., 1] * s, 0, 255)        # saturation
-    hsv[..., 2] = np.clip(hsv[..., 2] * b, 0, 255)        # brightness
+
+    if np.random.random() < op_prob:
+        h_shift = np.random.uniform(-hue * 180, hue * 180)  # OpenCV H is 0-180
+        hsv[..., 0] = (hsv[..., 0] + h_shift) % 180
+    if np.random.random() < op_prob:
+        s = 1.0 + np.random.uniform(-saturation, saturation)
+        hsv[..., 1] = np.clip(hsv[..., 1] * s, 0, 255)
+    if np.random.random() < op_prob:
+        b = 1.0 + np.random.uniform(-brightness, brightness)
+        hsv[..., 2] = np.clip(hsv[..., 2] * b, 0, 255)
+
     rgb = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
 
-    mean = rgb.mean()
-    rgb = np.clip((rgb.astype(np.float32) - mean) * c + mean, 0, 255).astype(np.uint8)
+    if np.random.random() < op_prob:
+        c = 1.0 + np.random.uniform(-contrast, contrast)
+        mean = rgb.mean()
+        rgb = np.clip((rgb.astype(np.float32) - mean) * c + mean, 0, 255).astype(np.uint8)
     return rgb
 
 

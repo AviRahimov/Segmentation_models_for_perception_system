@@ -122,6 +122,10 @@ def main() -> int:
     p.add_argument("--config", default="config/config.yaml")
     p.add_argument("--models", nargs="+", default=None,
                     help="Model keys, optionally 'key:weights_path'. Omit to pick interactively.")
+    p.add_argument("--labels", nargs="+", default=None,
+                    help="Optional short on-screen label per model (default: the raw spec string, "
+                         "which gets long/truncated in a narrow panel when using explicit weights paths) "
+                         "-- must match --models 1:1 if given.")
     p.add_argument("--output-dir", default="reports/segmentation/raw_video_comparison")
     p.add_argument("--panel-w", type=int, default=480)
     p.add_argument("--max-frames", type=int, default=None)
@@ -135,18 +139,21 @@ def main() -> int:
     logger.info("Found %d video clips", len(video_paths))
 
     model_specs = args.models if args.models else _pick_models_interactively()
+    if args.labels and len(args.labels) != len(model_specs):
+        raise SystemExit(f"--labels needs exactly {len(model_specs)} entries (one per --models spec)")
+    labels = args.labels if args.labels else model_specs
 
     cfg = load_config(args.config)
     hw = cfg.hardware
     backend = PyTorchBackend()
 
     models = {}
-    for spec in model_specs:
+    for spec, label in zip(model_specs, labels):
         key, explicit_w = parse_model_spec(spec)
         weights = resolve_weights(key, explicit_w, cfg)
         mdl = build_semantic_model(SemanticModelCfg(name=key, weights=weights), hw, backend)
         mdl.warmup(cfg.classes)
-        models[spec] = mdl
+        models[label] = mdl
         logger.info("Loaded %s (weights=%s)", spec, weights)
 
     out_dir = Path(args.output_dir)
