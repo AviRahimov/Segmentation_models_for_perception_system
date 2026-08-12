@@ -1,7 +1,7 @@
 """Inference backend abstraction.
 
 Concrete subclasses adapt a high-level model object so that the same
-user-facing wrapper (YOLOE, SegFormer) works regardless of whether the
+user-facing wrapper (RF-DETR, SegFormer) works regardless of whether the
 underlying execution is PyTorch eager mode or a compiled TensorRT engine.
 """
 from __future__ import annotations

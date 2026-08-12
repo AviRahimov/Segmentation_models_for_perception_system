@@ -23,7 +23,7 @@ Three modes:
 Model spec format
 -----------------
     pytorch:weights/detection/yolo26m/round1/best.pt
-    pytorch:weights/detection/yoloe-26m/round1/best.pt
+    pytorch:weights/detection/rfdetr-m/round1/best.pt
 
 Usage
 -----
@@ -32,27 +32,27 @@ Usage
         --models pytorch:weights/detection/yolo26s/round1/best.pt \\
                  pytorch:weights/detection/yolo26m/round1/best.pt \\
                  pytorch:weights/detection/yolo26l/round1/best.pt \\
-                 pytorch:weights/detection/yoloe-26s/round1/best.pt \\
-                 pytorch:weights/detection/yoloe-26m/round1/best.pt \\
-                 pytorch:weights/detection/yoloe-26l/round1/best.pt \\
+                 pytorch:weights/detection/yolo26s/round1/best.pt \\
+                 pytorch:weights/detection/rfdetr-m/round1/best.pt \\
+                 pytorch:weights/detection/yolo26l/round1/best.pt \\
         --data datasets/detection/Detection_Dataset/data.yaml
 
     # Side-by-side on val images:
     python scripts/detection/evaluation/compare_detection_models.py --mode images \\
         --models pytorch:weights/detection/yolo26m/round1/best.pt \\
-                 pytorch:weights/detection/yoloe-26m/round1/best.pt \\
+                 pytorch:weights/detection/rfdetr-m/round1/best.pt \\
         --test-data datasets/detection/Detection_Dataset/valid/images --n-samples 20
 
     # Side-by-side on custom test images (no labels):
     python scripts/detection/evaluation/compare_detection_models.py --mode images \\
         --models pytorch:weights/detection/yolo26m/round1/best.pt \\
-                 pytorch:weights/detection/yoloe-26m/round1/best.pt \\
+                 pytorch:weights/detection/rfdetr-m/round1/best.pt \\
         --test-data /path/to/test_images/
 
     # Video comparison:
     python scripts/detection/evaluation/compare_detection_models.py --mode video \\
         --models pytorch:weights/detection/yolo26m/round1/best.pt \\
-                 pytorch:weights/detection/yoloe-26m/round1/best.pt \\
+                 pytorch:weights/detection/rfdetr-m/round1/best.pt \\
         --source samples/clip.mp4
 """
 from __future__ import annotations

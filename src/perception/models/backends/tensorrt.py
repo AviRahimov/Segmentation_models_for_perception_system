@@ -5,9 +5,12 @@ wraps it behind the same interface that ``SegFormerSemanticModel`` expects.
 No compilation happens at startup; the one-time build step is handled by
 ``scripts/export_trt.py``.
 
-YOLOE uses TRT through Ultralytics' own engine loader — just point
-``models.instance.weights`` to a ``.engine`` file and it works automatically.
-This backend is therefore only used for the semantic model (SegFormer / DDRNet).
+Ultralytics YOLO models (YOLO11/12/26) use TRT through Ultralytics' own engine
+loader — just point ``models.instance.weights`` to a ``.engine`` file and it
+works automatically. RF-DETR's Jetson TRT path is separate and standalone
+(``scripts/detection/optimization/`` — see CLAUDE.md), not yet wired into this
+pipeline's ``InferenceBackend`` abstraction. This backend is therefore only
+used for the semantic model (SegFormer).
 
 Requirements
 ------------

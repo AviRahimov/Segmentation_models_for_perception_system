@@ -1,6 +1,6 @@
-"""Shared confidence-gating logic for closed-vocab and YOLOE detector wrappers.
+"""Shared confidence-gating logic for closed-vocab detector wrappers.
 
-A single pure function so both wrappers apply identical low-confidence-
+A single pure function so every wrapper applies identical low-confidence-
 recovery semantics instead of each re-implementing (and potentially
 diverging on) the same threshold arithmetic.
 """

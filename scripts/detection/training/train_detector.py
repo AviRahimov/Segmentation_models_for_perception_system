@@ -61,7 +61,7 @@ logging.basicConfig(
 logger = logging.getLogger("train_detector")
 
 # ---------------------------------------------------------------------------
-# Model registry (standard YOLO only — no YOLOE; YOLOE uses YOLOEPETrainer)
+# Model registry (standard YOLO only)
 # Value is either pretrained weights, or (architecture yaml, pretrained
 # weights) — the yaml builds a custom architecture (e.g. P2 small-object
 # head) and matching pretrained layers are transferred via .load().

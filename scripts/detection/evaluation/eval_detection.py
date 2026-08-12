@@ -9,7 +9,7 @@ Usage
         --weights weights/detection/yolo26m/round1/best.pt
 
     python scripts/detection/evaluation/eval_detection.py \\
-        --weights weights/detection/yoloe-26m/round1/best.pt \\
+        --weights weights/detection/rfdetr-m/round1/best.pt \\
         --split test \\
         --data datasets/detection/Detection_Dataset/data.yaml
 """

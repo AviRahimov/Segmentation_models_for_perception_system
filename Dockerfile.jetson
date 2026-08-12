@@ -40,9 +40,6 @@ WORKDIR /app
 # as requirements.
 COPY requirements-jetson.txt .
 RUN pip3 install --no-cache-dir -r requirements-jetson.txt
-RUN pip3 install --no-cache-dir git+https://github.com/ultralytics/CLIP.git
-RUN wget -q https://github.com/ultralytics/assets/releases/download/v8.4.0/mobileclip2_b.ts \
-    -O /app/weights/mobileclip2_b.ts
 
 # ── Stage 2: headless (robot / inference-only) ───────────────────────────────
 FROM base AS headless

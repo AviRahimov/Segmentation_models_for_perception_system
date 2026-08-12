@@ -11,15 +11,11 @@ from ...core.types import Detection
 
 
 class InstanceModel(ABC):
-    """Open-vocabulary instance segmentation."""
+    """Closed-vocabulary instance detection."""
 
     @abstractmethod
     def warmup(self, classes: Sequence[ClassDef]) -> None:
-        """Configure the model for the given user classes.
-
-        Implementations must cache any text embeddings here so that
-        :meth:`predict` never re-invokes a text encoder.
-        """
+        """Configure the model for the given user classes."""
 
     @abstractmethod
     def predict(self, frame_bgr: np.ndarray) -> list[Detection]:

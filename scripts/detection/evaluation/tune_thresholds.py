@@ -7,7 +7,7 @@ Usage
 -----
     python scripts/detection/evaluation/tune_thresholds.py \\
         --models pytorch:weights/detection/yolo26m/round1/best.pt \\
-                 pytorch:weights/detection/yoloe-26m/round1/best.pt \\
+                 pytorch:weights/detection/rfdetr-m/round1/best.pt \\
                  pytorch:weights/detection/yolo11m/round1/best.pt \\
         --data datasets/detection/Detection_Dataset/data.yaml
 

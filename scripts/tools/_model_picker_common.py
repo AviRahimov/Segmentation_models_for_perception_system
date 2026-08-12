@@ -36,7 +36,7 @@ class DetectionCheckpointChoice:
 def scan_detection_checkpoints(weights_root: Path) -> list[DetectionCheckpointChoice]:
     """Walk ``weights_root/**/best.pt`` — unlike segmentation, the top-level
     dirname under weights/detection/ IS the factory key directly (rfdetr-m,
-    yolo11m, yoloe-26m, ...), no name-inference needed."""
+    yolo11m, yolo26m, ...), no name-inference needed."""
     choices: list[DetectionCheckpointChoice] = []
     if not weights_root.is_dir():
         return choices
