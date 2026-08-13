@@ -48,6 +48,7 @@ def build_segformer(variant: str, device: str, fp16: bool) -> tuple[nn.Module, o
         "segformer-b0": "nvidia/segformer-b0-finetuned-ade-512-512",
         "segformer-b1": "nvidia/segformer-b1-finetuned-ade-512-512",
         "segformer-b2": "nvidia/segformer-b2-finetuned-ade-512-512",
+        "segformer-b3": "nvidia/segformer-b3-finetuned-ade-512-512",
         "segformer-b4": "nvidia/segformer-b4-finetuned-ade-512-512",
     }
     hf_id = hf_ids[variant]
@@ -70,6 +71,9 @@ def _dice_ce_loss(
     dice_weight: float = 0.5,
     label_smoothing: float = 0.0,
     class_weights: torch.Tensor | None = None,
+    asym_alpha: float | None = None,
+    asym_beta: float | None = None,
+    asym_class: int = 1,
 ) -> torch.Tensor:
     """Dice + CrossEntropy combined loss.
 
@@ -83,6 +87,17 @@ def _dice_ce_loss(
     are rare in a 241-image set, the same long-tail problem GOOSE has at
     64 classes, just smaller scale) -- unused (None) leaves ORFD's existing
     3-class training numerically unchanged.
+
+    asym_alpha/asym_beta (optional): replace plain Dice with an asymmetric
+    Tversky term for `asym_class` only (every other class keeps the exact
+    existing Dice formula). Standard Dice for a class is mathematically
+    Tversky with alpha=beta=0.5 (TP/(TP+0.5*FP+0.5*FN)); asym_alpha>asym_beta
+    penalises false positives on that class more than false negatives --
+    added to directly counteract a real, measured failure mode where a
+    Gaza-domain fine-tune over-predicts `traversable` (class 1) on large
+    rocks/hillsides in non-Gaza footage (a false-positive-heavy error).
+    Both args must be given together; leaving them None reproduces today's
+    plain-Dice behaviour exactly (the branch below is never entered).
     """
     import torch.nn.functional as F
 
@@ -112,6 +127,17 @@ def _dice_ce_loss(
     intersection = (probs * labels_oh).sum(dim=dims)
     union        = probs.sum(dim=dims) + labels_oh.sum(dim=dims)
     dice = 1.0 - (2.0 * intersection + 1e-6) / (union + 1e-6)  # (C,) per-class
+
+    if asym_alpha is not None and asym_beta is not None:
+        eps = 1e-6
+        c = asym_class
+        tp_c = intersection[c]
+        fp_c = (probs[:, c] * (1.0 - labels_oh[:, c])).sum()
+        fn_c = ((1.0 - probs[:, c]) * labels_oh[:, c]).sum()
+        tversky_c = (tp_c + eps) / (tp_c + asym_alpha * fp_c + asym_beta * fn_c + eps)
+        dice = dice.clone()
+        dice[c] = 1.0 - tversky_c
+
     if class_weights is not None:
         w = class_weights.to(dice.device, dice.dtype)
         dice = (dice * w).sum() / w.sum()

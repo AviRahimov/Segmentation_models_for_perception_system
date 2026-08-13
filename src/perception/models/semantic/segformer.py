@@ -133,6 +133,8 @@ _HF_BASES: dict[str, str] = {
     "segformer_b1":  "nvidia/segformer-b1-finetuned-ade-512-512",
     "segformer-b2":  "nvidia/segformer-b2-finetuned-ade-512-512",
     "segformer_b2":  "nvidia/segformer-b2-finetuned-ade-512-512",
+    "segformer-b3":  "nvidia/segformer-b3-finetuned-ade-512-512",
+    "segformer_b3":  "nvidia/segformer-b3-finetuned-ade-512-512",
     "segformer-b4":  "nvidia/segformer-b4-finetuned-ade-512-512",
     "segformer_b4":  "nvidia/segformer-b4-finetuned-ade-512-512",
 }

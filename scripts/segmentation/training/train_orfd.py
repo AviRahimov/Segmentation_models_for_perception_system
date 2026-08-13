@@ -5,6 +5,7 @@ Supported models
   segformer-b0   Start from nvidia/segformer-b0-finetuned-ade-512-512
   segformer-b1   Start from nvidia/segformer-b1-finetuned-ade-512-512
   segformer-b2   Start from nvidia/segformer-b2-finetuned-ade-512-512
+  segformer-b3   Start from nvidia/segformer-b3-finetuned-ade-512-512
   segformer-b4   Start from nvidia/segformer-b4-finetuned-ade-512-512
 
 Usage
@@ -40,7 +41,7 @@ import torch.nn as nn
 from torch.optim import AdamW
 from tqdm import tqdm
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 # Make sure the src package is importable when running as a script.
 _ROOT = Path(__file__).resolve().parents[3]
@@ -131,7 +132,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--config", default=str(_ROOT / "config" / "segmentation" / "train.yaml"),
                    help="Path to train.yaml config file")
     p.add_argument("--model",   default=cfg.get("model", "segformer-b2"),
-                   choices=["segformer-b0", "segformer-b1", "segformer-b2", "segformer-b4"])
+                   choices=["segformer-b0", "segformer-b1", "segformer-b2", "segformer-b3", "segformer-b4"])
     p.add_argument("--data",    default=cfg.get("data",    "datasets/segmentation/ORFD"),
                    help="Path to dataset root (must contain training/ and validation/)")
     p.add_argument("--epochs",  type=int,   default=cfg.get("epochs",   100))
@@ -185,7 +186,37 @@ def parse_args() -> argparse.Namespace:
                         "training state) -- e.g. the current production best.pth, to continue "
                         "training on --gaza-data without restarting from ADE20K. Mirrors "
                         "train_distill.py's --student-init.")
-    return p.parse_args()
+    p.add_argument("--hard-negative-weights", default=None,
+                   help="Path to a JSON {image_stem: weight} file from "
+                        "mine_hard_negative_terrain.py. Up-weights ORFD samples matching a specific "
+                        "hard pattern (default: rock/hillside adjacent to road) in the "
+                        "WeightedRandomSampler -- combined with, not replacing, --gaza-data's own "
+                        "domain-balance weighting when both are given. Omit for unchanged (uniform) "
+                        "ORFD sampling. No effect with --gaza-only (ORFD isn't in that run's training set).")
+    p.add_argument("--tversky-alpha", type=float, default=None,
+                   help="False-positive weight for an asymmetric Tversky term on --tversky-class, "
+                        "replacing plain Dice for that one class only (every other class is "
+                        "unaffected). Must be given together with --tversky-beta. Recommended 0.7 "
+                        "paired with --tversky-beta 0.3 to directly penalise a model calling "
+                        "something traversable when it wasn't -- the specific failure mode this "
+                        "flag exists for. None (default) = plain symmetric Dice, unchanged behavior.")
+    p.add_argument("--tversky-beta", type=float, default=None,
+                   help="False-negative weight for the asymmetric Tversky term. Must be given "
+                        "together with --tversky-alpha.")
+    p.add_argument("--tversky-class", type=int, default=1,
+                   help="Class index the asymmetric Tversky term applies to (default 1 = "
+                        "traversable, the class exhibiting the rock/hillside false-positive pattern).")
+    p.add_argument("--orfd-val-floor", type=float, default=None,
+                   help="Minimum ORFD-val mIoU required for a checkpoint to be saved as best.pth, "
+                        "on top of the existing select_miou improvement check. None (default) = no "
+                        "floor, unchanged behavior. Use this when fine-tuning on a domain where "
+                        "unconstrained selection has been observed to silently let ORFD-val collapse "
+                        "(confirmed on an existing run's train_log.json: ORFD-val fell 0.859->0.739 "
+                        "over 40 epochs while every best.pth was still saved on Gaza-val alone).")
+    args = p.parse_args()
+    if (args.tversky_alpha is None) != (args.tversky_beta is None):
+        raise SystemExit("--tversky-alpha and --tversky-beta must be given together")
+    return args
 
 
 def main() -> None:
@@ -220,42 +251,59 @@ def main() -> None:
     train_ds = ORFDDataset(str(data_path), split="training",   augment=True)
     val_ds   = ORFDDataset(str(data_path), split="validation", augment=False)
 
+    hn_weights: dict[str, float] | None = None
+    if args.hard_negative_weights:
+        hn_path = Path(args.hard_negative_weights)
+        if not hn_path.is_absolute():
+            hn_path = _ROOT / hn_path
+        hn_weights = json.loads(hn_path.read_text())
+        n_hard = sum(1 for w in hn_weights.values() if w > 1.0)
+        logger.info("Loaded hard-negative weights: %d/%d ORFD samples up-weighted", n_hard, len(hn_weights))
+        if args.gaza_only:
+            logger.warning("--hard-negative-weights has no effect with --gaza-only (ORFD not in the training set this run).")
+
     sampler = None
     gaza_val_loader = None
     if args.gaza_data:
-        from torch.utils.data import ConcatDataset, WeightedRandomSampler
+        from torch.utils.data import ConcatDataset
         from perception.datasets.gaza_domain_torch import GazaDomainDataset
 
         gaza_path = Path(args.gaza_data)
         if not gaza_path.is_absolute():
             gaza_path = _ROOT / gaza_path
-        gaza_ds = GazaDomainDataset(str(gaza_path), augment=True)
+
+        # Gaza-val split (see split_gaza_domain.py) is built the same way
+        # for BOTH --gaza-only and joint training now -- it used to only be
+        # built inside the --gaza-only branch, which meant joint mode never
+        # held out a Gaza-val subset and always trained on all 225 images
+        # with no way to monitor/select on Gaza-domain quality at all.
+        train_split_file = gaza_path / "splits" / "train.txt"
+        val_split_file   = gaza_path / "splits" / "val.txt"
+        if train_split_file.is_file() and val_split_file.is_file():
+            train_stems = set(train_split_file.read_text().split())
+            val_stems   = set(val_split_file.read_text().split())
+            gaza_ds     = GazaDomainDataset(str(gaza_path), augment=True,  stems=train_stems)
+            gaza_val_ds = GazaDomainDataset(str(gaza_path), augment=False, stems=val_stems)
+            gaza_val_loader = DataLoader(
+                gaza_val_ds, batch_size=args.batch, shuffle=False,
+                num_workers=args.workers, pin_memory=True,
+            )
+            logger.info("Gaza-val split found: %d train / %d val (clip-grouped, see split_gaza_domain.py) "
+                        "-- checkpoint selection uses Gaza-val mIoU, not ORFD-val.",
+                        len(gaza_ds), len(gaza_val_ds))
+        else:
+            gaza_ds = GazaDomainDataset(str(gaza_path), augment=True)
+            logger.warning("No %s found -- Gaza-val not computed this run "
+                            "(run split_gaza_domain.py to fix this).", train_split_file.parent)
 
         if args.gaza_only:
-            # Train on the 225 Gaza-domain images alone -- the checkpoint
-            # being warm-started from is already trained on ORFD, so this
+            # Train on the Gaza-domain images alone -- the checkpoint being
+            # warm-started from is already trained on ORFD, so this
             # continues fine-tuning it on just the new domain rather than
             # re-mixing ORFD back into every batch. --data's validation
             # split is untouched (val_ds below) so it still catches
             # forgetting/regression each epoch even though ORFD isn't in
             # the training set anymore.
-            train_split_file = gaza_path / "splits" / "train.txt"
-            val_split_file   = gaza_path / "splits" / "val.txt"
-            if train_split_file.is_file() and val_split_file.is_file():
-                train_stems = set(train_split_file.read_text().split())
-                val_stems   = set(val_split_file.read_text().split())
-                gaza_ds = GazaDomainDataset(str(gaza_path), augment=True, stems=train_stems)
-                gaza_val_ds = GazaDomainDataset(str(gaza_path), augment=False, stems=val_stems)
-                gaza_val_loader = DataLoader(
-                    gaza_val_ds, batch_size=args.batch, shuffle=False,
-                    num_workers=args.workers, pin_memory=True,
-                )
-                logger.info("Gaza-val split found: %d train / %d val (clip-grouped, see split_gaza_domain.py) "
-                            "-- checkpoint selection uses Gaza-val mIoU, not ORFD-val.",
-                            len(gaza_ds), len(gaza_val_ds))
-            else:
-                logger.warning("No %s found -- falling back to ORFD-val for checkpoint selection "
-                                "(run split_gaza_domain.py to fix this).", train_split_file.parent)
             sampler = WeightedRandomSampler(gaza_ds.sample_weights, num_samples=len(gaza_ds), replacement=True)
             train_ds = gaza_ds
             logger.info("Gaza-domain-only training: %d samples (ORFD validation still used to catch forgetting)",
@@ -265,14 +313,26 @@ def main() -> None:
             # expected sampling mass to ORFD per epoch, on top of which its
             # own rare-class samples get an additional boost
             # (gaza_ds.sample_weights) -- see the GOOSE Class-Aware Repeat
-            # Sampling technique this mirrors.
+            # Sampling technique this mirrors. ORFD's own per-sample weight
+            # (normally 1.0) is replaced by --hard-negative-weights when given,
+            # so a specific ORFD hard pattern (e.g. rock-near-road) can also be
+            # oversampled within the joint mix, not just Gaza's rare classes.
             domain_balance = len(train_ds) / len(gaza_ds)
-            weights = [1.0] * len(train_ds) + [domain_balance * w for w in gaza_ds.sample_weights]
+            if hn_weights is not None:
+                orfd_weights = [hn_weights.get(img_path.stem, 1.0) for img_path, _ in train_ds.pairs]
+            else:
+                orfd_weights = [1.0] * len(train_ds)
+            weights = orfd_weights + [domain_balance * w for w in gaza_ds.sample_weights]
             combined_train_ds = ConcatDataset([train_ds, gaza_ds])
             sampler = WeightedRandomSampler(weights, num_samples=len(combined_train_ds), replacement=True)
             logger.info("Joint training: ORFD (%d) + Gaza-domain (%d), domain_balance=%.2f",
                         len(train_ds), len(gaza_ds), domain_balance)
             train_ds = combined_train_ds
+    elif hn_weights is not None:
+        # ORFD-only training (no --gaza-data): oversample the mined hard
+        # pattern directly, replacing the default uniform shuffle.
+        per_sample = [hn_weights.get(img_path.stem, 1.0) for img_path, _ in train_ds.pairs]
+        sampler = WeightedRandomSampler(per_sample, num_samples=len(train_ds), replacement=True)
 
     train_loader = DataLoader(
         train_ds, batch_size=args.batch,
@@ -350,7 +410,11 @@ def main() -> None:
 
     _label_smoothing = args.label_smoothing if not args.freeze_backbone else 0.0
     def criterion(logits, labels):
-        return _dice_ce_loss(logits, labels, label_smoothing=_label_smoothing)
+        return _dice_ce_loss(
+            logits, labels, label_smoothing=_label_smoothing,
+            asym_alpha=args.tversky_alpha, asym_beta=args.tversky_beta,
+            asym_class=args.tversky_class,
+        )
 
     # --- Resume ---
     start_epoch = 1
@@ -435,7 +499,8 @@ def main() -> None:
             optimizer=optimizer, scheduler=scheduler, best_miou=best_miou,
         )
 
-        if select_miou > best_miou:
+        floor_ok = (args.orfd_val_floor is None) or (val_miou >= args.orfd_val_floor)
+        if floor_ok and select_miou > best_miou:
             best_miou = select_miou
             patience_left = args.patience
             # best.pth: weights only (used by run_player.py).
