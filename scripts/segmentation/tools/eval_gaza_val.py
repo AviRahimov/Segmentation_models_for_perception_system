@@ -42,8 +42,11 @@ logger = logging.getLogger("eval_gaza_val")
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--weights", nargs="+", required=True, help="One or more SegFormer-B2 .pth checkpoints")
+    p.add_argument("--weights", nargs="+", required=True, help="One or more SegFormer .pth checkpoints")
     p.add_argument("--labels", nargs="+", default=None, help="Optional short label per checkpoint (must match --weights 1:1)")
+    p.add_argument("--variants", nargs="+", default=None,
+                   help="Optional model variant per checkpoint (e.g. segformer-b2 segformer-b3), must match "
+                        "--weights 1:1. Defaults to segformer-b2 for every checkpoint (unchanged behavior).")
     p.add_argument("--gaza-data", default="datasets/segmentation/gaza_domain")
     p.add_argument("--orfd-data", default="datasets/segmentation/ORFD")
     p.add_argument("--batch", type=int, default=8)
@@ -54,6 +57,9 @@ def main() -> int:
     if args.labels and len(args.labels) != len(args.weights):
         raise SystemExit(f"--labels needs exactly {len(args.weights)} entries (one per --weights)")
     labels = args.labels if args.labels else args.weights
+    if args.variants and len(args.variants) != len(args.weights):
+        raise SystemExit(f"--variants needs exactly {len(args.weights)} entries (one per --weights)")
+    variants = args.variants if args.variants else ["segformer-b2"] * len(args.weights)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     fp16 = device == "cuda"
@@ -73,11 +79,11 @@ def main() -> int:
         return _dice_ce_loss(logits, lbl)
 
     results: dict[str, dict[str, float]] = {}
-    for weights_path, label in zip(args.weights, labels):
+    for weights_path, label, variant in zip(args.weights, labels, variants):
         wpath = Path(weights_path)
         if not wpath.is_absolute():
             wpath = _ROOT / wpath
-        model, processor = build_segformer("segformer-b2", device, fp16)
+        model, processor = build_segformer(variant, device, fp16)
         state_dict = load_remapped_state_dict(wpath)
         model.load_state_dict(state_dict, strict=True)
         model.eval()
