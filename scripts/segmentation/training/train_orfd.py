@@ -192,7 +192,19 @@ def parse_args() -> argparse.Namespace:
                         "hard pattern (default: rock/hillside adjacent to road) in the "
                         "WeightedRandomSampler -- combined with, not replacing, --gaza-data's own "
                         "domain-balance weighting when both are given. Omit for unchanged (uniform) "
-                        "ORFD sampling. No effect with --gaza-only (ORFD isn't in that run's training set).")
+                        "ORFD sampling. No effect with --gaza-only (ORFD isn't in that run's training set). "
+                        "NOTE: mask-geometry mining was tried and found unable to discriminate real "
+                        "hazards from ordinary terrain (ORFD's 3-class masks don't encode terrain type) -- "
+                        "superseded by --hardneg-data (real SAM3-labeled hard-negative frames) for the "
+                        "corrective run; kept here only in case a future, better mining signal is found.")
+    p.add_argument("--hardneg-data", default=None,
+                   help="Optional path to a small SAM3-labeled hard-negative image set (same "
+                        "images/+labels/ layout as --gaza-data, loaded via the same GazaDomainDataset "
+                        "class). Included in the joint ORFD+Gaza sampler as a third component with its "
+                        "own domain-balance weighting, same mechanism as --gaza-data. Requires "
+                        "--gaza-data (not --gaza-only); real frames from confirmed failure clips (e.g. "
+                        "a rock/hillside a Gaza-tuned checkpoint over-segments as traversable), labeled "
+                        "via run_sam3_labeling.py + promote_gaza_labels.py, not synthetic/mined.")
     p.add_argument("--tversky-alpha", type=float, default=None,
                    help="False-positive weight for an asymmetric Tversky term on --tversky-class, "
                         "replacing plain Dice for that one class only (every other class is "
@@ -308,6 +320,8 @@ def main() -> None:
             train_ds = gaza_ds
             logger.info("Gaza-domain-only training: %d samples (ORFD validation still used to catch forgetting)",
                         len(gaza_ds))
+            if args.hardneg_data:
+                logger.warning("--hardneg-data has no effect with --gaza-only (joint mode required).")
         else:
             # Domain balance: give the (much smaller) Gaza-domain set equal
             # expected sampling mass to ORFD per epoch, on top of which its
@@ -323,11 +337,31 @@ def main() -> None:
             else:
                 orfd_weights = [1.0] * len(train_ds)
             weights = orfd_weights + [domain_balance * w for w in gaza_ds.sample_weights]
-            combined_train_ds = ConcatDataset([train_ds, gaza_ds])
+            joint_datasets = [train_ds, gaza_ds]
+            log_parts = [f"ORFD ({len(train_ds)})", f"Gaza-domain ({len(gaza_ds)}, domain_balance={domain_balance:.2f})"]
+
+            if args.hardneg_data:
+                hardneg_path = Path(args.hardneg_data)
+                if not hardneg_path.is_absolute():
+                    hardneg_path = _ROOT / hardneg_path
+                hardneg_ds = GazaDomainDataset(str(hardneg_path), augment=True)
+                # Same domain-balance mechanism as Gaza above, computed against
+                # the base ORFD count independently -- this set is real labeled
+                # frames from clips already confirmed to trigger the rock/
+                # hillside/embankment over-segmentation failure, every image is
+                # "hard" by construction so no additional per-sample weighting
+                # (unlike gaza_ds.sample_weights' rare-class boost) is needed.
+                hardneg_balance = len(train_ds) / len(hardneg_ds)
+                weights += [hardneg_balance] * len(hardneg_ds)
+                joint_datasets.append(hardneg_ds)
+                log_parts.append(f"hard-negative ({len(hardneg_ds)}, domain_balance={hardneg_balance:.2f})")
+
+            combined_train_ds = ConcatDataset(joint_datasets)
             sampler = WeightedRandomSampler(weights, num_samples=len(combined_train_ds), replacement=True)
-            logger.info("Joint training: ORFD (%d) + Gaza-domain (%d), domain_balance=%.2f",
-                        len(train_ds), len(gaza_ds), domain_balance)
+            logger.info("Joint training: %s", " + ".join(log_parts))
             train_ds = combined_train_ds
+    elif args.hardneg_data:
+        raise SystemExit("--hardneg-data requires --gaza-data (joint mode, not --gaza-only)")
     elif hn_weights is not None:
         # ORFD-only training (no --gaza-data): oversample the mined hard
         # pattern directly, replacing the default uniform shuffle.
