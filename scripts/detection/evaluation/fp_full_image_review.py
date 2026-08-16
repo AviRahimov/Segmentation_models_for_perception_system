@@ -11,8 +11,8 @@ every GT box in it side by side with what the model actually predicted.
 
 Draws (BGR):
   - GT boxes: green, "GT <class>"
-  - Correctly-matched predictions (TP) at conf>=0.40: blue, thin
-  - False positives at conf>=0.40: red, thick + label -- the ones to inspect
+  - Correctly-matched predictions (TP) at conf>=--deploy-conf: blue, thin
+  - False positives at conf>=--deploy-conf: red, thick + label -- the ones to inspect
 
 Usage
 -----
@@ -64,20 +64,28 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--weights", required=True, nargs="+", type=Path)
     p.add_argument("--benchmark", default="datasets/detection/Detection_Dataset/test")
-    p.add_argument("--conf", type=float, default=0.05)
+    p.add_argument("--conf", type=float, default=0.05,
+                   help="Prediction-collection floor passed to the model (default 0.05 -- "
+                        "must stay <= --deploy-conf or valid predictions get truncated before "
+                        "classification ever sees them)")
+    p.add_argument("--deploy-conf", type=float, default=_DEPLOY_CONF, dest="deploy_conf",
+                   help=f"Conf threshold used for the actual TP/FP classification/rendering "
+                        f"(default {_DEPLOY_CONF}, the fixed value used before this flag existed). "
+                        f"This is the knob to change to review a candidate deployment threshold -- "
+                        f"--conf alone does NOT affect what counts as an FP.")
     p.add_argument("--imgsz", type=int, default=1280)
     p.add_argument("--device", default="0")
     p.add_argument("--out", type=Path, default=Path("reports/detection/fp_full_images"))
     return p.parse_args()
 
 
-def _classify_boxes(preds, gts):
+def _classify_boxes(preds, gts, conf_thr: float):
     """Per-image lists of (box, class_name, score, kind) for kind in {tp, fp}
-    at the deployment conf threshold, via the same greedy IoU matching
+    at the given deployment conf threshold, via the same greedy IoU matching
     leaderboard.py/tide_analysis.py use (_match_class)."""
     by_image: dict[str, list[tuple]] = defaultdict(list)
     for cls in _BENCHMARK_CLASSES:
-        cls_preds, tp_flags, _ = _match_class(preds, gts, cls, iou_thr=0.5, min_score=_DEPLOY_CONF)
+        cls_preds, tp_flags, _ = _match_class(preds, gts, cls, iou_thr=0.5, min_score=conf_thr)
         for p, is_tp in zip(cls_preds, tp_flags):
             by_image[p.image_id].append((p.box, p.class_name, p.score, "tp" if is_tp else "fp"))
     return by_image
@@ -112,6 +120,10 @@ def _draw(img_path: str, boxes: list[tuple], gts: list) -> "cv2.Mat":
 
 def main() -> int:
     args = parse_args()
+    if args.conf > args.deploy_conf:
+        raise SystemExit(f"--conf ({args.conf}) must be <= --deploy-conf ({args.deploy_conf}): "
+                          f"predictions below --conf are discarded before classification ever "
+                          f"sees them, which would silently undercount FPs/TPs at --deploy-conf.")
     bench_dir = args.benchmark if Path(args.benchmark).is_absolute() else _ROOT / args.benchmark
     img_dir, lbl_dir = bench_dir / "images", bench_dir / "labels"
     pairs = load_yolo_gts(img_dir, lbl_dir, _BENCHMARK_CLASSES)
@@ -137,7 +149,7 @@ def main() -> int:
                                              conf=args.conf, device=args.device)
         del model
 
-        by_image = _classify_boxes(preds, gts)
+        by_image = _classify_boxes(preds, gts, args.deploy_conf)
         per_model_boxes[label] = by_image
         per_model_gts[label] = _gts_by_image(gts)
         n_fp_images = {img for img, boxes in by_image.items() if any(k == "fp" for *_, k in boxes)}

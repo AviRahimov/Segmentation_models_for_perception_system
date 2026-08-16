@@ -112,9 +112,15 @@ def parse_args() -> argparse.Namespace:
                         "for the valid split, leaderboard_{split}.md for any other "
                         "(so a test-set run never clobbers the val results).")
     p.add_argument("--thresholds", action="store_true",
-                   help="Write per-model best-F1 threshold recommendations")
+                   help="Write per-model best-F1 threshold recommendations "
+                        "(now includes the full conf-sweep curve, not just the best row)")
     p.add_argument("--fp-gallery", action="store_true", dest="fp_gallery",
                    help="Save annotated false-positive crops per model")
+    p.add_argument("--deploy-conf", type=float, default=_DEPLOY_CONF, dest="deploy_conf",
+                   help=f"Operating point for P/R/FP-per-image columns and --fp-gallery "
+                        f"(default {_DEPLOY_CONF}, the fixed value used everywhere before "
+                        f"this flag existed — pass a candidate threshold from --thresholds' "
+                        f"curve to cross-check it qualitatively)")
     return p.parse_args()
 
 
@@ -182,7 +188,8 @@ _CACHE_SCHEMA = "v3"  # bump when row fields change → old entries recompute
 def _cache_key(ckpt: Path, args, tta: bool) -> str:
     st = ckpt.stat()
     raw = (f"{_CACHE_SCHEMA}|{ckpt}|{st.st_mtime_ns}|{st.st_size}|"
-           f"{args.benchmark}|{args.imgsz}|{args.conf}|tta={tta}")
+           f"{args.benchmark}|{args.imgsz}|{args.conf}|tta={tta}|"
+           f"deploy_conf={args.deploy_conf}")
     return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
 
@@ -324,9 +331,9 @@ def main() -> int:
             valid = [v for v in ap.values() if v == v]
             map50 = float(np.mean(valid)) if valid else float("nan")
             op = operating_point(preds, gts, _BENCHMARK_CLASSES, len(pairs),
-                                 conf_thr=_DEPLOY_CONF)
+                                 conf_thr=args.deploy_conf)
             sizes = size_bucketed_recall(preds, gts, _BENCHMARK_CLASSES,
-                                         conf_thr=_DEPLOY_CONF)
+                                         conf_thr=args.deploy_conf)
 
             def _macro(field: str) -> float:
                 vals = [op[c][field] for c in _BENCHMARK_CLASSES
@@ -367,23 +374,24 @@ def main() -> int:
             cache_path.write_text(json.dumps(cache, indent=1))
 
             if args.thresholds:
-                rec = {cls: threshold_sweep(preds, gts, cls, len(pairs))["best"]
+                rec = {cls: threshold_sweep(preds, gts, cls, len(pairs))
                        for cls in _BENCHMARK_CLASSES}
                 threshold_recs[row["label"]] = rec
             if args.fp_gallery:
                 fps = false_positives(preds, gts, _BENCHMARK_CLASSES,
-                                      conf_thr=_DEPLOY_CONF)
+                                      conf_thr=args.deploy_conf)
                 gal = _save_fp_gallery(fps, row["label"])
-                logger.info("  %d FPs @%.2f → %s", len(fps), _DEPLOY_CONF,
+                logger.info("  %d FPs @%.2f → %s", len(fps), args.deploy_conf,
                             gal.relative_to(_ROOT))
             del model
 
     rows.sort(key=lambda r: -(r["mAP50"] if r["mAP50"] == r["mAP50"] else -1))
 
     # Console table
+    p_hdr, r_hdr = f"P@{args.deploy_conf:.2g}", f"R@{args.deploy_conf:.2g}"
     logger.info("")
     logger.info("%-62s %-4s %7s %7s %7s %6s %6s %7s %7s",
-                "Model", "cls", "mAP50", "vehAP", "perAP", "P@.4", "R@.4", "FP/img", "FN/img")
+                "Model", "cls", "mAP50", "vehAP", "perAP", p_hdr, r_hdr, "FP/img", "FN/img")
     logger.info("-" * 112)
     for r in rows:
         logger.info("%-62s %-4s %7.4f %7.4f %7.4f %6.3f %6.3f %7.3f %7.3f",
@@ -406,8 +414,8 @@ def main() -> int:
         "# Detection Leaderboard\n\n",
         f"> Benchmark: `{bench_dir.relative_to(_ROOT)}` ({len(pairs)} images) | "
         f"collapsed AP50, all schemes comparable | imgsz={args.imgsz} conf={args.conf} | "
-        f"P/R/FP at conf={_DEPLOY_CONF}{size_note}\n\n",
-        "| # | Model | Cls | mAP50 | Veh AP | Per AP | P@.4 | R@.4 | FP/img | FN/img "
+        f"P/R/FP at conf={args.deploy_conf}{size_note}\n\n",
+        f"| # | Model | Cls | mAP50 | Veh AP | Per AP | {p_hdr} | {r_hdr} | FP/img | FN/img "
         "| Veh R s/m/l | Per R s/m/l | Trained on |\n",
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
     ]
@@ -426,18 +434,38 @@ def main() -> int:
     # Threshold recommendations
     if args.thresholds and threshold_recs:
         rec_path = _ROOT / "reports" / "detection" / "threshold_recommendations.md"
-        rl = ["# Per-class threshold recommendations (best F1 on the benchmark)\n\n",
+        rl = ["# Per-class threshold recommendations\n\n",
+              "## Best-F1 summary\n\n",
               "| Model | Class | Best conf | Precision | Recall | F1 | FP/img |\n",
               "|---|---|---|---|---|---|---|\n"]
         for label, rec in threshold_recs.items():
-            for cls, best in rec.items():
+            for cls, sweep in rec.items():
+                best = sweep.get("best") if sweep else None
                 if best is None:
                     continue
                 rl.append(f"| `{label}` | {cls} | **{best['conf']:.2f}** "
                           f"| {best['precision']:.3f} | {best['recall']:.3f} "
                           f"| {best['f1']:.3f} | {best['fp_per_image']:.3f} |\n")
+
+        # Full conf-sweep curve — best-F1 alone hides where FP/img actually
+        # flattens out, which is what a genuinely FP-minimizing choice needs.
+        rl.append("\n## Full conf-sweep curve (every 0.05 step)\n\n")
+        for label, rec in threshold_recs.items():
+            for cls, sweep in rec.items():
+                curve = sweep.get("curve") if sweep else None
+                if not curve:
+                    continue
+                best_conf = sweep["best"]["conf"] if sweep.get("best") else None
+                rl.append(f"\n### `{label}` — {cls}\n\n")
+                rl.append("| Conf | Precision | Recall | F1 | FP/img |\n")
+                rl.append("|---|---|---|---|---|\n")
+                for pt in curve:
+                    marker = " **★best**" if pt["conf"] == best_conf else ""
+                    rl.append(f"| {pt['conf']:.2f}{marker} | {pt['precision']:.3f} "
+                              f"| {pt['recall']:.3f} | {pt['f1']:.3f} "
+                              f"| {pt['fp_per_image']:.3f} |\n")
         rec_path.write_text("".join(rl))
-        logger.info("Threshold recommendations → %s", rec_path)
+        logger.info("Threshold recommendations (best-F1 + full curve) → %s", rec_path)
     return 0
 
 

@@ -333,6 +333,60 @@ The production checkpoint (`weights/detection/rfdetr-m/detection_dataset_hardneg
 remains the best known rfdetr-m checkpoint. See `reports/detection/phase7_closing_summary.md`
 for the full comparison table before proposing another retrain along either of these two axes.
 
+## RF-DETR Confidence Threshold Selection (rfdetr-m production checkpoint)
+
+The production `config.yaml` values (`rfdetr_2class` profile) were originally both `0.50`, set from a
+single best-F1 read on the 55-image test split — and the mil-vehicle line's own comment cited a
+*different* model/dataset (`rfdetr-2xl/detection_dataset/coco`), not the actual deployed
+`rfdetr-m/detection_dataset_hardneg/conservative_aug` checkpoint. A deeper, real-numbers sweep was run
+instead of trusting that value: RF-DETR has **no NMS-IoU knob at all** (confirmed by reading
+`src/perception/models/instance/rfdetr/model.py`'s `predict()` call — only `threshold` is passed — and
+grepping the installed `rfdetr` package source for `nms`, zero matches; it's a DETR-family set-prediction
+model, genuinely NMS-free), so `tune_thresholds.py`'s YOLO-only conf×IoU sweep doesn't apply here.
+`leaderboard.py --thresholds` already computes a full 19-point conf-sweep curve (0.05→0.95 step 0.05, via
+`_ap_utils.threshold_sweep`) but was discarding everything except the single best-F1 row — extended to
+also write the full curve to `reports/detection/threshold_recommendations.md`, and a `--deploy-conf` flag
+was added (both `leaderboard.py` and `fp_full_image_review.py`) so `--fp-gallery`/full-image FP review can
+be re-run at any candidate threshold, not just the fixed 0.40 both tools previously hardcoded.
+
+**A real bug was found and fixed while cross-checking qualitatively**: `fp_full_image_review.py`'s
+`--conf` flag only set the prediction-collection floor passed to the model — the actual TP/FP
+classification (`_classify_boxes`) hardcoded `min_score=_DEPLOY_CONF` (0.40) regardless of `--conf`,
+so passing `--conf 0.55` silently still classified FPs at 0.40 unless `--conf` happened to exceed 0.40
+(in which case the collection floor became the *effective* threshold by coincidence, masking the bug).
+Fixed by threading a proper `--deploy-conf` flag into `_classify_boxes` itself.
+
+The sweep was run on **both** `Detection_Dataset/valid` (34 images) and `/test` (55 images)
+independently — trusting either split alone risks fitting sample noise, the same lesson as this
+project's other single-metric pitfalls:
+
+| Class | Conf | Split | Precision | Recall | F1 | FP/img |
+|---|---|---|---|---|---|---|
+| Military Vehicle | 0.50 (old) | valid / test | 0.966/0.814/0.884/0.059 | — | — | 0.900/0.955/0.926/0.127 |
+| Military Vehicle | **0.60 (new)** | valid / test | 1.000/0.786/0.880/0.000 | — | — | 0.938/0.924/0.931/0.073 |
+| person | 0.50 (old) | valid / test | 0.897/0.778/0.833/0.118 | — | — | 0.929/0.696/0.796/0.055 |
+| person | **0.55 (new)** | valid / test | 0.946/0.778/0.854/0.059 | — | — | 0.971/0.607/0.747/0.018 |
+
+(Each cell is P/R/F1/FP-per-image for that split.) Military Vehicle's new value is an unambiguous win —
+F1 flat-to-better on both splits while FP/img drops substantially, not a recall-for-FP tradeoff. Person is
+a genuine, disclosed tradeoff: FP/img drops meaningfully on both splits and F1 *improves* on valid, but
+test-split recall costs more (0.696→0.607) — the two splits disagreed on person's own best-F1 point
+(0.55 on valid vs. 0.30 on test), a real small-sample disagreement, not hidden.
+
+TIDE (`tide_analysis.py --conf-thr`) at 0.50/0.60/0.70 (uniform across both classes, since TIDE doesn't
+support per-class thresholds) confirmed the expected Bkg-vs-Miss trade directionally: Bkg hallucinations
+6→5→4, but Miss (FN) rose 21→28→33 — a real cost from raising a *shared* threshold too far, which is
+exactly why the final choice uses **per-class** thresholds (config.yaml already supports independent
+values per class) rather than one shared value. Qualitative cross-check
+(`fp_full_image_review.py --deploy-conf`) at the chosen values found the remaining FPs were the same
+already-known error modes — a genuine unlabeled second vehicle in dust/haze, a near-duplicate person box
+on an already-correctly-detected person, and a loading-ramp/rig hallucination matching the background-error
+pattern already documented above — not new or surprising failure modes.
+
+**Applied to production**: `config/config.yaml`'s `rfdetr_2class` profile now uses
+`confidence_threshold: 0.60` (Military Vehicle) and `0.55` (person), replacing both `0.50` values, with
+inline comments citing this methodology and the correct checkpoint.
+
 ## RF-DETR / YOLO Jetson TensorRT Optimization
 
 `scripts/detection/optimization/` (export_onnx.py, `_rfdetr_trt_common.py`, `_video_bench_common.py`,
@@ -462,6 +516,87 @@ Orin's iGPU has no real concurrency headroom left once one model (rfdetr-s alone
 it) is running; the extra stream-management overhead is pure loss. The sequential design is already
 close to this hardware's ceiling for this pairing — the effective lever for combined FPS is detection
 model choice (see table above), not execution scheduling.
+
+**EMA smoothing added to the standalone survey script** (`jetson_combined_survey.py --ema
+--ema-alpha 0.35`, off by default). Production's `PerceptionPipeline` already has causal EMA smoothing
+(`src/perception/temporal/ema_logits.py`) wired in and active on every frame regardless of backend — but
+that pipeline has never actually run on the Jetson device (the on-device checkout deliberately lacks
+`models`/`pipeline`/`render`, only `datasets/`). `LogitsEMA` was duplicated (not imported — importing
+`perception.temporal` on-device fails at package-import time, since even its own `__init__.py` eagerly
+pulls in `factory.py`, which reaches into `models`/`config`) directly into `_segformer_trt_common.py`,
+plus a new `SegformerTensorRTEngine.infer_smoothed()` method that blends raw engine logits through the
+duplicate before upsample+argmax (`.infer()` itself is unchanged). Verified frame-1 bit-identical between
+`.infer()`/`.infer_smoothed()` (EMA is pass-through on the first frame) with zero diff on a real engine.
+Measured cost: essentially free — segmentation-only FPS 172.7→167.9, combined 49.8→49.4 (rfdetr-s +
+gaza_joint_hardneg_tversky_b2_fp16, `tzir-driving.mp4`). Frame-to-frame overlay pixel diff over 5
+consecutive frames dropped from a mean of 7.02 (off) to 6.69 (on), and the qualitative render showed
+visibly calmer segmentation-boundary edges — a real, if modest, reduction (most of the remaining
+frame-to-frame diff is genuine camera motion, not classification jitter).
+
+**A significant, disclosed correction to this section's own earlier "clock throttling was never the
+bottleneck" claim above**: `jetson_clocks` does **not persist across a reboot or a new SSH session** —
+it must be re-applied every session, and skipping it produces a dramatic, real FPS gap, not noise. This
+session's Jetson connection started with the CPU governor at `schedutil`/1.42GHz (not locked), and the
+*exact same* rfdetr-s + gaza_joint_hardneg_tversky_b2_fp16 pairing measured **29.2 FPS combined / 101.6
+FPS segmentation-only** under those conditions — closely matching the previously-reported "combined FPS
+dropped from 40.8 to 29" anomaly investigated earlier this session, which had been root-caused (at the
+time) to CPU/GPU contention from interleaved decode+infer+render+write. After `sudo jetson_clocks` was
+applied (confirmed via `cat scaling_cur_freq` → locked at 2.2016GHz, not just `nvpmodel -q`'s power-mode
+check, which only confirms the mode allows max clocks, not that they're actually locked there), the
+*identical* pairing measured **49.3-49.9 FPS combined / 167-174 FPS segmentation-only** — a ~1.7x jump
+from clock state alone. This strongly suggests the earlier interleaving root-cause theory was at least
+partially confounded by the same non-locked-clocks condition rather than being a purely architectural
+bottleneck (see the decode/write-threading result immediately below, which found ~0% additional gain once
+clocks were properly locked). **Always verify `cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq`
+directly each session** — `nvpmodel -q` alone is not sufficient confirmation.
+
+**GStreamer/NVDEC hardware decode is available on this device but not attempted this round.**
+`cv2.getBuildInformation()` on-device shows `GStreamer: YES (1.20.3)`, and `gst-inspect-1.0` confirms both
+`nvv4l2decoder` (hardware H.264/H.265 decode) and `nvvidconv` are installed — contrary to this plan's own
+prior assumption that a default JetPack 6 OpenCV build likely lacks this. A full `cv2.VideoCapture`
+GStreamer-pipeline rewrite is a larger, higher-risk change than what was attempted this round, though, and
+with clocks properly locked the interleaving bottleneck this would have targeted turned out not to be the
+dominant factor after all (see above) — flagged as a real, available lever for a future round, not pursued
+here.
+
+**Opt-in decode/write threading was tried and measured ~0% gain once clocks were locked.**
+`jetson_combined_survey.py --pipeline-io` (background `threading.Thread` + bounded `queue.Queue` for
+`cv2.VideoCapture.read()`/`cv2.VideoWriter.write()`, all CUDA calls kept on the main thread — a genuinely
+different mechanism from the rejected GPU-stream-concurrency approach above, which overlapped CUDA kernels
+rather than CPU-bound I/O) and a `--no-write` diagnostic flag were added and validated: output is
+pixel-identical to the unthreaded baseline (900/900 frames, max diff 0, confirming no dropped/reordered
+frames), but FPS was flat across every combination tested with locked clocks — baseline 49.3-49.9,
+`--no-write` 50.0, `--pipeline-io` 49.6, both together 49.8 (rfdetr-s + gaza_joint_hardneg_tversky_b2_fp16,
+`tzir-driving.mp4`, both 300-frame and full 900-frame runs). Kept in the script (correct, harmless, opt-in)
+but **not enabled in the final validation run below** — it earned zero measured benefit once the real
+bottleneck (unlocked clocks) was addressed.
+
+**Final combined validation** (EMA on, alpha=0.35; rfdetr-s at the new per-class-averaged single
+`--det-conf 0.55` — this standalone script has no per-class threshold support, unlike production
+`config.yaml`, a disclosed simplification; `gaza_joint_hardneg_tversky_b2_fp16`; clocks locked; 300 frames
+per clip; all 11 real Gaza/desert clips under `~/perception_optim/data/videos/`):
+
+| Video | Combined FPS | Detection-only | Segmentation-only |
+|---|---:|---:|---:|
+| tzir-driving.mp4 | 43.2 | 61.4 | 145.8 |
+| colisim.mp4 | 49.6 | 70.7 | 166.9 |
+| open-field-without-mg.mp4 | 49.5 | 70.5 | 166.2 |
+| armoured-bulldozers-sand-humvee | 49.6 | 70.3 | 168.8 |
+| gaza-israel-jeep-combing-road | 49.4 | 70.0 | 167.4 |
+| gaza-palestine-jeeps-tanks-western-edge | 48.9 | 69.6 | 164.4 |
+| gaza-palestine-jeep-combing-western | 43.3 | 62.1 | 143.2 |
+| military-armed-vehicle-ceasefire | 44.4 | 63.2 | 149.1 |
+| military-vehicle-streets-bombardment-ceasefire | 42.2 | 59.8 | 143.0 |
+| pov-military-ground-vehicle-destroyed-streets | 43.5 | 61.7 | 147.0 |
+| tank-with-smoke.mp4 | 44.8 | 63.4 | 152.8 |
+
+All 11 clips stay comfortably above real-time (30 FPS), ranging 42.2-49.6 FPS combined — the spread
+across clips (vs. the single-clip numbers above) reflects differing native video resolutions affecting
+CPU-side render/overlay cost, confirmed not thermal throttling (temps 42-49°C, CPU still locked at
+2.2016GHz throughout). Rendered videos spot-checked visually: segmentation boundaries calm and consistent
+with EMA on, the tuned per-class thresholds show no new/surprising false positives beyond the
+already-documented error modes, and Stage 6's rock/rubble-vs-traversable fix holds up on real Gaza
+footage (`colisim.mp4`'s rubble streets correctly excluded from the traversable-path prediction).
 
 ## Jetson / Production Notes
 

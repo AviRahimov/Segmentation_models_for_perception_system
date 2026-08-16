@@ -293,6 +293,11 @@ cd ~/perception_optim/combined && source ~/perception_optim/env.sh
 python3 jetson_combined_survey.py                     # interactive: pick detection/segmentation/video/confidence
 python3 jetson_combined_survey.py --detection rfdetr-s --segmentation distilled_fp16 \
     --video tzir-driving.mp4 --det-conf 0.35 --max-frames 300   # scripted
+
+# opt-in EMA smoothing (removes segmentation jitter) + decode/write threading
+# (measured ~0% FPS gain once clocks are locked, but harmless/correct -- see CLAUDE.md):
+python3 jetson_combined_survey.py --detection rfdetr-s --segmentation gaza_joint_hardneg_tversky_b2_fp16 \
+    --video tzir-driving.mp4 --det-conf 0.35 --ema --ema-alpha 0.35 --pipeline-io --max-frames 300
 ```
 
 Edit `DETECTION_REGISTRY`/`SEGMENTATION_REGISTRY` at the top of the script to point at whatever
@@ -301,6 +306,12 @@ engines you've built — paths are absolute against `~/perception_optim/` and
 combined (sequential, both models per frame) FPS, and writes an annotated `.mp4` under
 `~/perception_optim/results/`. See CLAUDE.md's "Combined Detection+Segmentation Jetson Benchmark"
 section for real measured numbers.
+
+**Before any FPS measurement, always verify clocks are actually locked** —
+`cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq` should read the CPU's max frequency.
+`jetson_clocks` does not persist across a reboot or new SSH session and `nvpmodel -q` alone (which only
+confirms the *power mode*, not whether clocks are currently locked to max) is not sufficient — skipping
+this re-check produced a real, measured ~1.7x FPS gap in this project's own history (see CLAUDE.md).
 
 One subfolder per model under `weights/` is deliberate, not just tidiness — an earlier flat layout
 (`weights/*.onnx`, `weights/*.engine` for every model in one directory) led to a real incident: a

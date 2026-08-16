@@ -27,12 +27,23 @@ Usage
     # explicit, for scripted comparisons
     python3 jetson_combined_survey.py --detection rfdetr-s --segmentation distilled_fp16 \\
         --video tzir-driving.mp4 --det-conf 0.35 --max-frames 300
+
+    # with EMA smoothing (opt-in, off by default -- removes segmentation jitter)
+    python3 jetson_combined_survey.py --detection rfdetr-s --segmentation gaza_joint_hardneg_tversky_b2_fp16 \\
+        --video tzir-driving.mp4 --det-conf 0.35 --ema --ema-alpha 0.35 --max-frames 300
+
+    # with decode/write threading (opt-in, off by default -- overlaps CPU-bound
+    # video I/O with GPU inference; see CLAUDE.md's FPS-optimization section)
+    python3 jetson_combined_survey.py --detection rfdetr-s --segmentation gaza_joint_hardneg_tversky_b2_fp16 \\
+        --video tzir-driving.mp4 --det-conf 0.35 --ema --pipeline-io --max-frames 300
 """
 from __future__ import annotations
 
 import argparse
 import logging
+import queue
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,7 +55,7 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 
 from _rfdetr_trt_common import load_model  # noqa: E402
-from _segformer_trt_common import SegformerTensorRTEngine  # noqa: E402
+from _segformer_trt_common import LogitsEMA, SegformerTensorRTEngine  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger("jetson_combined_survey")
@@ -223,8 +234,113 @@ def _overlay_segmentation(frame: np.ndarray, class_map: np.ndarray, alpha: float
     return cv2.addWeighted(frame, 1 - alpha, color, alpha, 0.0)
 
 
+def _frame_source(cap: cv2.VideoCapture, max_frames: int, n_warmup: int, use_thread: bool):
+    """Yields (idx, frame_bgr).
+
+    use_thread=False (default): today's exact behavior -- cap.read() called
+    directly on the caller's thread, one frame per iteration.
+
+    use_thread=True: decode runs on a background thread feeding a small bounded
+    queue.Queue, so cv2.VideoCapture.read() (a C++ call that releases the GIL,
+    pure CPU/disk I/O, no CUDA) can run ahead of the main thread's det+seg
+    inference instead of blocking it every frame -- this is a genuinely
+    different mechanism from the already-rejected _stream_overlap_probe.py
+    approach (that overlapped GPU kernels on separate CUDA streams within one
+    thread; this overlaps CPU-bound I/O across threads while all CUDA calls
+    stay on the main thread, sidestepping any CUDA-multithreading correctness
+    question entirely).
+    """
+    if not use_thread:
+        idx = 0
+        while True:
+            if max_frames and idx >= max_frames + n_warmup:
+                break
+            ok, frame = cap.read()
+            if not ok:
+                break
+            yield idx, frame
+            idx += 1
+        return
+
+    q: "queue.Queue" = queue.Queue(maxsize=8)
+
+    def _worker() -> None:
+        idx = 0
+        while True:
+            if max_frames and idx >= max_frames + n_warmup:
+                break
+            ok, frame = cap.read()
+            if not ok:
+                break
+            q.put((idx, frame))
+            idx += 1
+        q.put(None)
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    while True:
+        item = q.get()
+        if item is None:
+            break
+        yield item
+    t.join()
+
+
+class _FrameWriter:
+    """Wraps cv2.VideoWriter, optionally moving writer.write() calls (pure
+    CPU/OpenCV encode, no CUDA) onto a background thread via a bounded queue --
+    same rationale as _frame_source's decode thread.
+
+    use_thread=False, disabled=False (defaults): today's exact behavior --
+    lazy VideoWriter creation on first frame, synchronous write() every call.
+    disabled=True: writer.write() never runs at all -- a diagnostic to isolate
+    how much of any FPS gain comes from skipping the write step alone vs. the
+    threading itself.
+    """
+
+    def __init__(self, output_path: Path, fps_in: float, use_thread: bool, disabled: bool) -> None:
+        self._output_path = output_path
+        self._fps_in = fps_in
+        self._disabled = disabled
+        self._use_thread = use_thread
+        self._writer: "cv2.VideoWriter | None" = None
+        self._q: "queue.Queue | None" = queue.Queue(maxsize=8) if use_thread else None
+        self._thread: "threading.Thread | None" = None
+
+    def _worker(self) -> None:
+        while True:
+            item = self._q.get()
+            if item is None:
+                break
+            self._writer.write(item)
+
+    def write(self, frame: np.ndarray) -> None:
+        if self._disabled:
+            return
+        if self._writer is None:
+            h, w = frame.shape[:2]
+            self._writer = cv2.VideoWriter(str(self._output_path), cv2.VideoWriter_fourcc(*"mp4v"),
+                                            self._fps_in, (w, h))
+            if self._use_thread:
+                self._thread = threading.Thread(target=self._worker, daemon=True)
+                self._thread.start()
+        if self._use_thread:
+            self._q.put(frame)
+        else:
+            self._writer.write(frame)
+
+    def close(self) -> None:
+        if self._disabled or self._writer is None:
+            return
+        if self._use_thread:
+            self._q.put(None)
+            self._thread.join()
+        self._writer.release()
+
+
 def run(det_key: str, seg_key: str, video_path: Path, det_conf: float,
-        output_path: Path, max_frames: int) -> dict:
+        output_path: Path, max_frames: int, ema_alpha: float | None = None,
+        pipeline_io: bool = False, no_write: bool = False) -> dict:
     det_choice = DETECTION_REGISTRY[det_key]
     seg_choice = SEGMENTATION_REGISTRY[seg_key]
 
@@ -233,47 +349,46 @@ def run(det_key: str, seg_key: str, video_path: Path, det_conf: float,
     logger.info("Loading segmentation model: %s (%s)", seg_key, seg_choice.engine_path)
     seg_engine = SegformerTensorRTEngine(seg_choice.engine_path, gpu_preprocess=True, cuda_graph=True)
 
+    # Opt-in causal EMA smoothing over segmentation logits -- off by default,
+    # matches production's temporal.semantic_ema (src/perception/temporal/ema_logits.py),
+    # via the standalone LogitsEMA duplicate (see _segformer_trt_common.py's docstring
+    # for why this can't just import the real one on-device). No scene-cut reset is
+    # wired in here -- this standalone script has no scene-cut detector either, an
+    # existing scope limit, not a new regression.
+    smoother = LogitsEMA(ema_alpha) if ema_alpha is not None else None
+    if smoother is not None:
+        logger.info("EMA smoothing enabled: alpha=%.2f", ema_alpha)
+
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"Could not open {video_path}")
     fps_in = cap.get(cv2.CAP_PROP_FPS) or 25.0
 
-    writer = None
-    n = 0
+    frame_writer = _FrameWriter(output_path, fps_in, use_thread=pipeline_io, disabled=no_write)
     det_times: list[float] = []
     seg_times: list[float] = []
     combined_times: list[float] = []
     n_warmup = 10
 
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        if max_frames and n >= max_frames + n_warmup:
-            break
-
+    for idx, frame in _frame_source(cap, max_frames, n_warmup, use_thread=pipeline_io):
         t0 = time.perf_counter()
         dets = det_model.infer(frame, threshold=det_conf)
         t1 = time.perf_counter()
-        class_map = seg_engine.infer(frame)
+        class_map = (seg_engine.infer_smoothed(frame, smoother) if smoother is not None
+                     else seg_engine.infer(frame))
         t2 = time.perf_counter()
 
-        if n >= n_warmup:
+        if idx >= n_warmup:
             det_times.append(t1 - t0)
             seg_times.append(t2 - t1)
             combined_times.append(t2 - t0)
 
         rendered = _overlay_segmentation(frame, class_map)
         rendered = _draw_detections(rendered, dets)
-        if writer is None:
-            h, w = rendered.shape[:2]
-            writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps_in, (w, h))
-        writer.write(rendered)
-        n += 1
+        frame_writer.write(rendered)
 
     cap.release()
-    if writer is not None:
-        writer.release()
+    frame_writer.close()
 
     def _stats(times: list[float]) -> dict:
         if not times:
@@ -283,7 +398,7 @@ def run(det_key: str, seg_key: str, video_path: Path, det_conf: float,
 
     result = {
         "detection": det_key, "segmentation": seg_key, "video": video_path.name,
-        "det_conf": det_conf, "n_frames": len(combined_times),
+        "det_conf": det_conf, "ema_alpha": ema_alpha, "n_frames": len(combined_times),
         "detection_only": _stats(det_times),
         "segmentation_only": _stats(seg_times),
         "combined": _stats(combined_times),
@@ -324,6 +439,23 @@ def main() -> int:
     p.add_argument("--det-conf", type=float, default=None)
     p.add_argument("--output", default=None)
     p.add_argument("--max-frames", type=int, default=300, help="0 = full clip")
+    p.add_argument("--ema", action=argparse.BooleanOptionalAction, default=None,
+                   help="Enable causal EMA smoothing on segmentation logits (opt-in, off by "
+                        "default) -- removes frame-to-frame segmentation boundary jitter, "
+                        "matching dev-PC's temporal.semantic_ema. Omit to be asked "
+                        "interactively (Enter = off, matches existing default behavior).")
+    p.add_argument("--ema-alpha", type=float, default=0.35,
+                   help="EMA weight on the current frame when --ema is passed (default 0.35, "
+                        "matches config.yaml's temporal.semantic_ema.alpha default).")
+    p.add_argument("--pipeline-io", action="store_true",
+                   help="Opt-in, off by default (preserves today's exact single-threaded loop): "
+                        "run video decode and video write on background threads via bounded "
+                        "queues, overlapping CPU-bound I/O with the main thread's det+seg "
+                        "inference. All CUDA calls stay on the main thread.")
+    p.add_argument("--no-write", action="store_true", dest="no_write",
+                   help="Diagnostic: skip writing the output video entirely, to isolate how "
+                        "much of any FPS gain comes from --pipeline-io's write-threading vs. "
+                        "just not encoding/writing at all.")
     args = p.parse_args()
 
     det_key = args.detection or _ask_choice(
@@ -355,12 +487,20 @@ def main() -> int:
         "0.50 is the best-F1 accuracy operating point)", 0.35,
     )
 
+    ema_enabled = args.ema if args.ema is not None else (
+        _ask_choice("Enable EMA smoothing on segmentation (removes frame-to-frame jitter)?",
+                    [("off", "current default behavior, matches .infer()"),
+                     ("on", "causal EMA blend, matches dev-PC temporal.semantic_ema")]) == "on"
+    )
+    ema_alpha = args.ema_alpha if ema_enabled else None
+
     output_path = Path(args.output) if args.output else (
         Path.home() / "perception_optim" / "results" / f"combined_{det_key}_{seg_key}_{video_path.stem}.mp4"
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    run(det_key, seg_key, video_path, det_conf, output_path, args.max_frames)
+    run(det_key, seg_key, video_path, det_conf, output_path, args.max_frames, ema_alpha,
+        pipeline_io=args.pipeline_io, no_write=args.no_write)
     return 0
 
 

@@ -27,6 +27,40 @@ _IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 
+class LogitsEMA:
+    """Standalone duplicate of ``perception.temporal.ema_logits.LogitsEMA``.
+
+    Duplicated (not imported) because importing perception.temporal on the
+    Jetson's stripped checkout (~/perception_optim/segformer_repo/, no
+    models/pipeline/render) fails at package-import time: even
+    ``from perception.temporal.ema_logits import LogitsEMA`` first executes
+    perception/temporal/__init__.py, which eagerly imports iou_tracker.py,
+    scene_cut.py, and factory.py — none of which exist on-device. Same
+    treatment as _segformer_checkpoint_common.py's duplicated key-remap logic.
+    Keep this in exact sync with src/perception/temporal/ema_logits.py if that
+    file's math ever changes.
+    """
+
+    def __init__(self, alpha: float) -> None:
+        if not 0.0 < alpha <= 1.0:
+            raise ValueError(f"alpha must be in (0, 1], got {alpha}")
+        self.alpha: float = float(alpha)
+        self._state: "torch.Tensor | None" = None
+
+    def update(self, logits: "torch.Tensor") -> "torch.Tensor":
+        if self._state is None or self._state.shape != logits.shape:
+            # First frame (or shape change after seek): pass through unchanged.
+            self._state = logits.detach().clone()
+            return self._state
+        import torch
+        a = torch.as_tensor(self.alpha, dtype=logits.dtype, device=logits.device)
+        self._state = a * logits + (1.0 - a) * self._state
+        return self._state
+
+    def reset(self) -> None:
+        self._state = None
+
+
 def preprocess_bgr_cpu(frame_bgr: np.ndarray, size: int) -> np.ndarray:
     """BGR HxWx3 uint8 -> normalized (1,3,size,size) float32, NCHW. CPU/cv2 path."""
     import cv2
@@ -46,7 +80,10 @@ class SegformerTensorRTEngine:
 
     Returns the predicted class-index map (argmax over channels, upsampled
     back to the input's native size) from ``.infer()`` — not raw logits —
-    so callers don't need engine-specific postprocessing knowledge.
+    so callers don't need engine-specific postprocessing knowledge. Use
+    ``.infer_smoothed()`` instead for causal EMA temporal smoothing across
+    frames (removes segmentation boundary jitter); ``.infer()`` itself is
+    unchanged and still argmaxes every frame independently.
     """
 
     def __init__(self, engine_path: str | Path, input_size: int | None = None,
@@ -173,6 +210,37 @@ class SegformerTensorRTEngine:
 
         logits = torch.nn.functional.interpolate(
             raw_logits.float(), size=(h0, w0), mode="bilinear", align_corners=False,
+        )
+        return logits.argmax(dim=1)[0].cpu().numpy()
+
+    def infer_smoothed(self, frame_bgr: np.ndarray, smoother: "LogitsEMA") -> np.ndarray:
+        """Same as .infer() but blends the raw engine logits through `smoother`
+        BEFORE upsample+argmax, instead of argmaxing every frame independently
+        -- causal temporal smoothing to remove frame-to-frame boundary jitter,
+        matching production's src/perception/temporal/ema_logits.py.
+
+        Opt-in: .infer()'s own behavior/callers are unaffected by this method
+        existing. Note this blends at the raw engine output resolution
+        (pre-upsample), not production's half-native-resolution intermediate
+        (SegFormerSemanticModel.predict_logits()'s output shape) -- same causal
+        EMA math, different intermediate resolution; the observable effect
+        (temporally smoothed segmentation, no jitter) is the same.
+        """
+        torch = self._torch
+        h0, w0 = frame_bgr.shape[:2]
+
+        if self._gpu_preprocess:
+            processed = self._preprocess_gpu(frame_bgr)
+            self._in_buf.copy_(processed.to(self._in_dtype))
+        else:
+            arr = preprocess_bgr_cpu(frame_bgr, self._input_size)
+            self._in_buf.copy_(torch.from_numpy(arr).to(self._in_dtype))
+
+        raw_logits = self._run()
+        smoothed = smoother.update(raw_logits.float())
+
+        logits = torch.nn.functional.interpolate(
+            smoothed, size=(h0, w0), mode="bilinear", align_corners=False,
         )
         return logits.argmax(dim=1)[0].cpu().numpy()
 

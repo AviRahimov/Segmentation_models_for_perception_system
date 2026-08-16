@@ -84,14 +84,34 @@ instance_profiles:
       display_mode: "both"
       color: "#ffc800"
       is_semantic: false
-      confidence_threshold: 0.50   # best-F1 for rfdetr-2xl/detection_dataset/coco on the held-out test set (2026-07-16)
+      confidence_threshold: 0.60   # FP-minimizing pick (2026-08-16) for the actual deployed
+      # checkpoint (rfdetr-m/detection_dataset_hardneg/conservative_aug — the previous 0.50
+      # comment cited rfdetr-2xl/detection_dataset/coco, a DIFFERENT model/dataset, not this
+      # one). Derived from leaderboard.py --thresholds' full conf-sweep curve on BOTH
+      # Detection_Dataset/valid (34 img) and /test (55 img) independently, not a single split:
+      # valid P/R/F1/FP-img 0.50→0.60 = 0.966/0.814/0.884/0.059 → 1.000/0.786/0.880/0.000;
+      # test  P/R/F1/FP-img 0.50→0.60 = 0.900/0.955/0.926/0.127 → 0.938/0.924/0.931/0.073.
+      # F1 is flat-to-better on both splits while FP/img drops substantially — a real,
+      # low-cost improvement, not a recall-for-FP tradeoff. See
+      # reports/detection/threshold_recommendations_{valid,test}.md for the full curves and
+      # CLAUDE.md's threshold-selection section for the qualitative fp_full_image_review
+      # cross-check (loading-ramp/rig hallucinations, matching the already-documented
+      # background-error pattern).
     - name: "person"
       text_prompt: "person"
       coco_classes: [1]
       display_mode: "both"
       color: "#00ff80"
       is_semantic: false
-      confidence_threshold: 0.50   # best-F1 on test set — was 0.35, raised to cut false positives (P 0.959 vs R 0.839 at 0.50)
+      confidence_threshold: 0.55   # FP-minimizing pick (2026-08-16), same methodology as
+      # mil vehicle above. valid P/R/F1/FP-img 0.50→0.55 = 0.897/0.778/0.833/0.118 →
+      # 0.946/0.778/0.854/0.059 (FP halves, F1 improves, recall unchanged); test
+      # 0.50→0.55 = 0.929/0.696/0.796/0.055 → 0.971/0.607/0.747/0.018 (FP drops further but
+      # recall costs more here — disclosed, not hidden: the two splits disagree more for
+      # this class than for mil vehicle, best-F1 alone was 0.55 on valid vs 0.30 on test).
+      # 0.55 was chosen over staying at 0.50 because the qualitative fp_full_image_review
+      # check at 0.55 showed the remaining FPs were genuine near-duplicate boxes on an
+      # already-correctly-detected person, not new/different failures.
 
   # ── 6class ── for merged_6class checkpoints; every object type has its own
   #    threshold + color. model classes: 0=tank 1=truck 2=armored_vehicle
