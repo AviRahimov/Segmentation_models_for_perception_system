@@ -106,3 +106,7 @@ cache/
 # Training provenance log (see CLAUDE.md) — small, append-only, meant to be durable/shared
 !/reports/detection/experiments.jsonl
 /.venv-sam3
+
+# Mirror of the Jetson device's own ~/perception_optim/CLAUDE.md (that device has no git repo of
+# its own) — kept here as a local backup/reference only, not meant to be shared/tracked.
+/JETSON_DEVICE_CLAUDE.md
