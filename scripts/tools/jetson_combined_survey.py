@@ -95,10 +95,51 @@ DETECTION_REGISTRY: dict[str, DetChoice] = {
 }
 
 SEGMENTATION_REGISTRY: dict[str, SegChoice] = {
-    # Recommended: this session's Mask2Former-Large distillation result -- beats
-    # both production and its own teacher on the full 3-class metric, same
-    # architecture/speed as production so it's a drop-in swap. FP16 confirmed
-    # here with zero mIoU loss vs FP32 (unlike RF-DETR, SegFormer has no FP16 cliff).
+    # NEW top recommendation (Stage 6, rock/dune over-segmentation fix): joint
+    # ORFD+Gaza+hard-negative training with asymmetric Tversky loss, warm-started
+    # from gaza_only_from_frozen_backbone_tuned_gazaval ("balanced_current" below).
+    # Beats balanced_current on BOTH Gaza-val (0.9476 vs 0.9050) and ORFD-val
+    # (0.8536 vs 0.8411) with no tradeoff, and real Jetson engine mIoU (0.8622)
+    # is essentially back to original production's own historic best (0.8624) --
+    # at the SAME optimized-harness FPS as balanced_current (114.7-116.7 vs
+    # 115.2-115.7). A free upgrade on this device, not just on paper.
+    "gaza_joint_hardneg_tversky_b2_fp16": SegChoice(
+        engine_path=_SEGFORMER_REPO / "weights/segmentation/optimization_gaza_joint_hardneg_tversky_b2/baseline_fp16_256x256.engine",
+        note="Stage 6 fix -- beats balanced_current on both domains, same FPS, engine mIoU 0.8622",
+    ),
+    "gaza_joint_hardneg_tversky_b2_fp32": SegChoice(
+        engine_path=_SEGFORMER_REPO / "weights/segmentation/optimization_gaza_joint_hardneg_tversky_b2/baseline_fp32_256x256.engine",
+        note="same as _fp16, no measured accuracy difference",
+    ),
+    # SegFormer-B3 variant of the same Stage 6 recipe -- highest Gaza-val
+    # (0.9727) of any checkpoint tried, at a real FPS cost vs the B2 variants
+    # (109.0-110.2 vs 114.7-116.7 optimized) and a small ORFD-val give-up
+    # (engine mIoU 0.8362 vs B2's 0.8622).
+    "gaza_joint_hardneg_tversky_b3_fp16": SegChoice(
+        engine_path=_SEGFORMER_REPO / "weights/segmentation/optimization_segformer-b3/baseline_fp16_256x256.engine",
+        note="highest Gaza-val (0.9727) but slower + lower ORFD-val than the B2 Stage 6 variant",
+    ),
+    "gaza_joint_hardneg_tversky_b3_fp32": SegChoice(
+        engine_path=_SEGFORMER_REPO / "weights/segmentation/optimization_segformer-b3/baseline_fp32_256x256.engine",
+        note="same as _fp16, no measured accuracy difference",
+    ),
+    # The pre-Stage-6 "balanced" checkpoint (production candidate before this
+    # session's rock/hillside over-segmentation fix) -- kept for direct
+    # before/after comparison, now superseded by gaza_joint_hardneg_tversky_b2 above.
+    "balanced_current_fp16": SegChoice(
+        engine_path=_SEGFORMER_REPO / "weights/segmentation/optimization_balanced_current/baseline_fp16_256x256.engine",
+        note="pre-Stage-6 candidate -- superseded by gaza_joint_hardneg_tversky_b2 (same FPS, worse accuracy)",
+    ),
+    "balanced_current_fp32": SegChoice(
+        engine_path=_SEGFORMER_REPO / "weights/segmentation/optimization_balanced_current/baseline_fp32_256x256.engine",
+        note="same as _fp16, no measured accuracy difference",
+    ),
+    # Older recommendation, prior to the Stage 6 rock/dune over-segmentation fix
+    # above -- kept for reference. this session's Mask2Former-Large distillation
+    # result -- beats both production and its own teacher on the full 3-class
+    # metric, same architecture/speed as production so it's a drop-in swap.
+    # FP16 confirmed here with zero mIoU loss vs FP32 (unlike RF-DETR, SegFormer
+    # has no FP16 cliff).
     "distilled_fp16": SegChoice(
         engine_path=_SEGFORMER_REPO / "weights/segmentation/optimization_distilled/baseline_fp16_256x256.engine",
         note="NEW distillation result -- beats production AND its Mask2Former-Large teacher",
