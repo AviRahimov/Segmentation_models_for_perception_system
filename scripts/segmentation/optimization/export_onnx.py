@@ -42,12 +42,22 @@ logger = logging.getLogger("export_onnx")
 _MAX_ABS_DIFF = 1e-2  # fp16 rounding can introduce ~1e-3; generous but not silent
 
 
-def _load_model(checkpoint: str, resolution: int, fp16: bool, device: str):
-    """Load SegFormer-B2 from a local .pth, set processor to target resolution."""
+_HF_BASES = {
+    "segformer-b0": "nvidia/segformer-b0-finetuned-ade-512-512",
+    "segformer-b1": "nvidia/segformer-b1-finetuned-ade-512-512",
+    "segformer-b2": "nvidia/segformer-b2-finetuned-ade-512-512",
+    "segformer-b3": "nvidia/segformer-b3-finetuned-ade-512-512",
+    "segformer-b4": "nvidia/segformer-b4-finetuned-ade-512-512",
+}
+
+
+def _load_model(checkpoint: str, resolution: int, fp16: bool, device: str, variant: str = "segformer-b2"):
+    """Load a SegFormer checkpoint from a local .pth, set processor to target resolution."""
     model, processor, n_labels = build_segformer_from_checkpoint(
-        checkpoint, device, resolution=resolution, fp16=fp16
+        checkpoint, device, resolution=resolution, hf_base=_HF_BASES[variant], fp16=fp16
     )
-    logger.info("Loaded: %s  res=%d  fp16=%s  classes=%d", Path(checkpoint).name, resolution, fp16, n_labels)
+    logger.info("Loaded: %s  variant=%s  res=%d  fp16=%s  classes=%d",
+                Path(checkpoint).name, variant, resolution, fp16, n_labels)
     return model, processor
 
 
@@ -57,11 +67,12 @@ def export_fp16_onnx(
     output_dir: Path,
     device: str = "cuda",
     fp16: bool = True,
+    variant: str = "segformer-b2",
 ) -> Path:
     """Export baseline checkpoint to FP16 ONNX.  Returns the saved .onnx path."""
     import onnx
 
-    model, _ = _load_model(checkpoint, resolution, fp16, device)
+    model, _ = _load_model(checkpoint, resolution, fp16, device, variant)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     precision_tag = "fp16" if fp16 else "fp32"
@@ -140,10 +151,17 @@ def _validate_onnx(
 def main() -> int:
     p = argparse.ArgumentParser(description="Stage 1: FP16 ONNX export + validation")
     p.add_argument("--checkpoint", default="weights/segmentation/orfd/frozen_backbone/segformer-b2/best.pth")
+    p.add_argument("--variant", default="segformer-b2", choices=list(_HF_BASES),
+                   help="SegFormer variant matching --checkpoint's architecture (default segformer-b2, "
+                        "the only variant this pipeline supported before). Must match --checkpoint's own "
+                        "architecture or PyTorch will fail to strict-load its state dict.")
     p.add_argument("--resolution", type=int, default=256,
                    help="Input resolution (square). Choose from Stage 0 sweep.")
-    p.add_argument("--output-dir", default="weights/segmentation/optimization",
-                   help="Directory to save the .onnx file")
+    p.add_argument("--output-dir", default=None,
+                   help="Directory to save the .onnx file (default: weights/segmentation/optimization "
+                        "for segformer-b2, weights/segmentation/optimization_<variant> otherwise -- "
+                        "kept separate per variant since benchmark_jetson.py globs *.onnx in one "
+                        "directory per invocation and assumes a single backbone for the whole run).")
     p.add_argument("--no-fp16", dest="fp16", action="store_false", default=True)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
@@ -151,14 +169,19 @@ def main() -> int:
     ckpt = Path(args.checkpoint)
     if not ckpt.is_absolute():
         ckpt = _ROOT / ckpt
-    out_dir = Path(args.output_dir)
+    if args.output_dir:
+        out_dir = Path(args.output_dir)
+    elif args.variant == "segformer-b2":
+        out_dir = Path("weights/segmentation/optimization")
+    else:
+        out_dir = Path(f"weights/segmentation/optimization_{args.variant}")
     if not out_dir.is_absolute():
         out_dir = _ROOT / out_dir
 
-    onnx_path = export_fp16_onnx(str(ckpt), args.resolution, out_dir, args.device, args.fp16)
+    onnx_path = export_fp16_onnx(str(ckpt), args.resolution, out_dir, args.device, args.fp16, args.variant)
     print(f"\nONNX ready: {onnx_path}")
     print("Transfer this file to the Jetson, then run:")
-    print(f"  python scripts/segmentation/optimization/benchmark_jetson.py --onnx-dir weights/segmentation/optimization/")
+    print(f"  python scripts/segmentation/optimization/benchmark_jetson.py --onnx-dir {out_dir} --backbone {args.variant}")
     return 0
 
 

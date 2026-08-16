@@ -426,7 +426,21 @@ def main() -> int:
                         "preprocess+infer, not a synthetic dummy tensor)")
     p.add_argument("--harness",      choices=["naive", "optimized", "both"], default="both",
                    help="Which harness configuration(s) to benchmark (see _HARNESS_CONFIGS)")
+    p.add_argument("--backbone",     default="segformer-b2",
+                   choices=["segformer-b0", "segformer-b1", "segformer-b2", "segformer-b3", "segformer-b4"],
+                   help="SegFormer variant of the ONNX file(s) / --pytorch-ref checkpoint in this run "
+                        "(one variant per invocation -- run once per backbone for a multi-variant "
+                        "comparison). Used both for the CSV 'backbone' column and to pick the correct "
+                        "HF architecture when loading --pytorch-ref for reference mIoU.")
     args = p.parse_args()
+
+    _HF_BASES = {
+        "segformer-b0": "nvidia/segformer-b0-finetuned-ade-512-512",
+        "segformer-b1": "nvidia/segformer-b1-finetuned-ade-512-512",
+        "segformer-b2": "nvidia/segformer-b2-finetuned-ade-512-512",
+        "segformer-b3": "nvidia/segformer-b3-finetuned-ade-512-512",
+        "segformer-b4": "nvidia/segformer-b4-finetuned-ade-512-512",
+    }
 
     harness_names = list(_HARNESS_CONFIGS) if args.harness == "both" else [args.harness]
 
@@ -469,7 +483,7 @@ def main() -> int:
 
         state_dict = load_remapped_state_dict(ref_ckpt)
         n_labels = state_dict["decode_head.classifier.weight"].shape[0]
-        hf_base = "nvidia/segformer-b2-finetuned-ade-512-512"
+        hf_base = _HF_BASES[args.backbone]
 
         for onnx_f in onnx_files:
             flags = _parse_variant_flags(onnx_f.stem, onnx_f)
@@ -506,7 +520,7 @@ def main() -> int:
         elif not _build_engine(onnx_path, engine_path, flags):
             rows.append({
                 "variant_name": onnx_path.stem,
-                "backbone": "segformer-b2",
+                "backbone": args.backbone,
                 "precision": flags["precision"],
                 "sparsity": flags["sparsity"],
                 "resolution": res,
@@ -545,7 +559,7 @@ def main() -> int:
 
             rows.append({
                 "variant_name":       onnx_path.stem,
-                "backbone":           "segformer-b2",
+                "backbone":           args.backbone,
                 "precision":          flags["precision"],
                 "sparsity":           flags["sparsity"],
                 "resolution":         res,
